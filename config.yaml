@@ -1,0 +1,26 @@
+download:
+  downloads_dir: 'data'
+  sleep: 0.25
+  
+scraping:
+  download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
+  vars: ['air_temperature', 'solar', 'wind']
+  check_date: '20230701'
+  sleep: 1
+
+write:
+  write: True
+  db_conf: 
+    host: 'localhost'
+    database: 'WeatherForecasts'
+    #user: 'name',
+    #passw: 'passw'
+  
+clean:
+  force_update: False
+  page_size: 10000
+
+logging:
+  verbose: False
+  log_file_write: 'write_db.log'
+  datefmt: '%Y-%m-%d %H:%M:%S'
