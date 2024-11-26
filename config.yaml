@@ -5,7 +5,6 @@ download:
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
   vars: ['air_temperature', 'solar', 'wind']
-  check_date: '20230701'
   sleep: 1
 
 write:
