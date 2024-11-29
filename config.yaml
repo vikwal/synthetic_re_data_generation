@@ -1,5 +1,6 @@
-download:
+data:
   downloads_dir: 'data'
+  final_data: 'data/final'
   sleep: 0.25
   
 scraping:
@@ -15,9 +16,18 @@ write:
     #user: 'name',
     #passw: 'passw'
   
-clean:
-  force_update: False
-  page_size: 10000
+synth:
+  param_pressure: 'PP_10'
+  param_temperature: 'TT_10'
+  param_humidity: 'RF_10'
+  param_dewpoint: 'TD_10'
+  param_dhi: 'DS_10'
+  param_ghi: 'GS_10'
+  param_v_wind: 'FF_10'
+  param_d_wind: 'DD_10'
+  param_latitude: 'geoBreite'
+  param_longitude: 'geoLaenge'
+  param_elevation: 'Stationshoehe'
 
 logging:
   verbose: False

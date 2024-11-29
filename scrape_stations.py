@@ -65,7 +65,7 @@ def main():
     config = load_config(config_path)
     sc_config = config['scraping']
     
-    download_dir = config['download']['downloads_dir']
+    download_dir = config['data']['downloads_dir']
     download_url = sc_config['download_url']
     vars = sc_config['vars']
     sleep = sc_config['sleep']
