@@ -19,7 +19,7 @@ write:
 synth:
   param_pressure: 'PP_10'
   param_temperature: 'TT_10'
-  param_humidity: 'RF_10'
+  param_relhum: 'RF_10'
   param_dewpoint: 'TD_10'
   param_dhi: 'DS_10'
   param_ghi: 'GS_10'
