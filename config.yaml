@@ -1,5 +1,5 @@
 data:
-  downloads_dir: 'data'
+  dir: 'data'
   final_data: 'data/final'
   sleep: 0.25
   
