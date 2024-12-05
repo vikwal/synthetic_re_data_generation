@@ -65,6 +65,10 @@ synth:
     param: 'rho'
     name: 'Density'
     unit: 'kg/m$^3$'
+  v_wind_hub: 
+    param: 'v_wind_hub'
+    name: 'Wind Speed at Hub Height'
+    unit: 'm/s'
 
 logging:
   verbose: False
