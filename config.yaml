@@ -17,17 +17,54 @@ write:
     #passw: 'passw'
   
 synth:
-  param_pressure: 'PP_10'
-  param_temperature: 'TT_10'
-  param_relhum: 'RF_10'
-  param_dewpoint: 'TD_10'
-  param_dhi: 'DS_10'
-  param_ghi: 'GS_10'
-  param_v_wind: 'FF_10'
-  param_d_wind: 'DD_10'
-  param_latitude: 'geoBreite'
-  param_longitude: 'geoLaenge'
-  param_elevation: 'Stationshoehe'
+  pressure: 
+    param: 'PP_10'
+    name: 'Pressure'
+    unit: 'Pa'
+  temperature: 
+    param: 'TT_10'
+    name: 'Pressure'
+    unit: '°C'
+  relhum: 
+    param: 'RF_10'
+    name: 'Relative Humidity'
+    unit: '%'
+  dewpoint: 
+    param: 'TD_10'
+    name: 'Dew Point'
+    unit: '°C'
+  dhi: 
+    param: 'DS_10'
+    name: 'DHI'
+    unit: 'W/m$^2$'
+  ghi: 
+    param: 'GS_10'
+    name: 'GHI'
+    unit: 'W/m$^2$'
+  v_wind: 
+    param: 'FF_10'
+    name: 'Wind Speed'
+    unit: 'm/s'
+  d_wind: 
+    param: 'DD_10'
+    name: 'Wind Direction'
+    unit: '°'
+  latitude: 
+    param: 'geoBreite'
+    name: 'Latitude'
+    unit: '°'
+  longitude: 
+    param: 'geoLaenge'
+    name: 'Longitude'
+    unit: '°'
+  elevation: 
+    param: 'Stationshoehe'
+    name: 'Station Height'
+    unit: 'm'
+  density: 
+    param: 'rho'
+    name: 'Density'
+    unit: 'kg/m$^3$'
 
 logging:
   verbose: False
