@@ -69,6 +69,13 @@ synth:
     param: 'v_wind_hub'
     name: 'Wind Speed at Hub Height'
     unit: 'm/s'
+  
+adjustable_params:
+  installed_power: 100
+  surface_tilt: 40
+  surface_azimuth: 245
+  gamma_pdc: -0.0035
+  albedo: 0.25
 
 logging:
   verbose: False
