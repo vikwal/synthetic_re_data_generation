@@ -1,1 +1,1 @@
-# dwd_observations
+# Synthetic Renewable Energy Data Generation
