@@ -70,12 +70,26 @@ synth:
     name: 'Wind Speed at Hub Height'
     unit: 'm/s'
   
-adjustable_params:
+adjustable_pv_params:
   installed_power: 100
   surface_tilt: 40
   surface_azimuth: 245
   gamma_pdc: -0.0035
   albedo: 0.25
+
+adjustable_wind_params:
+  installed_power: 100
+  h1: 10
+  h2: 100 
+  rated_power: 1000
+  Cp: 0.59
+  rotor_diameter: 60
+  cut_in_speed: 3
+  rated_speed: 12.5
+  cut_out_speed: 25
+  p_model: 'huang'
+  v2_method: 'terraint'
+  terrain: 'rough'
 
 logging:
   verbose: False
