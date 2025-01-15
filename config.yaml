@@ -5,7 +5,7 @@ data:
   
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
-  vars: ['air_temperature', 'solar', 'wind']
+  vars: ['wind_test']
   sleep: 1
 
 write:
@@ -23,7 +23,7 @@ synth:
     unit: 'Pa'
   temperature: 
     param: 'TT_10'
-    name: 'Pressure'
+    name: 'Temperature'
     unit: '°C'
   relhum: 
     param: 'RF_10'
@@ -49,6 +49,18 @@ synth:
     param: 'DD_10'
     name: 'Wind Direction'
     unit: '°'
+  sigma_wind_lat: 
+    param: 'SLA_10'
+    name: 'Standard Deviation of Zonal Wind Speed'
+    unit: ''
+  sigma_wind_lon: 
+    param: 'SLO_10'
+    name: 'Standard Deviation of Meridional Wind Speed'
+    unit: ''
+  w_wind: 
+    param: 'W_Wind'
+    name: 'Vertical Wind Speed'
+    unit: 'm/s'
   latitude: 
     param: 'geoBreite'
     name: 'Latitude'
@@ -65,10 +77,31 @@ synth:
     param: 'rho'
     name: 'Density'
     unit: 'kg/m$^3$'
+  sat_vap_pressure:
+    param: 'p_s'
+    name: 'Saturated Vapor Pressure'
+    unit: 'Pa'
+  sat_vap_pressure_hub:
+    param: 'p_s_hub'
+    name: 'Saturated Vapor Pressure at Hub Height'
+    unit: 'Pa'
   v_wind_hub: 
     param: 'v_wind_hub'
     name: 'Wind Speed at Hub Height'
     unit: 'm/s'
+  pressure_hub: 
+    param: 'p_hub'
+    name: 'Pressure at Hub Height'
+    unit: 'Pa'
+  temperature_hub: 
+    param: 't_hub'
+    name: 'Temperature at Hub Height'
+    unit: '°C'
+  density_hub: 
+    param: 'rho_hub'
+    name: 'Density at Hub Height'
+    unit: 'kg/m$^3$'
+
   
 adjustable_pv_params:
   installed_power: 100
@@ -87,9 +120,10 @@ adjustable_wind_params:
   cut_in_speed: 3
   rated_speed: 12.5
   cut_out_speed: 25
-  p_model: 'huang'
-  v2_method: 'terraint'
-  terrain: 'rough'
+  p_s_model: 'huang'
+  v2_method: 'alphaI'
+  karman: 0.4
+  temp_gradient: 0.00649
 
 logging:
   verbose: False

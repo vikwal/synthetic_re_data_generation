@@ -26,7 +26,7 @@ def main():
     config_path = "config.yaml"
     config = load_config(config_path)
     
-    base_directory = config['data']['downloads_dir']
+    base_directory = config['data']['dir']
 
     extract_files(base_directory, delete_after_extract=True)
 
