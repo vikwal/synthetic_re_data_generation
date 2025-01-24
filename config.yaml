@@ -123,12 +123,12 @@ adjustable_wind_params:
   installed_power: 100
   h1: 10
   h2: 100 
-  rated_power: 1000
+  rated_power: 10000
   Cp: 0.59
   rotor_diameter: 60
   cut_in_speed: 3
   rated_speed: 12.5
-  cut_out_speed: 25
+  cut_out_speed: 15
   p_s_model: 'huang'
   v2_method: 'seven_power'
   karman: 0.4
