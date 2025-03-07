@@ -1,8 +1,8 @@
 data:
-  dir: 'data'
+  dir: '/home/serhatcelik/Desktop/Cp_Powercurve/cpdata'
   final_data: 'data/final'
   solar_dir: 'data/final/solar'
-  wind_dir: 'data/final/wind'
+  wind_dir: '/home/serhatcelik/Desktop/Cp_Powercurve/cpdata'
   sleep: 0.25
   
 scraping:
