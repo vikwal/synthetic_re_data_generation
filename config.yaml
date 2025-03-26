@@ -1,22 +1,28 @@
 data:
-  dir: 'data'
-  final_data: 'data/final'
-  solar_dir: 'data/final/solar'
-  wind_dir: 'data/final/wind'
+  dir: '/mnt/nasl1/observed_weather'
+  final_data: 'data'
+  solar_dir: 'data/solar'
+  wind_dir: 'data/wind'
+  from_date: '2023-07-24'
+  to_date: '2025-03-24'
+  hist_date: '2023-12-31'
   sleep: 0.25
   
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
-  vars: ['air_temperature', 'solar', 'precipitation', 'wind_test']
+  vars: ['air_temperature', 'solar', 'wind_test']
   sleep: 1
+  get_historical: True
+  get_recent: True
+
 
 write:
   write: True
   db_conf: 
     host: 'localhost'
-    database: 'WeatherForecasts'
-    #user: 'name',
-    #passw: 'passw'
+    database: 'Observations'
+    user: 'postgres'
+    passw: ''
   
 synth:
   threshold: 0.01
