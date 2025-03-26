@@ -1,8 +1,12 @@
 data:
-  dir: '/home/serhatcelik/Desktop/Cp_Powercurve/cpdata'
+  dir: 'data'
   final_data: 'data/final'
   solar_dir: 'data/final/solar'
-  wind_dir: '/home/serhatcelik/Desktop/Cp_Powercurve/cpdata'
+  wind_dir: 'data/final/wind'
+  turbine_dir: "power_curves"
+  turbine_data: 'turbine_data.csv'
+  specs_path: "turbine_specs.csv"
+  cp_data: "turbine_cp_data_processed.csv"
   sleep: 0.25
   
 scraping:
@@ -108,6 +112,10 @@ synth:
     param: 'rho_hub'
     name: 'Density at Hub Height'
     unit: 'kg/m$^3$'
+  C_p:
+    param: 'C_p'
+    name: 'Cps of Cp Curve'
+    unit: '-'
 
   
 adjustable_pv_params:
@@ -120,12 +128,13 @@ adjustable_pv_params:
   eta_inv_ref: 0.9637
 
 adjustable_wind_params:
+  turbine: 'FWT 120/3000'
   installed_power: 100
   h1: 10
   h2: 100 
-  rated_power: 10000
+  #rated_power: 10000
   Cp: 0.59
-  rotor_diameter: 60
+  #rotor_diameter: 60
   cut_in_speed: 3
   rated_speed: 12.5
   cut_out_speed: 15
