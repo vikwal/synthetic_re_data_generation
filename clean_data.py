@@ -8,6 +8,20 @@ from typing import List
 
 import utils
 
+def relevant_features(params: dict):
+    pv_features = [params['ghi']['param'],
+                   params['dhi']['param'],
+                   params['temperature']['param'],
+                   params['dewpoint']['param'],
+                   params['v_wind']['param'],
+                   params['pressure']['param']]
+    wind_features = [params['v_wind']['param'],
+                     params['temperature']['param'],
+                     params['relhum']['param'],
+                     params['sigma_wind_lon']['param'],
+                     params['pressure']['param']]
+    return pv_features, wind_features
+
 def get_station_ids(db_config: dict):
     conn, cursor = utils.connect_db(db_config)
     query = """
@@ -35,6 +49,7 @@ def iterate_stations(db_config: dict,
         if rows:
             # Spaltennamen abrufen
             columns = [desc[0] for desc in cursor.description]
+            columns = [x.upper() if x not in ('timestamp', 'station_id') else x for x in columns]
             df = pd.DataFrame(rows, columns=columns)
             df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
             #df['timestamp'] = df['timestamp'].dt.tz_convert("Europe/Berlin")
@@ -74,19 +89,7 @@ def main():
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
     
-    pv_features = [params['ghi']['param'],
-                   params['dhi']['param'],
-                   params['temperature']['param'],
-                   params['dewpoint']['param'],
-                   params['v_wind']['param']]
-    wind_features = [params['v_wind']['param'],
-                     params['temperature']['param'],
-                     params['relhum']['param'],
-                     params['sigma_wind_lat']['param'],
-                     params['sigma_wind_lon']['param']]
-    
-    pv_features = [ele.lower() for ele in pv_features]
-    wind_features = [ele.lower() for ele in wind_features]
+    pv_features, wind_features = relevant_features(params=params)
     
     station_ids = get_station_ids(db_config=db_config)
     frames = iterate_stations(db_config=db_config,

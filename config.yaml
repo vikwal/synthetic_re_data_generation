@@ -6,10 +6,10 @@ data:
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
   turbine_dir: "power_curves"
-  turbine_data: 'turbine_power.csv'
-  specs_path: "turbine_specs.csv"
-  cp_data: "turbine_cp.csv"
-  ct_data: "turbine_ct.csv"
+  turbine_power: 'turbine_power.csv'
+  turbine_specs: "turbine_specs.csv"
+  turbine_cp: "turbine_cp.csv"
+  turbine_ct: "turbine_ct.csv"
   sleep: 0.25
   
 scraping:
@@ -128,6 +128,14 @@ synth:
     param: 'C_p'
     name: 'Cps of Cp Curve'
     unit: '-'
+  power_curve:
+    param: 'power_curve'
+    name: 'Theoretical power according to power curve'
+    unit: 'Watt'
+  power:
+    param: 'power'
+    name: 'Calculated power according'
+    unit: 'Watt'
 
   
 adjustable_pv_params:
@@ -141,15 +149,9 @@ adjustable_pv_params:
 
 adjustable_wind_params:
   turbine: 'FWT 120/3000'
-  installed_power: 100
   h1: 10
-  h2: 100 
-  #rated_power: 10000
   Cp: 0.59
-  #rotor_diameter: 60
-  cut_in_speed: 3
-  rated_speed: 12.5
-  cut_out_speed: 15
+  rated_speed: ''
   p_s_model: 'huang'
   v2_method: 'seven_power'
   karman: 0.4

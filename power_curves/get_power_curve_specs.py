@@ -1,3 +1,4 @@
+import yaml
 import pandas as pd
 import requests
 import csv
@@ -5,7 +6,17 @@ import time
 
 from bs4 import BeautifulSoup
 
-turbines = pd.read_csv("turbine_data.csv")
+def load_config(config_path):
+    with open(config_path, "r") as file:
+        return yaml.safe_load(file)
+    
+config = load_config('../config.yaml')
+turbine_power = config['data']['turbine_power'] 
+turbine_specs = config['data']['turbine_specs'] 
+turbine_cp = config['data']['turbine_cp'] 
+turbine_ct = config['data']['turbine_ct'] 
+
+turbines = pd.read_csv(turbine_power)
 turbines = pd.DataFrame(turbines.columns, columns=["turbine_names"])
 turbines["turbine_names"] = turbines["turbine_names"].str.replace(" ", "+")
 turbines["turbine_names"] = turbines["turbine_names"].str.replace("(", "%28")
@@ -386,9 +397,9 @@ def main() -> None:
     df_csv = df_specs_data[['turbine_name', 'rotor_diameter', 'hub_height']]
     df_csv.columns = ['Turbine', 'Rotordurchmesser', 'Nabenhöhe']
 
-    df_details_cp.to_csv("turbine_cp_data_processed.csv", index=False, sep = ";")
-    df_details_ct.to_csv("turbine_ct_data_processed.csv", index=False, sep = ";")
-    df_specs_data.to_csv("turbine_specs.csv", index=False, encoding='utf-8', quoting=csv.QUOTE_MINIMAL, sep=',')
+    df_details_cp.T.to_csv(turbine_cp, index=False, sep = ";")
+    df_details_ct.T.to_csv(turbine_ct, index=False, sep = ";")
+    df_specs_data.to_csv(turbine_specs, index=False, encoding='utf-8', quoting=csv.QUOTE_MINIMAL, sep=',')
 
 
 if __name__ == '__main__':

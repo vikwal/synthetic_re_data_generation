@@ -98,7 +98,7 @@ def download_all_turbines():
     all_turbines_trunc = df[df.any(axis=1)]
     df = all_turbines_trunc.fillna(0)
     df[df < 0] = 0
-    return df
+    return df.T
 
 def main(schema_name):
 #    engine = create_engine(db_uri(schema_name))
@@ -114,7 +114,7 @@ if __name__ == "__main__":
 #    wind_turbines = get_turbines_with_power_curve()
     turbine_data = main("windmodel")
 
-    with open("turbine_data.csv", "w") as f:
+    with open("turbine.csv", "w") as f:
         turbine_data.to_csv(f)
-    turbine_data = pd.read_csv("turbine_data.csv", index_col=0)
+    turbine_data = pd.read_csv("turbine_power.csv", index_col=0)
 
