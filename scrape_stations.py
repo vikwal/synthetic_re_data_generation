@@ -39,7 +39,8 @@ def download(url: str,
     response.raise_for_status()
     soup = BeautifulSoup(response.text, 'html.parser')
     links = soup.find_all('a')
-    existing_files = set(os.listdir(target_dir))
+    existing_files = list(set(os.listdir(target_dir)))
+    existing_files = [file for file in existing_files if 'Beschreibung' not in file]
     rel_links = [link for link in links if '../' not in link.get('href')]
     for link in rel_links:
         href = link.get('href')

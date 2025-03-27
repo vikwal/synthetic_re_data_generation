@@ -1,10 +1,9 @@
 data:
-  dir: '/mnt/nasl1/observed_weather'
+  dir: '/mnt/nasl2/observed_weather'
   final_data: 'data'
   solar_dir: 'data/solar'
   wind_dir: 'data/wind'
   from_date: '2023-07-24'
-  to_date: '2025-03-24'
   hist_date: '2023-12-31'
   sleep: 0.25
   
@@ -17,7 +16,14 @@ scraping:
 
 
 write:
+  recent_pkl: 'recent_dfs.pkl'
+  historical_pkl: 'historical_dfs.pkl'
+  master_pkl: 'master_data.pkl'
+  create_table: True
+  write_historical: True
+  write_recent: True
   write: True
+  threshold: 0.001
   db_conf: 
     host: 'localhost'
     database: 'Observations'
@@ -25,7 +31,6 @@ write:
     passw: ''
   
 synth:
-  threshold: 0.01
   pressure: 
     param: 'PP_10'
     name: 'Pressure'
