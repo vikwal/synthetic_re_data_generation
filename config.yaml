@@ -3,6 +3,8 @@ data:
   final_data: 'data'
   solar_dir: 'data/solar'
   wind_dir: 'data/wind'
+  sl_forecasts_dir: 'data/sl_forecasts'
+  ml_forecasts_dir: 'data/ml_forecasts'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
   turbine_dir: "power_curves"
@@ -10,8 +12,10 @@ data:
   turbine_specs: "turbine_specs.csv"
   turbine_cp: "turbine_cp.csv"
   turbine_ct: "turbine_ct.csv"
+  hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
+  vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
   sleep: 0.25
-  
+
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
   vars: ['air_temperature', 'solar', 'wind_test']
@@ -29,42 +33,45 @@ write:
   write_recent: True
   write: True
   threshold: 0.001
-  db_conf: 
+  db_conf:
     host: 'localhost'
-    database: 'Observations'
+    database: ''
+    database_obs: 'Observations'
+    database_frcst: 'WeatherDB'
+    port: 5432
     user: 'postgres'
     passw: ''
-  
+
 synth:
-  pressure: 
+  pressure:
     param: 'PP_10'
     name: 'Pressure'
     unit: 'Pa'
-  temperature: 
+  temperature:
     param: 'TT_10'
     name: 'Temperature at 2m'
     unit: '°C'
-  relhum: 
+  relhum:
     param: 'RF_10'
     name: 'Relative Humidity'
     unit: '%'
-  dewpoint: 
+  dewpoint:
     param: 'TD_10'
     name: 'Dew Point'
     unit: '°C'
-  dhi: 
+  dhi:
     param: 'DS_10'
     name: 'DHI'
     unit: 'W/m$^2$'
-  ghi: 
+  ghi:
     param: 'GS_10'
     name: 'GHI'
     unit: 'W/m$^2$'
-  v_wind: 
+  v_wind:
     param: 'FF_10'
     name: 'Wind Speed'
     unit: 'm/s'
-  d_wind: 
+  d_wind:
     param: 'DD_10'
     name: 'Wind Direction'
     unit: '°'
@@ -72,31 +79,31 @@ synth:
     param: 'RWS_10'
     name: 'Precipitation Rate'
     unit: 'mm'
-  sigma_wind_lat: 
+  sigma_wind_lat:
     param: 'SLA_10'
     name: 'Standard Deviation of Zonal Wind Speed'
     unit: ''
-  sigma_wind_lon: 
+  sigma_wind_lon:
     param: 'SLO_10'
     name: 'Standard Deviation of Meridional Wind Speed'
     unit: ''
-  w_wind: 
+  w_wind:
     param: 'W_Wind'
     name: 'Vertical Wind Speed'
     unit: 'm/s'
-  latitude: 
+  latitude:
     param: 'geoBreite'
     name: 'Latitude'
     unit: '°'
-  longitude: 
+  longitude:
     param: 'geoLaenge'
     name: 'Longitude'
     unit: '°'
-  elevation: 
+  elevation:
     param: 'Stationshoehe'
     name: 'Station Height'
     unit: 'm'
-  density: 
+  density:
     param: 'rho'
     name: 'Density'
     unit: 'kg/m$^3$'
@@ -108,19 +115,19 @@ synth:
     param: 'p_s_hub'
     name: 'Saturated Vapor Pressure at Hub Height'
     unit: 'Pa'
-  v_wind_hub: 
+  v_wind_hub:
     param: 'v_wind_hub'
     name: 'Wind Speed at Hub Height'
     unit: 'm/s'
-  pressure_hub: 
+  pressure_hub:
     param: 'p_hub'
     name: 'Pressure at Hub Height'
     unit: 'Pa'
-  temperature_hub: 
+  temperature_hub:
     param: 't_hub'
     name: 'Temperature at Hub Height'
     unit: '°C'
-  density_hub: 
+  density_hub:
     param: 'rho_hub'
     name: 'Density at Hub Height'
     unit: 'kg/m$^3$'
@@ -137,7 +144,7 @@ synth:
     name: 'Calculated power according'
     unit: 'Watt'
 
-  
+
 adjustable_pv_params:
   installed_power: 100
   surface_tilt: 40
@@ -150,7 +157,7 @@ adjustable_pv_params:
 adjustable_wind_params:
   turbine: 'FWT 120/3000'
   h1: 10
-  Cp: 0.59
+  Cp: 0.4
   rated_speed: ''
   p_s_model: 'huang'
   v2_method: 'seven_power'
