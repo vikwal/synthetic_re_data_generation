@@ -131,8 +131,8 @@ synth:
     param: 'rho_hub'
     name: 'Density at Hub Height'
     unit: 'kg/m$^3$'
-  C_p:
-    param: 'C_p'
+  cp_curve:
+    param: 'Cp'
     name: 'Cps of Cp Curve'
     unit: '-'
   power_curve:
@@ -141,7 +141,7 @@ synth:
     unit: 'Watt'
   power:
     param: 'power'
-    name: 'Calculated power according'
+    name: 'Calculated power'
     unit: 'Watt'
 
 
@@ -157,12 +157,14 @@ adjustable_pv_params:
 adjustable_wind_params:
   turbine: 'FWT 120/3000'
   h1: 10
-  Cp: 0.4
+  Cp: 0.59
   rated_speed: ''
   p_s_model: 'huang'
-  v2_method: 'seven_power'
+  v2_method: 'alphaI'
   karman: 0.4
   temp_gradient: 0.00649
+  interpol_method: 'polynomial'
+  polynom_grad: 2
 
 logging:
   verbose: False
