@@ -1,0 +1,6 @@
+data:
+  turbine_power: "turbine_data.csv"
+  turbine_specs: pd.NA
+  turbine_cp: pd.NA
+  turbine_ct: pd.NA
+  
