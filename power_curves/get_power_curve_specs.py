@@ -326,13 +326,13 @@ def main() -> None:
     # Transponiere die DataFrames, um Windgeschwindigkeiten als Index zu haben
     df_details_cp_transposed = df_details_cp.T
     df_details_cp_transposed.index.name = 'wind_speed'
-    df_details_cp_transposed.to_csv("turbine_cp_data_processed.csv", sep = ";")
+    df_details_cp_transposed.to_csv(turbine_cp, sep = ";")
 
     df_details_ct_transposed = df_details_ct.T
     df_details_ct_transposed.index.name = 'wind_speed'
-    df_details_ct_transposed.to_csv("turbine_ct_data_processed.csv", sep = ";")
+    df_details_ct_transposed.to_csv(turbine_ct, sep = ";")
 
-    df_specs_data.to_csv("turbine_specs.csv", index=False, encoding='utf-8', quoting=csv.QUOTE_MINIMAL, sep=',')
+    df_specs_data.to_csv(turbine_specs, index=False, encoding='utf-8', quoting=csv.QUOTE_MINIMAL, sep=',')
 
 
 if __name__ == '__main__':
