@@ -19,7 +19,8 @@ def relevant_features(params: dict):
                      params['temperature']['param'],
                      params['relhum']['param'],
                      params['sigma_wind_lon']['param'],
-                     params['pressure']['param']]
+                     params['pressure']['param'],
+                     params['d_wind']['param']]
     return pv_features, wind_features
 
 def get_station_ids(db_config: dict):
@@ -79,7 +80,7 @@ def get_drop_list(frames: List[pd.DataFrame],
     return drop_list
 
 def main():
-    
+
     config = utils.load_config('config.yaml')
     db_config = config['write']['db_conf']
     params = config['synth']
@@ -88,9 +89,9 @@ def main():
     wind_dir = config['data']['wind_dir']
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
-    
+
     pv_features, wind_features = relevant_features(params=params)
-    
+
     station_ids = get_station_ids(db_config=db_config)
     frames = iterate_stations(db_config=db_config,
                               station_ids=station_ids)

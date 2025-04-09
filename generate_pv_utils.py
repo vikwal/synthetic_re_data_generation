@@ -5,20 +5,23 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 
-def get_features(data: pd.DataFrame, 
+def get_features_pv(data: pd.DataFrame, 
                  params: dict,
-                 adj_params: dict
+                 adj_params: dict,
+                 latitude:float,
+                 longitude:float,
+                 elevation:float
                 ):
     # calculate pressure
     #pressure = pvlib.atmosphere.alt2pres(elevation)
-    dhi = data[params['dhi']['param']]
-    ghi = data[params['ghi']['param']]
-    pressure = data[params['pressure']['param']]
-    temperature = data[params['temperature']['param']]
-    v_wind = data[params['v_wind']['param']]
-    latitude = data[params['latitude']['param']]
-    longitude = data[params['longitude']['param']]
-    elevation = data[params['elevation']['param']]
+    dhi = data[params['dhi']['param']] #Takes DS-10 from df
+    ghi = data[params['ghi']['param']]  #Takes GS-10 from df
+    pressure = data[params['pressure']['param']] #PP-10
+    temperature = data[params['temperature']['param']] #TT-10
+    v_wind = data[params['v_wind']['param']] #FF-10
+    #latitude = data[params['latitude']['param']]
+    #longitude = data[params['longitude']['param']]
+    #elevation = data[params['elevation']['param']]
     
     surface_tilt = adj_params['surface_tilt']
     surface_azimuth = adj_params['surface_azimuth']
@@ -44,7 +47,6 @@ def get_features(data: pd.DataFrame,
     dni = pvlib.irradiance.dni(ghi=ghi,
                                dhi=dhi,
                                zenith=solar_zenith)
-    
     # get total irradiance
     total_irradiance = pvlib.irradiance.get_total_irradiance(
         surface_tilt=surface_tilt,
@@ -179,10 +181,13 @@ def plot_power_and_features(day: str,
 def plot_power_and_features_pv_streamlit(day: str, 
                             plot_names: list,
                             features: list,
-                            power: pd.Series
+                            power: pd.Series,
+                            synchronize_axes=True
                             ): 
-
     day = pd.Timestamp(day)
+    tz = power.index.tz
+    if tz is not None:
+        day = day.tz_localize(tz)
     index_0 = power.index.get_loc(day)
     index_1 = power.index.get_loc(day + pd.Timedelta(days=1))
     date = str(features[0].index[index_0:index_1][0].date())
@@ -191,7 +196,7 @@ def plot_power_and_features_pv_streamlit(day: str,
 
     font_properties = {'family': 'DejaVu Sans', 'weight': 'normal', 'size': 6}  
     color = '#999999'
-    line_colors = ['#be95c4','#e0b1cb','#9f86c0']  
+    line_colors = ['#3772ff','#df2935','#fdca40']  
     fontsize = 8
     lines = []
     title_suffix = ''
@@ -200,7 +205,7 @@ def plot_power_and_features_pv_streamlit(day: str,
     line1, = ax1.plot(
     power[index_0:index_1],
     label="Power Output (W)",
-    color="#231942",
+    color="#080708",
     linewidth=1.0
     )
     lines.append(line1)
@@ -253,6 +258,16 @@ def plot_power_and_features_pv_streamlit(day: str,
     for label in ax2.get_yticklabels():
         label.set_fontproperties(font_properties)
         label.set_color(color)
+
+    # Synchronize y-axes
+    if synchronize_axes:
+        title_suffix = '(synched axes)'
+        all_ghi_min = min([series[index_0:index_1].min() for series in features])
+        all_ghi_max = max([series[index_0:index_1].max() for series in features])
+        y_min = min(all_ghi_min, power[index_0:index_1].min())
+        y_max = max(all_ghi_max, power[index_0:index_1].max())
+        ax1.set_ylim(y_min, y_max)
+        ax2.set_ylim(y_min, y_max)
 
     # legend
     lines.append(lines.pop(0))

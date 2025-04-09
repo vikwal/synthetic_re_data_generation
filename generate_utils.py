@@ -100,7 +100,7 @@ def get_windspeed_at_height(data: pd.DataFrame,
     
     method = adj_params['v2_method']
     h1 = adj_params['h1']
-    h2 = adj_params['h2']
+    h2 = adj_params['hub_height']
     
     if method == 'alphaI':
         direction = data[params['d_wind']['param']]
@@ -130,12 +130,13 @@ def get_temperature_at_height(data: pd.DataFrame,
                               params: dict,
                               adj_params: dict) -> pd.Series:
     t1 = data[params['temperature']['param']]
-    t1 = t1 + 273.15 
+    t1 = t1 + 273.15
     h1 = 2 # in meters
-    h2 = adj_params['h2']
+    h2 = adj_params['hub_height']
     temp_gradient = adj_params['temp_gradient']
     delta_h = h2 - h1
     t2 = t1 - temp_gradient * delta_h
+    t2 = t2 - 273.15
     return t2
 
     
@@ -149,7 +150,7 @@ def get_pressure_at_height(data: pd.DataFrame,
     p1 = data[params['pressure']['param']]
     t1 = data[params['temperature']['param']]
     t1 = t1 + 273.15
-    h2 = adj_params['h2']
+    h2 = adj_params['hub_height']
     temp_gradient = adj_params['temp_gradient']
     M = M_air # molar mass of air (including water vapor) is less than that of dry air
     delta_h = h2 - h1
@@ -167,12 +168,39 @@ def get_density_at_height(data: pd.DataFrame,
     t1 = data[params['temperature']['param']]
     t1 = t1 + 273.15
     h1 = 2 # because of temperature measured at 2 m
-    h2 = adj_params['h2']
+    h2 = adj_params['hub_height']
     temp_gradient = adj_params['temp_gradient']
     M = M_air # molar mass of air (including water vapor) is less than that of dry air
     delta_h = h2 - h1
     rho2 = rho1 * ( 1 - (temp_gradient * delta_h) / t1 ) ** ( (M * g) / (temp_gradient * R) - 1)
     return rho2
+
+def get_power_curve(data: pd.DataFrame,
+                    power_curve: pd.Series,
+                    params: dict) -> pd.Series:
+    wind = data[[params["v_wind_hub"]["param"]]]
+    power = pd.merge(wind, power_curve,left_on=params["v_wind_hub"]["param"], right_on='wind_speed', how="left")
+    power.index = wind.index
+    #C_p = (power["power"]/1000) / (0.5 * rho * rotor_area * wind["v_wind_hub"]**3)
+    return power['power']
+
+def get_Cp(data: pd.DataFrame,
+           cp_curves: pd.Series,
+           params: dict,
+           adj_params: dict):
+    wind = data[[params["v_wind_hub"]["param"]]]
+    cp_curve = cp_curves[[adj_params["turbine"]]]
+    ticks = np.arange(0, 2501, 1) / 100.0
+    wind_speed_index = pd.DataFrame(ticks, columns=['wind_speed'])
+    cp_curve = pd.merge(wind_speed_index, cp_curve, how='left', right_index=True, left_on='wind_speed')
+    if adj_params['interpol_method'] == 'linear':
+        cp_curve = cp_curve.interpolate(method='linear', axis=0)
+    elif adj_params['interpol_method'] == 'polynomial':
+        cp_curve = cp_curve.interpolate(method='polynomial', order=adj_params['polynom_grad'], axis=0)
+    cp_curve.fillna(0, inplace=True)
+    Cp = pd.merge(wind, cp_curve,left_on=params["v_wind_hub"]["param"], right_on='wind_speed', how="left")[adj_params["turbine"]]
+    Cp.index = wind.index
+    return Cp
     
 def get_saturated_vapor_pressure(temperature: pd.Series,
                                  model: str = 'improved magnus') -> pd.Series:
@@ -209,13 +237,20 @@ def get_rho(data: pd.DataFrame,
     rho = rho_g + rho_w
     return rho
 
+def get_cut_in_cut_out_speeds(power_curve: pd.DataFrame):
+    power_curve['wind_speed'] = pd.to_numeric(power_curve['wind_speed'])
+    cut_in = power_curve[power_curve['power'] > 0]['wind_speed'].min()
+    cut_out = next((power_curve['wind_speed'].iloc[i] for i in range(1, len(power_curve)) if power_curve['power'].iloc[i] == 0 and power_curve['power'].iloc[i - 1] > 0), None)
+    return cut_in, cut_out
 
-def get_features(data: pd.DataFrame,
-                 params: dict,
-                 adj_params: dict) -> pd.DataFrame:
-    data[params['v_wind_hub']['param']] = get_windspeed_at_height(data,
+def get_features_wind(data: pd.DataFrame,
+                      cp_curves: pd.DataFrame,
+                      power_curve: pd.DataFrame,
+                      params: dict,
+                      adj_params: dict) -> pd.DataFrame:
+    data[params['v_wind_hub']['param']] = round(get_windspeed_at_height(data=data,
                                                                   params=params,
-                                                                  adj_params=adj_params)
+                                                                  adj_params=adj_params), 2)
     data[params['temperature_hub']['param']] = get_temperature_at_height(data,
                                                                          params=params,
                                                                          adj_params=adj_params)
@@ -230,6 +265,14 @@ def get_features(data: pd.DataFrame,
     data[params['density_hub']['param']] = get_density_at_height(data,
                                                                  params=params,
                                                                  adj_params=adj_params)
+    data[params["cp_curve"]["param"]] = get_Cp(data,
+                                               cp_curves=cp_curves,
+                                               params=params,
+                                               adj_params=adj_params)
+    
+    data[params["power_curve"]["param"]] = get_power_curve(data,
+                                                           power_curve=power_curve,
+                                                           params=params)
     return data
 
 
@@ -247,31 +290,27 @@ def get_wind_power_coefficients(data: pd.DataFrame,
 
 
 def generate_wind_power(data: pd.DataFrame,
+                        power_curve: pd.DataFrame,
                         params: dict,
                         adj_params: dict
                         ) -> pd.Series:
-    rated_power = adj_params['rated_power']
-    Cp = adj_params['Cp']
+    rated_power = data[params['power_curve']['param']].max()
+    Cp = data[params['cp_curve']['param']]
     rotor_diameter = adj_params['rotor_diameter']
-    cut_in_speed = adj_params['cut_in_speed']
-    rated_speed = adj_params['rated_speed']
-    cut_out_speed = adj_params['cut_out_speed']
-    rho = data[params['density']['param']]
+    cut_in, cut_out = get_cut_in_cut_out_speeds(power_curve=power_curve)
+    rho = data[params['density_hub']['param']]
     wind_speed_hub = data[params['v_wind_hub']['param']]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
     wind_power = np.where(
-        wind_speed_hub < cut_in_speed, 0,
+        wind_speed_hub < cut_in, 0,
         np.where(
-            wind_speed_hub <= rated_speed,
+            wind_speed_hub <= cut_out,
             np.minimum(rated_power, 0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3),
-            np.where(
-                wind_speed_hub <= cut_out_speed,
-                rated_power,
-                0
-            )
+            0
         )
     )
-    return pd.Series(wind_power, index=data.index)
+    data[params['power']['param']] = wind_power
+    return data
 
 def plot_power_and_feature(data: pd.DataFrame,
                            params: dict,
@@ -349,6 +388,9 @@ def plot_power_and_feature_wind_streamlit(data: pd.DataFrame,
                            power: pd.Series): 
     
     day = pd.Timestamp(day)
+    tz = power.index.tz
+    if tz is not None:
+        day = day.tz_localize(tz) 
     index_0 = power.index.get_loc(day)
     index_1 = power.index.get_loc(day + pd.Timedelta(days=1))
     feature_specs = params[feature]
@@ -518,7 +560,7 @@ def plot_wind_power_scatter_line(wind_speed_st: pd.Series,
     line_color = '#231942'
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.scatter(x=wind_speed_st,y=power_st,c=point_color)
-    ax.plot(wind_speed_trb,power_trb,line_color)
+    #ax.plot(wind_speed_trb,power_trb,line_color)
 
     for spine in ax.spines.values():
         spine.set_visible(False)
