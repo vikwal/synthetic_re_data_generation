@@ -1,3 +1,5 @@
+import yaml
+import os
 import logging
 import time
 import json5
@@ -10,25 +12,25 @@ from tqdm import tqdm
 log = logging.getLogger("windmodel")
 log.setLevel(logging.INFO)
 
-metadata_info = {
-    "schema_name": "windmodel",
-    "data_date": "2024-06-12",
-    "data_source": "https://www.wind-turbine-models.com/powercurves",
-    "license": "https://www.wind-turbine-models.com/terms",
-    "description": "Wind turbine performance. Wind turbine test performance data by model.",
-}
+def load_config(config_path):
+    with open(config_path, "r") as file:
+        return yaml.safe_load(file)
+    
+config = load_config(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.yaml')))
+default_output_filename = config['data']['turbine_power']
+turbine_names = config["data"]["turbine_names"]
 
+data_source = "https://www.wind-turbine-models.com/powercurves"
 desired_ranges = [
     (0, 4), (4, 6), (6, 8), (8, 10), (10, 13),
     (13, 16), (16, 19), (19, 22), (22, 25)
 ]
-default_output_filename = "turbine_power.csv"
 
 
 def get_turbines_with_power_curve():
     """Fetches a list of turbine IDs with available power curves."""
     try:
-        page = requests.get(metadata_info["data_source"])
+        page = requests.get(data_source)
         page.raise_for_status()
         soup = BeautifulSoup(page.text, "html.parser")
         name_list = soup.find(class_="chosen-select")
@@ -48,7 +50,7 @@ def get_turbines_with_power_curve():
 
 def _fetch_single_range_data(turbine_id, start, stop):
     """Helper: Fetches data for ONE turbine and ONE range. Returns raw DataFrame."""
-    url = metadata_info["data_source"]
+    url = data_source
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     data = {"_action": "compare", "turbines[]": turbine_id, "windrange[]": [start, stop]}
 
@@ -206,6 +208,7 @@ def main(output_filename=default_output_filename):
         try:
             with open(output_filename, "w", encoding='utf-8') as f:
                 turbine_data.to_csv(f, sep=";", decimal=".")
+                pd.DataFrame(turbine_data.columns, columns=["turbine_names"])[1:].to_csv(turbine_names, index=False)
             log.info("Data saved successfully.")
         except IOError as e:
             log.error(f"Error writing CSV file: {e}")

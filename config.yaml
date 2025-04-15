@@ -12,6 +12,7 @@ data:
   turbine_specs: "turbine_specs.csv"
   turbine_cp: "turbine_cp.csv"
   turbine_ct: "turbine_ct.csv"
+  turbine_names: "turbine_names.csv"
   hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
   vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
   sleep: 0.25
