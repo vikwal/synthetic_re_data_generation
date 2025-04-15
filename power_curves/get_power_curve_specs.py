@@ -323,7 +323,6 @@ def main() -> None:
     df_csv = df_specs_data[['turbine_name', 'rotor_diameter', 'hub_height']]
     df_csv.columns = ['Turbine', 'Rotordurchmesser', 'Nabenhöhe']
 
-    # Transponiere die DataFrames, um Windgeschwindigkeiten als Index zu haben
     df_details_cp_transposed = df_details_cp.T
     df_details_cp_transposed.index.name = 'wind_speed'
     df_details_cp_transposed.to_csv(turbine_cp, sep = ";")
