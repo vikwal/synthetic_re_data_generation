@@ -1,23 +1,145 @@
-# Synthetic Renewable Energy Data Generation
+# 🌱 Synthetic Renewable Energy Data Generation
 
+This repository provides a full workflow for retrieving, processing, and managing weather measurement and forecast data, useful for synthetic generation of renewable energy datasets.
 
+---
 
+## 📊 Workflow: Weather Data Processing
 
+### 1. 📥 Download Raw Data
 
-## Power Curve Scraping
+Raw data can be found on the DWD (German Weather Service) open data website:
+https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/
 
-Information is scraped from www.wind-turbine-models.com. Scraping has to be done in a set order
+Relevant subdirectories:
 
-1. Run get_power_curve.py
-2. Run get_power_curve_specs.py
+- `air_temperature/`
+- `precipitation/`
+- `solar/`
+- `wind_test/` *(contains wind speed standard deviation; `wind/` does not)*
 
-You should not have to make any changes at all for the scripts to run.
+Each directory contains:
 
-You get five .csv files containing data on ~400 different turbins as a result, their content is as follows:
+- `historical/`: data until end of 2023
+- `recent/`: last 17 months
+- `now/`: current day
 
-1. turbine_power.csv                    --> Powercurves for all ~400 wind turbines
-2. turbine_cp_data.csv                  --> Cp data for some few turbines
-3. turbine_ct_cata.csv                  --> Ct data for some few turbines
-4. turbine_specs.csv                    --> Rotor diameter along with possible hub heights for most turbines 
-                                        (values might not always be numeric, or contain values at all)
-5. turbine_names.csv
+> ✅ **Only `historical/` and `recent/` are needed**
+> ✅ **You only need to update `recent/` regularly**
+
+You can control what gets downloaded using:
+
+- `config['scraping']['get_historical']`
+- `config['scraping']['get_recent']`
+
+To clear old raw data:
+→ Set `config['scraping']['overwrite'] = True`
+
+**Run:**
+
+```bash
+python scrape_stations.py
+```
+
+---
+
+### 2. 📦 Unzip Raw Data
+
+The downloaded files are zipped. To unzip:
+
+```bash
+python unzip.py
+```
+
+---
+
+### 3. 🗃️ Write Raw Data to the Database
+
+This step:
+
+- Combines weather variables per station into a list of DataFrames
+- Stores them temporarily in `.pkl` files
+
+> 💡 Make sure no old `.pkl` files are present before writing new data!
+
+Control what gets written using:
+
+- `config['write']['write_recent']`
+- `config['write']['write_historical']`
+
+**Run:**
+
+```bash
+python raw_to_db.py
+```
+
+---
+
+### 4. 🧹 Clean Weather Measurement Data
+
+The raw data is written as-is. In this step:
+
+- Stations with too much missing data are filtered out
+- Use `config['write']['threshold']` to set the missing value limit
+
+You can choose to clean:
+
+- `config['write']['clean_pv'] = True` → for PV-relevant data
+- `config['write']['clean_wind'] = True` → for wind-relevant data
+
+**Run:**
+
+```bash
+python clean_data.py
+```
+
+---
+
+### 5. ☁️ Extract Numerical Weather Predictions (NWP)
+
+Forecast data is stored in two main tables:
+
+- `SingleLevelFields`: relevant for PV
+- `MultiLevelFields`: relevant for wind
+
+You can control what gets queried:
+
+- `config['write']['clean_pv'] = True`
+- `config['write']['clean_wind'] = True`
+- `config['write']['get_vertical_wind'] = True` → for vertical wind profiles
+
+> If you only want vertical wind speed:
+> Set `config['write']['get_forecasts'] = False`
+> (At least one of `clean_pv` or `clean_wind` must be `True`)
+
+**Run:**
+
+```bash
+python get_nwp.py
+```
+
+---
+
+## 🔧 Wind Turbine Power Curve Scraping
+
+Information is scraped from:
+https://www.wind-turbine-models.com
+
+The scraping must follow this order:
+
+1. `get_power_curve.py`
+2. `get_power_curve_specs.py`
+
+> ✅ No changes needed — scripts are ready to run.
+
+This will generate **5 CSV files** for ~400 turbines:
+
+| File                   | Description                                                                 |
+|------------------------|-----------------------------------------------------------------------------|
+| `turbine_power.csv`    | Power curves for all ~400 turbines                                          |
+| `turbine_cp_data.csv`  | Cp values for a few turbines                                                |
+| `turbine_ct_data.csv`  | Ct values for a few turbines                                                |
+| `turbine_specs.csv`    | Rotor diameter and hub height (may contain non-numeric/missing entries)     |
+| `turbine_names.csv`    | Basic metadata for all turbines                                             |
+
+---

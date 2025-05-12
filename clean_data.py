@@ -5,8 +5,9 @@ import getpass
 import pandas as pd
 from tqdm import tqdm
 from typing import List
+import logging
 
-import utils
+import utils, get_nwp
 
 def relevant_features(params: dict):
     pv_features = [params['ghi']['param'],
@@ -41,7 +42,7 @@ def iterate_stations(db_config: dict,
                    station_ids: list):
     conn, cursor = utils.connect_db(db_config)
     frames = []
-    for id in tqdm(station_ids):
+    for id in tqdm(station_ids, desc='Iterate over stations'):
         query = f"""
             SELECT * FROM stations WHERE station_id = '{id}';
         """
@@ -58,7 +59,7 @@ def iterate_stations(db_config: dict,
             df.sort_index(inplace=True)
             frames.append(df)
         else:
-            print(f"No data for station_id: {id} found.")
+            logging.warning(f"No data for station_id: {id} found.")
             continue
     return frames
 
@@ -81,6 +82,16 @@ def get_drop_list(frames: List[pd.DataFrame],
 
 def main():
 
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        #datefmt=datefmt,
+        handlers=[
+            #logging.FileHandler(log_file),
+            logging.StreamHandler()
+            ]
+    )
+
     config = utils.load_config('config.yaml')
     db_config = config['write']['db_conf']
     params = config['synth']
@@ -89,29 +100,40 @@ def main():
     wind_dir = config['data']['wind_dir']
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
+    db_config['database'] = db_config['database_obs']
 
     pv_features, wind_features = relevant_features(params=params)
+    master_data = get_nwp.get_master_data(db_config=db_config)
 
+    logging.info('Getting distinct station ids')
     station_ids = get_station_ids(db_config=db_config)
+    logging.info('Getting station dataframes')
     frames = iterate_stations(db_config=db_config,
                               station_ids=station_ids)
-    drop_pv_stations = get_drop_list(frames=frames,
-                                 features=pv_features,
-                                 threshold=threshold)
-    drop_wind_stations = get_drop_list(frames=frames,
-                                    features=wind_features,
-                                    threshold=threshold)
-    print(f'Using an accepted threshold of {threshold*100}% missing rows per column, from {len(frames)} dataframes only remain:')
-    print(f'{len(frames)-len(drop_pv_stations)} stations for PV power')
-    print(f'{len(frames)-len(drop_wind_stations)} stations for wind power')
-    os.makedirs(solar_dir, exist_ok=True)
-    os.makedirs(wind_dir, exist_ok=True)
-    for df in frames:
-        station_id = df.station_id.iloc[0]
-        file_name = f'Station_{station_id}.csv'
-        if not station_id in drop_pv_stations:
-            df.to_csv(os.path.join(solar_dir, file_name))
-        if not station_id in drop_wind_stations:
-            df.to_csv(os.path.join(wind_dir, file_name))
+    logging.info(f'Using an accepted threshold of {threshold*100}% missing rows per column, from {len(frames)} dataframes only remain:')
+    if config['write']['clean_pv']:
+        drop_pv_stations = get_drop_list(frames=frames,
+                                         features=pv_features,
+                                         threshold=threshold)
+        logging.info(f'{len(frames)-len(drop_pv_stations)} stations for PV power')
+        os.makedirs(solar_dir, exist_ok=True)
+        pv_features.insert(0, 'station_id')
+        for df in frames:
+            station_id = df.station_id.iloc[0]
+            file_name = f'Station_{station_id}.csv'
+            if not station_id in drop_pv_stations:
+                df[pv_features].to_csv(os.path.join(solar_dir, file_name))
+    if config['write']['clean_wind']:
+        drop_wind_stations = get_drop_list(frames=frames,
+                                           features=wind_features,
+                                           threshold=threshold)
+        logging.info(f'{len(frames)-len(drop_wind_stations)} stations for wind power')
+        os.makedirs(wind_dir, exist_ok=True)
+        wind_features.insert(0, 'station_id')
+        for df in frames:
+            station_id = df.station_id.iloc[0]
+            file_name = f'Station_{station_id}.csv'
+            if not station_id in drop_wind_stations:
+                df[wind_features].to_csv(os.path.join(wind_dir, file_name))
 if __name__ == '__main__':
     main()

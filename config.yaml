@@ -1,10 +1,10 @@
 data:
   dir: '/mnt/nasl2/observed_weather'
   final_data: 'data'
+  synth_dir: 'data/synthetic'
   solar_dir: 'data/solar'
   wind_dir: 'data/wind'
-  sl_forecasts_dir: 'data/sl_forecasts'
-  ml_forecasts_dir: 'data/ml_forecasts'
+  w_vert_dir: 'data/vertical_wind'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
   turbine_dir: "power_curves"
@@ -19,21 +19,27 @@ data:
 
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
-  vars: ['air_temperature', 'solar', 'wind_test']
+  vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
   sleep: 1
   get_historical: True
   get_recent: True
+  overwrite: True
 
 
 write:
   recent_pkl: 'recent_dfs.pkl'
   historical_pkl: 'historical_dfs.pkl'
   master_pkl: 'master_data.pkl'
-  create_table: True
+  create_table: False
   write_historical: True
   write_recent: True
+  write_master: True
   write: True
   threshold: 0.001
+  clean_pv: True
+  clean_wind: False
+  get_forecasts: False
+  get_vertical_wind: False
   db_conf:
     host: 'localhost'
     database: ''
@@ -42,6 +48,7 @@ write:
     port: 5432
     user: 'postgres'
     passw: ''
+    do_update: False # on conflict do what?
 
 synth:
   pressure:
@@ -80,6 +87,10 @@ synth:
     param: 'RWS_10'
     name: 'Precipitation Rate'
     unit: 'mm'
+  prec_dau:
+    param: 'RWS_DAU_10'
+    name: 'Precipitation duration'
+    unit: 'min'
   sigma_wind_lat:
     param: 'SLA_10'
     name: 'Standard Deviation of Zonal Wind Speed'
@@ -120,6 +131,10 @@ synth:
     param: 'v_wind_hub'
     name: 'Wind Speed at Hub Height'
     unit: 'm/s'
+  v_wind_vert:
+    param: 'w_vert'
+    name: 'Vertical Wind Speed at Ground Level'
+    unit: 'm/s'
   pressure_hub:
     param: 'p_hub'
     name: 'Pressure at Hub Height'
@@ -156,9 +171,14 @@ adjustable_pv_params:
   eta_inv_ref: 0.9637
 
 adjustable_wind_params:
-  turbine: 'FWT 120/3000'
+  turbines: ['Enercon E-70 E4 2.300',
+             'Enercon E-82 E2 2.000',
+             'Enercon E-115 2.500',
+             'Vestas V90',
+             'Vestas V112-3.45',
+             'Vestas V80-1.8']
+  hub_heights: [57,138,149,95,119,78]
   h1: 10
-  Cp: 0.59
   rated_speed: ''
   p_s_model: 'huang'
   v2_method: 'alphaI'
@@ -166,6 +186,10 @@ adjustable_wind_params:
   temp_gradient: 0.00649
   interpol_method: 'polynomial'
   polynom_grad: 2
+  noise: 0.075
+  mean_age_years: 15
+  std_dev_age_years: 5
+  annual_degradation: 0.0063
 
 logging:
   verbose: False

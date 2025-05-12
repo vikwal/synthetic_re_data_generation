@@ -1,6 +1,7 @@
 import os
 import time
 import yaml
+import shutil
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -11,16 +12,16 @@ def load_config(config_path):
     with open(config_path, "r") as file:
         return yaml.safe_load(file)
 
-def write_file(url: str, 
-               href: str, 
-               target_dir: str, 
-               sleep=1, 
+def write_file(url: str,
+               href: str,
+               target_dir: str,
+               sleep=1,
                verbose=False
     ):
     file_url = os.path.join(url, href)
     filename = os.path.join(target_dir, href)
     if os.path.exists(filename):
-        if verbose: 
+        if verbose:
             print(f'{filename}_exists.')
         return
     file_response = requests.get(file_url, stream=True)
@@ -32,7 +33,7 @@ def write_file(url: str,
         if verbose:
             print(f'Download for {filename} completed.')
 
-def download(url: str, 
+def download(url: str,
              target_dir: str,
              sleep=1):
     response = requests.get(url)
@@ -47,37 +48,40 @@ def download(url: str,
         if href in existing_files:
             print(f'{href} already exists. Skipping.')
             continue
-        write_file(url=url, 
-                   href=href, 
-                   target_dir=target_dir, 
-                   sleep=sleep, 
+        write_file(url=url,
+                   href=href,
+                   target_dir=target_dir,
+                   sleep=sleep,
                    verbose=True)
 
-def main():    
+def main():
     config_path = "config.yaml"
     config = load_config(config_path)
     sc_config = config['scraping']
-    
+
     download_dir = config['data']['dir']
     download_url = sc_config['download_url']
     vars = sc_config['vars']
     sleep = sc_config['sleep']
     get_historical = sc_config['get_historical']
     get_recent = sc_config['get_recent']
-    
+
     for var in vars:
         target_dir = os.path.join(download_dir, var)
+        if os.path.exists(target_dir) and sc_config['overwrite']:
+            print(f"Deleting {target_dir}...")
+            shutil.rmtree(target_dir)
         os.makedirs(target_dir, exist_ok=True)
         if get_historical:
             url = os.path.join(download_url, var, 'historical')
-            download(url=url, 
+            download(url=url,
                     target_dir=target_dir,
                     sleep=sleep)
         if get_recent:
             url = os.path.join(download_url, var, 'recent')
-            download(url=url, 
+            download(url=url,
                     target_dir=target_dir,
                     sleep=sleep)
-            
+
 if __name__ == '__main__':
     main()

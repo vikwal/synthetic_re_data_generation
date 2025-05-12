@@ -14,7 +14,7 @@ from psycopg2.extras import execute_values
 
 import utils
 
-    
+
 def get_all_stations_files(dir: str,
                            params: dict,
                            column_names: list,
@@ -34,7 +34,7 @@ def get_all_stations_files(dir: str,
     # read all station files
     stations = None
     for station in station_files:
-        df_station = pd.read_fwf(station, 
+        df_station = pd.read_fwf(station,
                                 encoding='latin1',
                                 skiprows=2,
                                 names=column_names)
@@ -49,7 +49,7 @@ def get_all_stations_files(dir: str,
             stations = df_station.copy()
     stations['Stations_id'] = stations["Stations_id"].apply(lambda x: f"{x:05d}")
     return stations
-    
+
 def filter_stations(dir: str,
                     stations: pd.DataFrame,
                     to_date: str,
@@ -81,18 +81,18 @@ def filter_stations(dir: str,
     matrix = pd.DataFrame(0, index=vars, columns=vars)
     for (cat1, cat2), count in combination_counts.items():
         matrix.loc[cat1, cat2] += count
-        matrix.loc[cat2, cat1] += count  
+        matrix.loc[cat2, cat1] += count
     for category in vars:
         if category in single_entries:
-            matrix.loc[category, category] = single_entries[category]    
+            matrix.loc[category, category] = single_entries[category]
     print(matrix)
     temp_temp = str(matrix['air_temperature'].loc['air_temperature'])
-    temp_solar = str(matrix['air_temperature'].loc['solar'])
+    #temp_solar = str(matrix['air_temperature'].loc['solar'])
     print('')
     print(f'There are {temp_temp} stations where air_temperature was the only measurement.')
-    print(f'There are {temp_solar} stations where air_temperature and solar are measured.')
+    #print(f'There are {temp_solar} stations where air_temperature and solar are measured.')
     return stations
-    
+
 def get_valid_stations(stations: pd.DataFrame,
                        vars: list):
     valid_stations = (stations.groupby("Stations_id")["Table"].apply(lambda x: set(x) == set(vars)))
@@ -100,7 +100,7 @@ def get_valid_stations(stations: pd.DataFrame,
     stations = stations[stations["Stations_id"].isin(valid_stations_ids)]
     print('')
     print(f'{len(stations.Stations_id.unique())} unique weather stations after cleaning. \n')
-    return stations    
+    return stations
 
 def get_file_paths(dir: str,
                    stations: pd.DataFrame,
@@ -116,32 +116,32 @@ def get_file_paths(dir: str,
             if 'produkt' in file:
                 file_split = re.split(r'[_\.]', file)
                 to_date_file = datetime.strptime(file_split[5], '%Y%m%d')
-                in_date = to_date_file == datetime.strptime(to_date, '%Y-%m-%d')  
+                in_date = to_date_file == datetime.strptime(to_date, '%Y-%m-%d')
                 in_ids = file_split[-2] in stations_ids
                 if in_date and in_ids:
                     file_paths.append(os.path.join(root, file))
     # check if the list of files contains all relevant stations
     extracted_data = []
     for path in file_paths:
-        parts = re.split(r'[\/_.]', path) 
-        category = parts[-9]   
+        parts = re.split(r'[\/_.]', path)
+        category = parts[-9]
         if category == 'temperature':
             category = 'air_temperature'
         if category == 'test':
             category = 'wind_test'
-        date = parts[-3]       
+        date = parts[-3]
         station_id = parts[-2]
         extracted_data.append([category, date, station_id])
     df_proof = pd.DataFrame(extracted_data, columns=["Category", "Date", "Stations_ID"])
     proof = [id for id in df_proof.Stations_ID.unique() if not id in stations_ids]
     if proof:
-        print(f'There are inconsistent stations in your dataframe for to_date={to_date}.')
+        print(f'There are inconsistent stations ({len(stations_ids)}) in your dataframe for to_date={to_date}.')
     else:
-        print(f'The stations are consistent with your stations_ids list for to_date={to_date}.')
+        print(f'The stations ({len(stations_ids)}) are consistent with your stations_ids list for to_date={to_date}.')
     grouped = defaultdict(lambda: {var: None for var in vars})
     for path in file_paths:
         parts = re.split(r'[\/_.]', path)
-        category = parts[-9]  
+        category = parts[-9]
         station_id = parts[-2]
         if category == 'temperature':
             category = 'air_temperature'
@@ -159,7 +159,7 @@ def make_final_frames(path_list: list,
                       from_date: str):
     final_df = []
     master_data = []
-    for ele in tqdm(path_list):
+    for ele in tqdm(path_list, desc='Creating final dataframes'):
         station_df = None
         for file in ele:
             station_id = re.search(r'_(\d{5})\.txt$', file).group(1)
@@ -167,6 +167,8 @@ def make_final_frames(path_list: list,
             raw['timestamp'] = pd.to_datetime(raw['MESS_DATUM'], format='%Y%m%d%H%M', utc=True)
             raw.set_index('timestamp', inplace=True)
             raw.drop(['MESS_DATUM', '  QN', 'eor'], axis=1, inplace=True)
+            if 'RWS_IND_10' in raw.columns:
+                raw.drop(['RWS_IND_10'], axis=1, inplace=True)
             raw['STATIONS_ID'] = station_id
             if station_df is not None:
                 station_df = pd.merge(station_df, raw, how='inner', on=['timestamp', 'STATIONS_ID'])
@@ -205,29 +207,35 @@ def create_stations_table(db_config: dict,
 def write_tables(db_config: dict,
                  df_list: list,
                  master_data=None):
+    db_config['database'] = db_config['database_obs']
     conn, cursor = utils.connect_db(db_config)
     if master_data:
         query = f"""
                 INSERT INTO MasterData (station_id, station_height, latitude, longitude)
                 VALUES %s
-                ON CONFLICT (station_id) DO UPDATE 
-                SET station_height = EXCLUDED.station_height, 
-                    latitude = EXCLUDED.latitude, 
+                ON CONFLICT (station_id) DO UPDATE
+                SET station_height = EXCLUDED.station_height,
+                    latitude = EXCLUDED.latitude,
                     longitude = EXCLUDED.longitude;
             """
         execute_values(cursor, query, master_data)
         conn.commit()
+        print('Master data written to db.')
     primary_key = ['timestamp', 'station_id']
-    for df in tqdm(df_list):
+    for df in tqdm(df_list, desc='Writing data to db'):
         df.reset_index(inplace=True)
         columns = ', '.join(df.columns)
         update_columns = [col for col in df.columns if col not in primary_key]
-        update_clause = ", ".join(f"{col} = EXCLUDED.{col}" for col in update_columns)
+        if db_config['do_update']:
+            update_clause = ", ".join(f"{col} = EXCLUDED.{col}" for col in update_columns)
+            conflict_sql_part = f"DO UPDATE SET {update_clause}"
+        else:
+            conflict_sql_part = "DO NOTHING"
+        # in case of updating conflicting columnsDO UPDATE SET {update_clause}
         query = f"""
             INSERT INTO stations ({columns})
             VALUES %s
-            ON CONFLICT ({', '.join(primary_key)}) DO UPDATE
-            SET {update_clause}
+            ON CONFLICT ({', '.join(primary_key)}) {conflict_sql_part}
         """
         data = [x.tolist() for x in df.to_numpy()]
         execute_values(cursor, query, data)
@@ -250,13 +258,13 @@ def main() -> None:
     historical_pkl = config['write']['historical_pkl']
     write_historical = config['write']['write_historical']
     write_recent = config['write']['write_recent']
-    
+
     # no data older than this date should be considered (because nwp data is only available from here)
     from_date = config['data']['from_date']
     hist_date = config['data']['hist_date']
     column_names = [
-    "Stations_id", "von_datum", "bis_datum", "Stationshoehe",
-    "geoBreite", "geoLaenge", "Stationsname", "Bundesland", "Abgabe"
+        "Stations_id", "von_datum", "bis_datum", "Stationshoehe",
+        "geoBreite", "geoLaenge", "Stationsname", "Bundesland", "Abgabe"
     ]
     stations = get_all_stations_files(dir=directory,
                                       params=params,
@@ -271,11 +279,13 @@ def main() -> None:
                                vars=vars)
     stations = get_valid_stations(stations=stations,
                                   vars=vars)
-    recent_paths = get_file_paths(dir=directory,
-                                  stations=stations,
-                                  to_date=to_date,
-                                  vars=vars)
-    historical_paths = get_file_paths(dir=directory,
+    if write_recent:
+        recent_paths = get_file_paths(dir=directory,
+                                    stations=stations,
+                                    to_date=to_date,
+                                    vars=vars)
+    if write_historical:
+        historical_paths = get_file_paths(dir=directory,
                                       stations=stations,
                                       to_date=hist_date,
                                       vars=vars)
@@ -288,16 +298,18 @@ def main() -> None:
             master_data = pickle.load(file)
     else:
         recent_from_date = utils.days_timedelta(date=hist_date,
-                                          days=1)
-        recent_dfs, master_data = make_final_frames(path_list=recent_paths,
-                                    stations=stations,
-                                    from_date=recent_from_date)
-        utils.to_pickle(path=target_dir,
-                  name=recent_pkl,
-                  obj=recent_dfs)
-        utils.to_pickle(path=target_dir,
-                  name=master_pkl,
-                  obj=master_data)
+                                                days=1)
+        if write_recent:
+            print('Create recent dfs.')
+            recent_dfs, master_data = make_final_frames(path_list=recent_paths,
+                                                        stations=stations,
+                                                        from_date=recent_from_date)
+            utils.to_pickle(path=target_dir,
+                            name=recent_pkl,
+                            obj=recent_dfs)
+            utils.to_pickle(path=target_dir,
+                            name=master_pkl,
+                            obj=master_data)
     historical_dfs_path = os.path.join(target_dir, historical_pkl)
     if os.path.exists(historical_dfs_path) & os.path.exists(master_pkl_path):
         with open(historical_dfs_path, 'rb') as file:
@@ -305,25 +317,30 @@ def main() -> None:
         with open(master_pkl_path, 'rb') as file:
             master_data = pickle.load(file)
     else:
-        historical_dfs, master_data = make_final_frames(path_list=historical_paths,
-                                        stations=stations,
-                                        from_date=from_date)
-        utils.to_pickle(path=target_dir,
-                  name=historical_pkl,
-                  obj=historical_dfs)
-        utils.to_pickle(path=target_dir,
-                  name=master_pkl,
-                  obj=master_data)
+        if write_historical:
+            print('Create historical dfs.')
+            historical_dfs, master_data = make_final_frames(path_list=historical_paths,
+                                            stations=stations,
+                                            from_date=from_date)
+            utils.to_pickle(path=target_dir,
+                    name=historical_pkl,
+                    obj=historical_dfs)
+            utils.to_pickle(path=target_dir,
+                    name=master_pkl,
+                    obj=master_data)
     if create_table:
         column_names = recent_dfs[0].columns
         create_stations_table(db_config=db_config,
                               column_names=column_names)
     if write_historical:
+        print('Write historical data to db.')
         write_tables(db_config=db_config,
-                    df_list=historical_dfs)
+                    df_list=historical_dfs,
+                    master_data=master_data if config['write']['write_master'] else None)
     if write_recent:
+        print('Write recent data to db.')
         write_tables(db_config=db_config,
                     df_list=recent_dfs)
-    
+
 if __name__ == '__main__':
     main()
