@@ -8,214 +8,201 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from collections import defaultdict
+import re
 
+# --- Setup Logger ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger("windmodel")
-log.setLevel(logging.INFO)
 
+# --- Load Config ---
 def load_config(config_path):
-    with open(config_path, "r") as file:
-        return yaml.safe_load(file)
-    
-config = load_config(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.yaml')))
-default_output_filename = config['data']['turbine_power']
-turbine_names = config["data"]["turbine_names"]
+    with open(config_path, "r", encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
-data_source = "https://www.wind-turbine-models.com/powercurves"
-desired_ranges = [
-    (0, 4), (4, 6), (6, 8), (8, 10), (10, 13),
-    (13, 16), (16, 19), (19, 22), (22, 25)
-]
+script_dir = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(script_dir, '..', 'config.yaml')
+config = load_config(config_path)
 
+# --- Paths ---
+PATHS = {
+    'power': config['data']['turbine_power'],
+    'specs': config['data']['turbine_specs'],
+    'cp': config['data']['turbine_cp'],
+    'ct': config['data']['turbine_ct'],
+    'names': config['data']['turbine_names']
+}
 
-def get_turbines_with_power_curve():
-    """Fetches a list of turbine IDs with available power curves."""
+# --- Constants ---
+DATA_SOURCE = "https://www.wind-turbine-models.com/powercurves"
+POWER_CURVE_ENDPOINT = "https://www.wind-turbine-models.com/turbines"
+HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/91.0.4472.124 Safari/537.36'
+    )
+}
+
+# --- Utilities ---
+def get_turbines_with_ids_and_names():
     try:
-        page = requests.get(data_source)
-        page.raise_for_status()
-        soup = BeautifulSoup(page.text, "html.parser")
-        name_list = soup.find(class_="chosen-select")
-        wind_turbines_with_curve = []
-        if name_list:
-            for i in name_list.find_all("option"):
-                value = i.get("value")
-                if value:
-                    wind_turbines_with_curve.append(value)
-        else:
-            log.error("Could not find turbine list (CSS class 'chosen-select').")
-        return wind_turbines_with_curve
-    except requests.exceptions.RequestException as e:
-        log.error(f"Error fetching turbine list: {e}")
+        resp = requests.get(DATA_SOURCE, headers=HEADERS)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        select = soup.find(class_='chosen-select')
+        return [{'id': opt['value'], 'name': opt.text.strip()} \
+                for opt in select.find_all('option') if opt.get('value')]
+    except Exception as e:
+        log.error(f"Error fetching turbines list: {e}")
         return []
 
+def handle_duplicates(items):
+    counts = defaultdict(int)
+    out = []
+    for t in items:
+        counts[t['name']] += 1
+        name = t['name']
+        unique = f"{name}_{counts[name]}" if counts[name] > 1 else name
+        out.append({'id': t['id'], 'name': name, 'unique': unique})
+    df = pd.DataFrame([{'original': i['name'], 'unique': i['unique']} for i in out])
+    df.to_csv(PATHS['names'], index=False)
+    return out
 
-def _fetch_single_range_data(turbine_id, start, stop):
-    """Helper: Fetches data for ONE turbine and ONE range. Returns raw DataFrame."""
-    url = data_source
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    data = {"_action": "compare", "turbines[]": turbine_id, "windrange[]": [start, stop]}
+replacements = {" ": "-", "/": "-", "(": "", ")": "", "+": "-", "%28": "", "%29": "", ",": ""}
+def to_url_path(name):
+    s = name.lower()
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+    while "--" in s:
+        s = s.replace("--", "-")
+    return s.strip('-')
 
-    try:
-        resp = requests.post(url, headers=headers, data=data)
-        resp.raise_for_status()
-        json_data = resp.json()
+# --- Interpolation ---
+def interpolate_series(series, order=3, resolution=0.01):
+    if series.empty:
+        return series
+    nz = series[series > 0]
+    if nz.empty:
+        return pd.Series(0, index=np.arange(series.index.min(), series.index.max() + resolution, resolution))
+    first = nz.index.min()
+    last = nz.index.max()
+    new_idx = np.arange(series.index.min(), series.index.max() + resolution, resolution)
+    new_idx = np.round(new_idx, 2)
+    s2 = series.reindex(new_idx).interpolate(method='polynomial', order=order, limit_direction='both')
+    s2.loc[s2.index < first] = 0
+    s2.loc[s2.index > last] = 0
+    return s2.fillna(0).round(2)
 
-        if "result" not in json_data:
-            log.warning(f"No 'result' in JSON for turbine {turbine_id}, range {start}-{stop}.")
-            return pd.DataFrame()
+# --- Chart JSON Extraction ---
+def extract_chart_json(js_text: str) -> dict:
+    # find start of data object
+    m = re.search(r'data\s*:\s*\{', js_text)
+    if not m:
+        raise ValueError("Could not locate 'data:' in script")
+    start = m.start(0) + js_text[m.start(0):].find('{')
+    brace_count = 0
+    for idx in range(start, len(js_text)):
+        if js_text[idx] == '{': brace_count += 1
+        elif js_text[idx] == '}': brace_count -= 1
+        if brace_count == 0:
+            end = idx
+            break
+    obj_text = js_text[start:end+1]
+    # wrap as JSON with a key
+    json_text = '{"data": ' + obj_text + '}'
+    return json5.loads(json_text)
 
-        strings = json_data["result"]
-        begin = strings.find("data:")
-        end_marker = '"}]'
-        end = strings.find(end_marker, begin)
+# --- Scrapers ---
+def scrape_specs(soup):
+    spec = {'rotor_diameter': None, 'hub_heights': [], 'cut_in': None, 'cut_out': None}
+    def text_after(label):
+        el = soup.find('div', string=label)
+        if el:
+            nxt = el.find_next_sibling('div')
+            return nxt.text.strip() if nxt else None
+        return None
 
-        if begin == -1 or end == -1:
-            log.warning(f"Could not find 'data:' or '{end_marker}' for turbine {turbine_id}, range {start}-{stop}.")
-            return pd.DataFrame()
+    rd = text_after('Durchmesser:')
+    if rd:
+        try: spec['rotor_diameter'] = float(rd.replace(' m','').replace(',', '.'))
+        except: spec['rotor_diameter'] = rd
+    hh = text_after('Nabenhöhe:')
+    if hh:
+        parts = hh.replace(' / ','/').split('/')
+        for p in parts:
+            val = p.strip().replace(' m','')
+            try: spec['hub_heights'].append(float(val.replace(',','.')))
+            except: spec['hub_heights'].append(val)
+    ci = text_after('Einschaltgeschwindigkeit:')
+    if ci:
+        try: spec['cut_in'] = float(ci.replace(' m/s','').replace(',', '.'))
+        except: spec['cut_in'] = ci
+    co = text_after('Abschaltgeschwindigkeit:')
+    if co:
+        try: spec['cut_out'] = float(co.replace(' m/s','').replace(',', '.'))
+        except: spec['cut_out'] = co
+    return spec
 
-        relevant_js = "{" + strings[begin : end + len(end_marker)] + "}}"
-        curve_as_dict = json5.loads(relevant_js)
+# --- Main Processing ---
+def scrape_all():
+    turbines = handle_duplicates(get_turbines_with_ids_and_names())
+    power_df, cp_df, ct_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    specs_list = []
 
-        if not (
-            "data" in curve_as_dict and "labels" in curve_as_dict["data"] and
-            "datasets" in curve_as_dict["data"] and len(curve_as_dict["data"]["datasets"]) > 0 and
-            "data" in curve_as_dict["data"]["datasets"][0] and "label" in curve_as_dict["data"]["datasets"][0]
-        ):
-            log.warning(f"Unexpected JSON structure for turbine {turbine_id}, range {start}-{stop}.")
-            return pd.DataFrame()
-
-        x = curve_as_dict["data"]["labels"]
-        y = curve_as_dict["data"]["datasets"][0]["data"]
-        label = curve_as_dict["data"]["datasets"][0]["label"]
-
+    for t in tqdm(turbines, desc='Turbines'):
+        uid = t['unique']
+        url = f"{POWER_CURVE_ENDPOINT}/{t['id']}-{to_url_path(t['name'])}"
         try:
-            x_float = [float(speed) for speed in x]
-        except ValueError:
-            log.warning(f"Could not convert wind speeds to float for turbine {turbine_id}, range {start}-{stop}: {x}")
-            return pd.DataFrame()
+            time.sleep(1)
+            res = requests.get(url, headers=HEADERS, timeout=15)
+            res.raise_for_status()
+            soup = BeautifulSoup(res.content, 'html.parser')
+            sp = scrape_specs(soup)
+            for hh in sp['hub_heights'] or [None]:
+                specs_list.append({'Turbine': uid, 'Rotordurchmesser': sp['rotor_diameter'],
+                                   'Nabenhöhe': hh, 'Einschaltgeschwindigkeit': sp['cut_in'],
+                                   'Abschaltgeschwindigkeit': sp['cut_out']})
+            tag = soup.find('script', string=lambda s: s and 'tLeistungskurveChart' in s)
+            if not tag: continue
+            chart = extract_chart_json(tag.string)
+            speeds = [float(str(x).replace(',','.')) for x in chart['data']['labels']]
+            for ds in chart['data']['datasets']:
+                label = ds.get('label','').lower()
+                vals = []
+                for v in ds.get('data',[]):
+                    if v in (None,'null'): vals.append(np.nan)
+                    else:
+                        try: vals.append(float(str(v).replace(',','.')))
+                        except: vals.append(v)
+                ser = pd.Series(vals, index=speeds, name=uid)
+                if 'leistung' in label:
+                    power_df = pd.concat([power_df, interpolate_series(ser)], axis=1)
+                elif label == 'cp':
+                    cp_df = pd.concat([cp_df, ser], axis=1)
+                elif label == 'ct':
+                    ct_df = pd.concat([ct_df, ser], axis=1)
+        except Exception as e:
+            log.error(f"Error for {uid}: {e}")
+            continue
 
-        df = pd.DataFrame(np.asarray(y, dtype=float),
-                          index=pd.Index(x_float, name="wind_speed"),
-                          columns=[label])
-        return df
+    cols = power_df.columns
+    return {'power': power_df.sort_index(), 'cp': cp_df.reindex(columns=cols),
+            'ct': ct_df.reindex(columns=cols), 'specs': pd.DataFrame(specs_list)}
 
-    except requests.exceptions.RequestException as e:
-        log.error(f"Network error fetching turbine {turbine_id}, range {start}-{stop}: {e}")
-    except json5.JSONDecodeError as e:
-        log.error(f"JSON parsing error for turbine {turbine_id}, range {start}-{stop}: {e}")
-    except Exception as e:
-        log.error(f"Unexpected error in _fetch_single_range_data for {turbine_id}, range {start}-{stop}: {e}")
-    return pd.DataFrame()
+# --- Save Functions ---
+def save(df, path):
+    df.to_csv(path, sep=';', index=True, index_label='wind_speed')
 
+def main():
+    log.info("Starting scrape...")
+    out = scrape_all()
+    log.info("Saving outputs...")
+    save(out['power'], PATHS['power'])
+    save(out['cp'], PATHS['cp'])
+    save(out['ct'], PATHS['ct'])
+    out['specs'].to_csv(PATHS['specs'], sep=';', index=False)
+    log.info("Done.")
 
-def download_turbine_curve(turbine_id, ranges):
-    """
-    Downloads, combines, and interpolates curve data for one turbine across multiple ranges.
-    Zusätzlich wird anhand der rohen, gescrapten Daten ermittelt, ab welcher Windgeschwindigkeit interpoliert werden soll.
-    """
-    all_range_dfs = []
-    for start, stop in ranges:
-        df_range = _fetch_single_range_data(turbine_id, start, stop)
-        if not df_range.empty:
-            all_range_dfs.append(df_range)
-        time.sleep(0.1) 
-
-    if not all_range_dfs:
-        log.warning(f"No data received for turbine {turbine_id} in specified ranges.")
-        return pd.DataFrame()
-    
-    combined_df = pd.concat(all_range_dfs, axis=0)
-    combined_df = combined_df.sort_index()
-    combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
-
-    raw_df = combined_df.copy()
-
-    try:
-        combined_df.index = pd.to_numeric(combined_df.index)
-        combined_df = combined_df.sort_index()
-        order = 3
-        non_nan_count = combined_df.iloc[:, 0].notna().sum()
-
-        if non_nan_count > order:
-            combined_df = combined_df.interpolate(method="polynomial", order=order, limit_direction='both', axis=0)
-        elif non_nan_count > 1:
-            log.warning(f"Using linear interpolation for turbine {turbine_id} due to insufficient points ({non_nan_count}).")
-            combined_df = combined_df.interpolate(method="linear", limit_direction='both', axis=0)
-
-        combined_df = combined_df.fillna(0)
-
-    except Exception as e:
-        log.error(f"Interpolation failed for turbine {turbine_id}: {e}. Filling NaNs with 0.")
-        combined_df = combined_df.fillna(0)
-
-    try:
-        col = combined_df.columns[0]
-        nonzero_raw = raw_df.loc[raw_df[col] > 0]
-        if not nonzero_raw.empty:
-            first_nonzero = nonzero_raw.index.min()
-            zeros_below = raw_df.loc[(raw_df[col] == 0) & (raw_df.index < first_nonzero)]
-            if not zeros_below.empty:
-                threshold = zeros_below.index.max()
-            else:
-                threshold = first_nonzero - 1
-
-            combined_df.loc[combined_df.index <= threshold, col] = 0
-
-    except Exception as e:
-        log.error(f"Error during threshold correction for turbine {turbine_id}: {e}")
-
-    combined_df.index.name = "wind_speed"
-    return combined_df
-
-
-def download_all_turbines(ranges_to_download):
-    """Downloads curves for all turbines across the specified ranges."""
-    wind_turbines = get_turbines_with_power_curve()
-    if not wind_turbines:
-        log.error("No turbine IDs found for download.")
-        return pd.DataFrame()
-
-    curves = []
-    log.info(f"Starting download for {len(wind_turbines)} turbines.")
-    for turbine_id in tqdm(wind_turbines, desc="Processing turbines"):
-        curve = download_turbine_curve(turbine_id, ranges=ranges_to_download)
-        if not curve.empty:
-            if curve.columns[0] is None or str(curve.columns[0]).strip() == "":
-                curve.columns = [f"Turbine_{turbine_id}"]
-                log.warning(f"Using fallback name for turbine {turbine_id} due to missing label.")
-            curves.append(curve)
-
-    if not curves:
-        log.error("Could not download data for any turbine.")
-        return pd.DataFrame()
-
-    log.info("Combining data from all turbines...")
-    df = pd.concat(curves, axis=1, join='outer')
-    df = df.sort_index()
-    df = df.fillna(0)
-    df = df[df.any(axis=1)]  
-    df[df < 0] = 0           
-    log.info("Download and processing complete.")
-    return df
-
-
-def main(output_filename=default_output_filename):
-    """Main function: downloads data using global ranges and saves to file."""
-    log.info(f"Starting data download using ranges: {desired_ranges}")
-    turbine_data = download_all_turbines(ranges_to_download=desired_ranges)
-
-    if not turbine_data.empty:
-        log.info(f"Saving data to {output_filename}")
-        try:
-            with open(output_filename, "w", encoding='utf-8') as f:
-                turbine_data.to_csv(f, sep=";", decimal=".")
-                pd.DataFrame(turbine_data.columns, columns=["turbine_names"])[1:].to_csv(turbine_names, index=False)
-            log.info("Data saved successfully.")
-        except IOError as e:
-            log.error(f"Error writing CSV file: {e}")
-    else:
-        log.warning("No data available to save.")
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    main(output_filename=default_output_filename)
+if __name__ == '__main__':
+    main()
