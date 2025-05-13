@@ -93,6 +93,8 @@ You can choose to clean:
 python clean_data.py
 ```
 
+The result of this script is a directory called raw, where are CSV-file stored, each for PV and for wind, with raw weather station data.
+
 ---
 
 ### 5. ☁️ Extract Numerical Weather Predictions (NWP)
@@ -102,20 +104,34 @@ Forecast data is stored in two main tables:
 - `SingleLevelFields`: relevant for PV
 - `MultiLevelFields`: relevant for wind
 
-You can control what gets queried:
+You can control what gets queried using command-line flags:
 
-- `config['write']['clean_pv'] = True`
-- `config['write']['clean_wind'] = True`
-- `config['write']['get_vertical_wind'] = True` → for vertical wind profiles
+- `--get_pv`: extract PV forecasts from `SingleLevelFields`
+- `--get_wind`: extract wind forecasts from `MultiLevelFields`
+- `--get_wind_vertical`: extract vertical wind profiles from `AnalysisFields`
 
-> If you only want vertical wind speed:
-> Set `config['write']['get_forecasts'] = False`
-> (At least one of `clean_pv` or `clean_wind` must be `True`)
-
-**Run:**
+**Run for PV, wind and vertical wind:**
 
 ```bash
-python get_nwp.py
+python get_nwp.py --get_pv --get_wind --get_wind_vertical
+```
+
+The result is a directory called `singlelevelfields` or `multilevelfields` for the requested NWP data.
+
+---
+
+## Generate Synthetic Wind Power Time Series
+
+```bash
+python generate_wind.py
+```
+
+---
+
+## Get Masterdata for Synthetic Wind and PV Data
+
+```bash
+python create_masterdata.py
 ```
 
 ---

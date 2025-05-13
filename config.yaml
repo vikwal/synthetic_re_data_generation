@@ -1,9 +1,7 @@
 data:
   dir: '/mnt/nasl2/observed_weather'
-  final_data: 'data'
   synth_dir: 'data/synthetic'
-  solar_dir: 'data/solar'
-  wind_dir: 'data/wind'
+  raw_dir: 'data/raw'
   w_vert_dir: 'data/vertical_wind'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
@@ -36,9 +34,8 @@ write:
   write_master: True
   write: True
   threshold: 0.001
-  clean_pv: True
-  clean_wind: False
-  get_forecasts: False
+  clean_pv: False
+  clean_wind: True
   get_vertical_wind: False
   db_conf:
     host: 'localhost'

@@ -3,6 +3,7 @@ import yaml
 import pickle
 import getpass
 import psycopg2
+import pandas as pd
 from datetime import datetime, timedelta
 
 def load_config(config_path: str) -> dict:
@@ -13,6 +14,24 @@ def load_config(config_path: str) -> dict:
     """
     with open(config_path, "r") as file:
         return yaml.safe_load(file)
+
+def get_master_data(db_config: dict):
+    """
+    Get the master data from the database.
+    :param db_config: Database configuration dictionary.
+    :return: DataFrame with the master data.
+    """
+    db_config['database'] = db_config['database_obs']
+    conn, cursor = connect_db(db_config)
+    query = f"""
+            SELECT * FROM masterdata;
+        """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description]
+    df = pd.DataFrame(rows, columns=columns)
+    conn.close()
+    return df
 
 def to_pickle(path: str,
               name: str,

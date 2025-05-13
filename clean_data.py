@@ -96,14 +96,14 @@ def main():
     db_config = config['write']['db_conf']
     params = config['synth']
     threshold = config['write']['threshold']
-    solar_dir = config['data']['solar_dir']
-    wind_dir = config['data']['wind_dir']
+    solar_dir = os.path.join(config['data']['raw_dir'], 'solar')
+    wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
     db_config['database'] = db_config['database_obs']
 
     pv_features, wind_features = relevant_features(params=params)
-    master_data = get_nwp.get_master_data(db_config=db_config)
+    master_data = utils.get_master_data(db_config=db_config)
 
     logging.info('Getting distinct station ids')
     station_ids = get_station_ids(db_config=db_config)

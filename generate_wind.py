@@ -359,9 +359,8 @@ def main() -> None:
     config = utils.load_config("config.yaml")
 
     dir = config['data']['wind_dir']
-    synth_dir = config['data']['synth_dir']
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind')
     w_vert_dir = config['data']['w_vert_dir']
-    synth_dir = config['data']['synth_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
     turbine_path = os.path.join(turbine_dir, turbine_power)
