@@ -16,13 +16,13 @@ import utils
 
 
 def get_all_stations_files(dir: str,
-                           params: dict,
+                           features: dict,
                            column_names: list,
                            vars: list):
-    features = []
-    for feature in params:
+    feature_names = []
+    for feature in features:
         if not feature == 'threshold':
-            features.append(params[feature]['param'])
+            feature_names.append(features[feature]['old_name'])
     # get all station files
     station_files = []
     for root, dirs, files in os.walk(dir):
@@ -154,9 +154,20 @@ def get_file_paths(dir: str,
             structured_list.append([paths[var] for var in vars])
     return structured_list
 
+def rename_columns(data: pd.DataFrame,
+                   features: dict) -> pd.DataFrame:
+    df = data.copy()
+    mapping = {}
+    for key, value in features:
+        if value['old_name'] in df.columns:
+            mapping[key] = value['name']
+    df.rename(columns=mapping, inplace=True)
+    return df
+
 def make_final_frames(path_list: list,
                       stations: pd.DataFrame,
-                      from_date: str):
+                      from_date: str,
+                      features: dict):
     final_df = []
     master_data = []
     for ele in tqdm(path_list, desc='Creating final dataframes'):
@@ -182,6 +193,7 @@ def make_final_frames(path_list: list,
         col_vals = stations[stations.Stations_id == station_id][cols].drop_duplicates().values
         master_cols = col_vals.reshape(-1).tolist()
         master_cols.insert(0, station_id)
+        station_df = rename_columns(data=station_df, features=features)
         final_df.append(station_df[from_date:])
         master_data.append(master_cols)
     return final_df, master_data
@@ -247,7 +259,7 @@ def main() -> None:
     config = utils.load_config("config.yaml")
     directory = config['data']['dir']
     target_dir = config['data']['final_data']
-    params = config['synth']
+    features = config['features']
     vars = config['scraping']['vars']
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
@@ -267,7 +279,7 @@ def main() -> None:
         "geoBreite", "geoLaenge", "Stationsname", "Bundesland", "Abgabe"
     ]
     stations = get_all_stations_files(dir=directory,
-                                      params=params,
+                                      features=features,
                                       column_names=column_names,
                                       vars=vars)
     to_date = str(stations['bis_datum'].max().date())

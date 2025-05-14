@@ -9,19 +9,19 @@ import logging
 
 import utils, get_nwp
 
-def relevant_features(params: dict):
-    pv_features = [params['ghi']['param'],
-                   params['dhi']['param'],
-                   params['temperature']['param'],
-                   params['dewpoint']['param'],
-                   params['v_wind']['param'],
-                   params['pressure']['param']]
-    wind_features = [params['v_wind']['param'],
-                     params['temperature']['param'],
-                     params['relhum']['param'],
-                     params['sigma_wind_lon']['param'],
-                     params['pressure']['param'],
-                     params['d_wind']['param']]
+def relevant_features(features: dict):
+    pv_features = [features['ghi']['old_name'],
+                   features['dhi']['old_name'],
+                   features['temperature']['old_name'],
+                   features['dewpoint']['old_name'],
+                   features['v_wind']['old_name'],
+                   features['pressure']['old_name']]
+    wind_features = [features['v_wind']['old_name'],
+                     features['temperature']['old_name'],
+                     features['relhum']['old_name'],
+                     features['sigma_wind_lon']['old_name'],
+                     features['pressure']['old_name'],
+                     features['d_wind']['old_name']]
     return pv_features, wind_features
 
 def get_station_ids(db_config: dict):
@@ -94,7 +94,7 @@ def main():
 
     config = utils.load_config('config.yaml')
     db_config = config['write']['db_conf']
-    params = config['synth']
+    features = config['features']
     threshold = config['write']['threshold']
     solar_dir = os.path.join(config['data']['raw_dir'], 'solar')
     wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
@@ -102,7 +102,7 @@ def main():
     config['write']['db_conf']['passw'] = passw
     db_config['database'] = db_config['database_obs']
 
-    pv_features, wind_features = relevant_features(params=params)
+    pv_features, wind_features = relevant_features(features=features)
     master_data = utils.get_master_data(db_config=db_config)
 
     logging.info('Getting distinct station ids')

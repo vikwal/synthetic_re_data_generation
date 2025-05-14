@@ -47,118 +47,8 @@ write:
     passw: ''
     do_update: False # on conflict do what?
 
-synth:
-  pressure:
-    param: 'PP_10'
-    name: 'Pressure'
-    unit: 'Pa'
-  temperature:
-    param: 'TT_10'
-    name: 'Temperature at 2m'
-    unit: '°C'
-  relhum:
-    param: 'RF_10'
-    name: 'Relative Humidity'
-    unit: '%'
-  dewpoint:
-    param: 'TD_10'
-    name: 'Dew Point'
-    unit: '°C'
-  dhi:
-    param: 'DS_10'
-    name: 'DHI'
-    unit: 'W/m$^2$'
-  ghi:
-    param: 'GS_10'
-    name: 'GHI'
-    unit: 'W/m$^2$'
-  v_wind:
-    param: 'FF_10'
-    name: 'Wind Speed'
-    unit: 'm/s'
-  d_wind:
-    param: 'DD_10'
-    name: 'Wind Direction'
-    unit: '°'
-  prec:
-    param: 'RWS_10'
-    name: 'Precipitation Rate'
-    unit: 'mm'
-  prec_dau:
-    param: 'RWS_DAU_10'
-    name: 'Precipitation duration'
-    unit: 'min'
-  sigma_wind_lat:
-    param: 'SLA_10'
-    name: 'Standard Deviation of Zonal Wind Speed'
-    unit: ''
-  sigma_wind_lon:
-    param: 'SLO_10'
-    name: 'Standard Deviation of Meridional Wind Speed'
-    unit: ''
-  w_wind:
-    param: 'W_Wind'
-    name: 'Vertical Wind Speed'
-    unit: 'm/s'
-  latitude:
-    param: 'geoBreite'
-    name: 'Latitude'
-    unit: '°'
-  longitude:
-    param: 'geoLaenge'
-    name: 'Longitude'
-    unit: '°'
-  elevation:
-    param: 'Stationshoehe'
-    name: 'Station Height'
-    unit: 'm'
-  density:
-    param: 'rho'
-    name: 'Density'
-    unit: 'kg/m$^3$'
-  sat_vap_pressure:
-    param: 'p_s'
-    name: 'Saturated Vapor Pressure'
-    unit: 'Pa'
-  sat_vap_pressure_hub:
-    param: 'p_s_hub'
-    name: 'Saturated Vapor Pressure at Hub Height'
-    unit: 'Pa'
-  v_wind_hub:
-    param: 'v_wind_hub'
-    name: 'Wind Speed at Hub Height'
-    unit: 'm/s'
-  v_wind_vert:
-    param: 'w_vert'
-    name: 'Vertical Wind Speed at Ground Level'
-    unit: 'm/s'
-  pressure_hub:
-    param: 'p_hub'
-    name: 'Pressure at Hub Height'
-    unit: 'Pa'
-  temperature_hub:
-    param: 't_hub'
-    name: 'Temperature at Hub Height'
-    unit: '°C'
-  density_hub:
-    param: 'rho_hub'
-    name: 'Density at Hub Height'
-    unit: 'kg/m$^3$'
-  cp_curve:
-    param: 'Cp'
-    name: 'Cps of Cp Curve'
-    unit: '-'
-  power_curve:
-    param: 'power_curve'
-    name: 'Theoretical power according to power curve'
-    unit: 'Watt'
-  power:
-    param: 'power'
-    name: 'Calculated power'
-    unit: 'Watt'
 
-
-adjustable_pv_params:
+pv_params:
   installed_power: 100
   surface_tilt: 40
   surface_azimuth: 245
@@ -167,7 +57,7 @@ adjustable_pv_params:
   eta_inv_nom: 0.96
   eta_inv_ref: 0.9637
 
-adjustable_wind_params:
+wind_params:
   turbines: ['Enercon E-70 E4 2.300',
              'Enercon E-82 E2 2.000',
              'Enercon E-115 2.500',
@@ -192,3 +82,110 @@ logging:
   verbose: False
   log_file_write: 'write_db.log'
   datefmt: '%Y-%m-%d %H:%M:%S'
+
+features:
+  pressure:
+    old_name: 'PP_10'
+    name: 'pressure'
+    unit: 'Pa'
+  temperature:
+    old_name: 'TT_10'
+    name: 'temperature_2m'
+    unit: '°C'
+  temperature_5cm:
+    old_name: 'TM5_10'
+    name: 'temperature_5cm'
+    unit: '°C'
+  relhum:
+    old_name: 'RF_10'
+    name: 'relative_humidity'
+    unit: '%'
+  dewpoint:
+    old_name: 'TD_10'
+    name: 'dew_point'
+    unit: '°C'
+  dhi:
+    old_name: 'DS_10'
+    name: 'dhi'
+    unit: 'W/m$^2$'
+  ghi:
+    old_name: 'GS_10'
+    name: 'ghi'
+    unit: 'W/m$^2$'
+  sun_duration:
+    old_name: 'SD_10'
+    name: 'sun_duration'
+    unit: 'h'
+  longwave_rad:
+    old_name: 'LS_10'
+    name: 'longwave_rad'
+    unit: 'J/m$^2'
+  wind_speed:
+    old_name: 'FF_10'
+    name: 'wind_speed'
+    unit: 'm/s'
+  d_wind:
+    old_name: 'DD_10'
+    name: 'wind_direction'
+    unit: '°'
+  prec:
+    old_name: 'RWS_10'
+    name: 'precipitation_rate'
+    unit: 'mm'
+  prec_dau:
+    old_name: 'RWS_DAU_10'
+    name: 'precipitation_duration'
+    unit: 'min'
+  sigma_wind_lat:
+    old_name: 'SLA_10'
+    name: 'std_u_wind'
+    unit: ''
+  sigma_wind_lon:
+    old_name: 'SLO_10'
+    name: 'std_v_wind'
+    unit: ''
+  latitude:
+    old_name: 'geoBreite'
+    name: 'latitude'
+    unit: '°'
+  longitude:
+    old_name: 'geoLaenge'
+    name: 'longitude'
+    unit: '°'
+  elevation:
+    old_name: 'Stationshoehe'
+    name: 'station_height'
+    unit: 'm'
+  density:
+    name: 'density'
+    unit: 'kg/m$^3$'
+  sat_vap_pressure:
+    name: 'saturated_vapor_pressure'
+    unit: 'Pa'
+  sat_vap_pressure_hub:
+    name: 'saturated_vapor_pressure_at_height'
+    unit: 'Pa'
+  wind_speed_hub:
+    name: 'wind_speed_hub'
+    unit: 'm/s'
+  wind_speed_vertical:
+    name: 'wind_speed'
+    unit: 'm/s'
+  pressure_hub:
+    name: 'pressure_hub'
+    unit: 'Pa'
+  temperature_hub:
+    name: 'temperature_hub'
+    unit: '°C'
+  density_hub:
+    name: 'density_hub'
+    unit: 'kg/m$^3$'
+  cp_curve:
+    name: 'cp'
+    unit: '-'
+  power_curve:
+    name: 'power_curve'
+    unit: 'Watt'
+  power:
+    name: 'power'
+    unit: 'Watt'

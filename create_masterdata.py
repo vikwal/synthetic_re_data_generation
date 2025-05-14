@@ -7,8 +7,8 @@ import utils
 def get_turbine_master(turbine_path: str,
                  cp_path: str,
                  specs_path: str,
-                 adj_params: dict):
-    turbines = adj_params['turbines']
+                 params: dict):
+    turbines = params['turbines']
     # read power curves
     power_curves = pd.read_csv(turbine_path, sep=";", decimal=".")
     power_curves.set_index('wind_speed', inplace=True)
@@ -24,7 +24,7 @@ def get_turbine_master(turbine_path: str,
         entry = {
             'turbine': turbine,
             'diameter': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Rotordurchmesser'].values[0]),
-            'height': adj_params['hub_heights'][height],
+            'height': params['hub_heights'][height],
             #'cut_in_speed': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Einschaltgeschwindigkeit'].values[0]),
             #'cut_out_speed': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Abschaltgeschwindigkeit'].values[0]),
             #'rated_speed': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Nenngeschwindigkeit'].values[0]),
@@ -64,7 +64,7 @@ def main() -> None:
             turbine_path=power_curve_path,
             cp_path=cp_path,
             specs_path=specs_path,
-            adj_params=config['adjustable_wind_params']
+            params=config['wind_params']
         )
         power_curves.to_csv(os.path.join(target_dir, 'power_curves.csv'))
         #cp_curves.to_csv(os.path.join(target_dir, 'cp_curves.csv'))
