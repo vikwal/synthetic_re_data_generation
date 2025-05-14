@@ -10,18 +10,18 @@ import logging
 import utils, get_nwp
 
 def relevant_features(features: dict):
-    pv_features = [features['ghi']['old_name'],
-                   features['dhi']['old_name'],
-                   features['temperature']['old_name'],
-                   features['dewpoint']['old_name'],
-                   features['v_wind']['old_name'],
-                   features['pressure']['old_name']]
-    wind_features = [features['v_wind']['old_name'],
-                     features['temperature']['old_name'],
-                     features['relhum']['old_name'],
-                     features['sigma_wind_lon']['old_name'],
-                     features['pressure']['old_name'],
-                     features['d_wind']['old_name']]
+    pv_features = [features['ghi']['name'],
+                   features['dhi']['name'],
+                   features['temperature']['name'],
+                   features['dewpoint']['name'],
+                   features['wind_speed']['name'],
+                   features['pressure']['name']]
+    wind_features = [features['wind_speed']['name'],
+                     features['temperature']['name'],
+                     features['relhum']['name'],
+                     features['sigma_wind_lon']['name'],
+                     features['pressure']['name'],
+                     features['d_wind']['name']]
     return pv_features, wind_features
 
 def get_station_ids(db_config: dict):
@@ -51,7 +51,6 @@ def iterate_stations(db_config: dict,
         if rows:
             # Spaltennamen abrufen
             columns = [desc[0] for desc in cursor.description]
-            columns = [x.upper() if x not in ('timestamp', 'station_id') else x for x in columns]
             df = pd.DataFrame(rows, columns=columns)
             df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
             #df['timestamp'] = df['timestamp'].dt.tz_convert("Europe/Berlin")

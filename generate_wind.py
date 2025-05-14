@@ -24,7 +24,7 @@ def get_windspeed_at_height(data: pd.DataFrame,
     data : pd.DataFrame
     features: dict
         Dictionary with parameters names
-        features['v_wind']['name']: Wind Speed
+        features['wind_speed']['name']: Wind Speed
         features['d_wind']['name']: Wind Direction
         features['w_wind']['name']: Vertical Wind Speed
         features['sigma_wind_lon']['name']: Standard Deviation longitudinal wind speed
@@ -43,14 +43,14 @@ def get_windspeed_at_height(data: pd.DataFrame,
     v2 : float
         The calculated wind speed at height h2.
     """
-    v1 = data[features['v_wind']['name']]
+    v1 = data[features['wind_speed']['name']]
     method = params['v2_method']
     h1 = params['h1']
     h2 = params['hub_height']
     if method == 'alphaI':
         direction = data[features['d_wind']['name']]
         sigma_u = data[features['sigma_wind_lon']['name']]
-        w = data[features['wind_speed_hub']['name']]
+        w = data[features['wind_speed_vertical']['name']]
         k = params['karman']
         theta = (270 - direction).apply(math.radians)
         u = v1 * theta.apply(math.cos)
@@ -120,8 +120,8 @@ def get_density_at_height(data: pd.DataFrame,
 def get_power_curve(data: pd.DataFrame,
                     power_curve: pd.Series,
                     features: dict) -> pd.Series:
-    wind = data[[features["wind_speed_hub"]["param"]]]
-    power = pd.merge(wind, power_curve,left_on=features["wind_speed_hub"]["param"], right_on='wind_speed', how="left")
+    wind = data[[features["wind_speed_hub"]['name']]]
+    power = pd.merge(wind, power_curve,left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
     power.index = wind.index
     #C_p = (power["power"]/1000) / (0.5 * rho * rotor_area * wind["wind_speed_hub"]**3)
     return power[power_curve.name]
@@ -138,7 +138,7 @@ def get_Cp(data: pd.DataFrame,
                                     features=features,
                                     params=params)
         return Cp
-    wind = data[[features["wind_speed_hub"]["param"]]]
+    wind = data[[features["wind_speed_hub"]['name']]]
     ticks = np.arange(0, 2501, 1) / 100.0
     wind_speed_index = pd.DataFrame(ticks, columns=['wind_speed'])
     cp_curve = pd.merge(wind_speed_index, cp_curve, how='left', right_index=True, left_on='wind_speed')
@@ -147,7 +147,7 @@ def get_Cp(data: pd.DataFrame,
     elif params['interpol_method'] == 'polynomial':
         cp_curve = cp_curve.interpolate(method='polynomial', order=params['polynom_grad'], axis=0)
     cp_curve.fillna(0, inplace=True)
-    Cp = pd.merge(wind, cp_curve,left_on=features["wind_speed_hub"]["param"], right_on='wind_speed', how="left")[turbine]
+    Cp = pd.merge(wind, cp_curve,left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")[turbine]
     Cp.index = wind.index
     return Cp
 
@@ -155,8 +155,8 @@ def get_cp_from_power_curve(data: pd.DataFrame,
                             power_curve: pd.Series,
                             features: dict,
                             params: dict) -> pd.Series:
-    wind = data[[features["wind_speed_hub"]["param"]]]
-    power = pd.merge(wind, power_curve.reset_index(),left_on=features["wind_speed_hub"]["param"], right_on='wind_speed', how="left")
+    wind = data[[features["wind_speed_hub"]['name']]]
+    power = pd.merge(wind, power_curve.reset_index(),left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
     power.index = wind.index
     rotor_diameter = params['rotor_diameter']
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
@@ -252,7 +252,7 @@ def get_turbines(turbine_path: str,
     cp_curves.set_index('wind_speed', inplace=True)
     cp_curves = cp_curves[turbines]
     # read turbine specs
-    turbine_specs = pd.read_csv(specs_path)
+    turbine_specs = pd.read_csv(specs_path, sep=';')
     diameter_height = {}
     for height, turbine in enumerate(turbines):
         diameter_height[turbine] = {
@@ -359,7 +359,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
 def main() -> None:
     config = utils.load_config("config.yaml")
 
-    dir = config['data']['wind_dir']
+    raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
     synth_dir = os.path.join(config['data']['synth_dir'], 'wind')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
@@ -373,11 +373,11 @@ def main() -> None:
     os.makedirs(synth_dir, exist_ok=True)
 
     features = config['features']
-    params = config['wind_features']
+    params = config['wind_params']
 
     _, wind_features = clean_data.relevant_features(features=features)
 
-    frames, station_ids = read_dfs(dir=dir, w_vert_dir=w_vert_dir, features=wind_features)
+    frames, station_ids = read_dfs(dir=raw_dir, w_vert_dir=w_vert_dir, features=wind_features)
     power_curves, cp_curves, diameter_height = get_turbines(
         turbine_path=turbine_path,
         cp_path=cp_path,

@@ -163,13 +163,13 @@ features:
     name: 'saturated_vapor_pressure'
     unit: 'Pa'
   sat_vap_pressure_hub:
-    name: 'saturated_vapor_pressure_at_height'
+    name: 'saturated_vapor_pressure_hub'
     unit: 'Pa'
   wind_speed_hub:
     name: 'wind_speed_hub'
     unit: 'm/s'
   wind_speed_vertical:
-    name: 'wind_speed'
+    name: 'w_vert' # change later to wind_speed_vertical
     unit: 'm/s'
   pressure_hub:
     name: 'pressure_hub'
