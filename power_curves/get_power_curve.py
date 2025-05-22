@@ -92,12 +92,12 @@ def interpolate_series(series, order=3, resolution=0.01, clamp_mode='power'):
     s2 = series.reindex(new_idx).interpolate(method='polynomial', order=order, limit_direction='both')
     
     if clamp_mode == 'power':
+        # Nur vor der Cut-In-Geschwindigkeit auf 0 setzen
         s2.loc[s2.index < first] = 0
-        s2.loc[s2.index > last] = 0
     elif clamp_mode == 'none':
-        pass  # Keine Clamping für Cp/Ct
+        pass
     
-    return s2.fillna(0).round(2) if clamp_mode == 'power' else s2.round(2)
+    return s2.round(2)
 
 # --- Chart JSON Extraction ---
 def extract_chart_json(js_text: str) -> dict:
@@ -246,28 +246,43 @@ def post_process_data(out):
         except:
             continue
         
-        # Power-Curve-Verarbeitung
         power_series = out['power'][col].copy()
-        last_valid = power_series.last_valid_index()
         
-        if last_valid and (last_valid < cut_out):
-            new_speeds = np.round(np.arange(last_valid + 0.01, cut_out + 0.01, 0.01), 2)
-            extension = pd.Series(power_series.loc[last_valid], index=new_speeds)
-            power_series = power_series.combine_first(extension)
+        # Update Einschaltgeschwindigkeit in den Specs
+        non_zero_power = power_series[power_series > 0]
+        if not non_zero_power.empty:
+            actual_cut_in = non_zero_power.index.min()
+            mask = out['specs']['Turbine'] == col
+            out['specs'].loc[mask, 'Einschaltgeschwindigkeit'] = actual_cut_in
         
-        first_non_zero = power_series[power_series > 0].index.min()
-        if pd.notna(first_non_zero):
-            power_series.loc[:first_non_zero] = 0
-        power_series.clip(lower=0, inplace=True)
+        # Letzten nicht-Null-Wert finden
+        non_zero = power_series[power_series > 0]
+        if not non_zero.empty:
+            last_non_zero = non_zero.index.max()
+            
+            # Automatische Verlängerung mit ffill
+            if last_non_zero < cut_out:
+                new_index = np.round(np.arange(power_series.index.min(), cut_out + 0.01, 0.01), 2)
+                power_series = power_series.reindex(new_index)
+                power_series.ffill(inplace=True)
+        
+        # Alles über der Abschaltgeschwindigkeit auf 0 setzen
         power_series.loc[power_series.index > cut_out] = 0
+        
+        # Sicherstellen, dass vor der ersten nicht-Null 0 ist
+        non_zero = power_series[power_series > 0]
+        if not non_zero.empty:
+            first_non_zero = non_zero.index.min()
+            power_series.loc[power_series.index < first_non_zero] = 0
         
         out['power'][col] = power_series.reindex(unified_index, fill_value=0)
         
-        # Cp/Ct-Werte über Abschaltgeschwindigkeit auf NaN setzen
+        # Cp/Ct-Daten korrigieren
         mask = out['cp'].index > cut_out
         out['cp'].loc[mask, col] = np.nan
         out['ct'].loc[mask, col] = np.nan
     
+    # Finale Harmonisierung
     out['power'] = out['power'].reindex(unified_index, fill_value=0)
     out['cp'] = out['cp'].reindex(unified_index)
     out['ct'] = out['ct'].reindex(unified_index)
