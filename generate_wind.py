@@ -117,50 +117,40 @@ def get_density_at_height(data: pd.DataFrame,
     rho2 = rho1 * ( 1 - (temp_gradient * delta_h) / t1 ) ** ( (M * g) / (temp_gradient * R) - 1)
     return rho2
 
-def get_power_curve(data: pd.DataFrame,
-                    power_curve: pd.Series,
-                    features: dict) -> pd.Series:
+def merge_curve(data: pd.DataFrame,
+                curve: pd.Series,
+                features: dict) -> pd.Series:
     wind = data[[features["wind_speed_hub"]['name']]]
-    power = pd.merge(wind, power_curve,left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
-    power.index = wind.index
-    #C_p = (power["power"]/1000) / (0.5 * rho * rotor_area * wind["wind_speed_hub"]**3)
-    return power[power_curve.name]
+    values = pd.merge(wind, curve,left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
+    values.index = wind.index
+    return values[curve.name]
 
-def get_Cp(data: pd.DataFrame,
-           power_curve: pd.Series,
-           cp_curve: pd.Series,
-           features: dict,
-           params: dict,):
-    turbine = cp_curve.name
-    if cp_curve.isna().all():
-        Cp = get_cp_from_power_curve(data=data,
-                                    power_curve=power_curve,
-                                    features=features,
-                                    params=params)
-        return Cp
-    wind = data[[features["wind_speed_hub"]['name']]]
-    ticks = np.arange(0, 2501, 1) / 100.0
-    wind_speed_index = pd.DataFrame(ticks, columns=['wind_speed'])
-    cp_curve = pd.merge(wind_speed_index, cp_curve, how='left', right_index=True, left_on='wind_speed')
-    if params['interpol_method'] == 'linear':
-        cp_curve = cp_curve.interpolate(method='linear', axis=0)
-    elif params['interpol_method'] == 'polynomial':
-        cp_curve = cp_curve.interpolate(method='polynomial', order=params['polynom_grad'], axis=0)
-    cp_curve.fillna(0, inplace=True)
-    Cp = pd.merge(wind, cp_curve,left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")[turbine]
-    Cp.index = wind.index
-    return Cp
+def interpolate(power_curve: pd.DataFrame, cut_out: float):
+    ticks = np.arange(0, cut_out*100, 1) / 100.0
+    rated_power = power_curve.max()
+    interpol = pd.Series(index=ticks, dtype=float)
+    interpol.index.name = 'wind_speed'
+    interpol = interpol.to_frame().merge(power_curve.to_frame(), how='left', left_index=True, right_index=True)
+    interpol.drop(columns=[0], inplace=True)
+    interpol.iloc[-1] = rated_power
+    interpol = interpol.interpolate(method='polynomial', order=3)
+    interpol = interpol.clip(upper=rated_power)
+    interpol.fillna(0, inplace=True)
+    return pd.Series(interpol.iloc[:,-1], index=interpol.index)
+
 
 def get_cp_from_power_curve(data: pd.DataFrame,
                             power_curve: pd.Series,
                             features: dict,
                             params: dict) -> pd.Series:
     wind = data[[features["wind_speed_hub"]['name']]]
+    rho = data[features['density_hub']['name']]
     power = pd.merge(wind, power_curve.reset_index(),left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
     power.index = wind.index
     rotor_diameter = params['rotor_diameter']
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
-    Cp = power.iloc[:,-1] / (0.5 * rotor_area * wind.iloc[:,0]**3)
+    Cp = power.iloc[:,-1] / (0.5 * rho * rotor_area * wind.iloc[:,0]**3)
+    Cp.clip(lower=0, upper=1, inplace=True)
     return Cp
 
 def get_saturated_vapor_pressure(temperature: pd.Series,
@@ -250,22 +240,20 @@ def get_turbines(turbine_path: str,
     # read cp curves
     cp_curves = pd.read_csv(cp_path, sep=";", decimal=".")
     cp_curves.set_index('wind_speed', inplace=True)
-    cp_curves = cp_curves[turbines]
+    #cp_curves = cp_curves[turbines]
     # read turbine specs
     turbine_specs = pd.read_csv(specs_path, sep=';')
-    diameter_height = {}
+    specs = {}
     for height, turbine in enumerate(turbines):
-        diameter_height[turbine] = {
+        specs[turbine] = {
             'diameter': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Rotordurchmesser'].values[0]),
             'height': params['hub_heights'][height],
+            'cut_in': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Einschaltgeschwindigkeit'].values[0]),
+            'cut_out': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Abschaltgeschwindigkeit'].values[0])
         }
-    return power_curves, cp_curves, diameter_height
+    return power_curves, cp_curves, specs
 
-def get_cut_in_cut_out_speeds(power_curve: pd.Series):
-    cut_in = power_curve[power_curve > 0].index.min()
-    cut_out_candidates = power_curve[power_curve > 0].index
-    cut_out = cut_out_candidates.max() if not cut_out_candidates.empty else None
-    return cut_in, cut_out
+
 
 def apply_noise(wind_power: pd.Series,
                 rated_power: float,
@@ -329,22 +317,23 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                        features: dict,
                        df: pd.DataFrame,
                        cp_curves: pd.DataFrame,
-                       diameter_height: dict) -> pd.DataFrame:
-    cut_in, cut_out = get_cut_in_cut_out_speeds(power_curve=power_curves[turbine])
-    params['cut_in'], params['cut_out'] = cut_in, cut_out
-    params['rotor_diameter'] = diameter_height[turbine]['diameter']
-    params['hub_height'] = diameter_height[turbine]['height']
+                       specs: dict) -> pd.DataFrame:
+    params['rotor_diameter'] = specs[turbine]['diameter']
+    params['hub_height'] = specs[turbine]['height']
+    params['cut_in'] = specs[turbine]['cut_in']
+    params['cut_out'] = specs[turbine]['cut_out']
     df = get_features(data=df,
             features=features,
             params=params)
-    Cp = get_Cp(data=df,
-                power_curve=power_curves[turbine],
-                cp_curve=cp_curves[turbine],
-                features=features,
-                params=params)
-    power_curve = get_power_curve(data=df,
-                                power_curve=power_curves[turbine],
-                                features=features)
+    power_curve = interpolate(power_curve=power_curves[turbine],
+                              cut_out=params['cut_out'])
+    Cp = get_cp_from_power_curve(data=df,
+                                power_curve=power_curve,
+                                features=features,
+                                params=params)
+    power_curve = merge_curve(data=df,
+                            curve=power_curve,
+                            features=features)
     power = generate_wind_power(data=df,
                             features=features,
                             params=params,
@@ -378,7 +367,7 @@ def main() -> None:
     _, wind_features = clean_data.relevant_features(features=features)
 
     frames, station_ids = read_dfs(dir=raw_dir, w_vert_dir=w_vert_dir, features=wind_features)
-    power_curves, cp_curves, diameter_height = get_turbines(
+    power_curves, cp_curves, specs = get_turbines(
         turbine_path=turbine_path,
         cp_path=cp_path,
         specs_path=specs_path,
@@ -395,7 +384,7 @@ def main() -> None:
                     features=features,
                     df=df,
                     cp_curves=cp_curves,
-                    diameter_height=diameter_height
+                    specs=specs
             )
         df.to_csv(os.path.join(synth_dir, f'synth_{id}.csv'), sep=";", decimal=".")
 
