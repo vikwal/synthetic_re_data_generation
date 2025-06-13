@@ -21,7 +21,6 @@ def get_master_data(db_config: dict):
     :param db_config: Database configuration dictionary.
     :return: DataFrame with the master data.
     """
-    db_config['database'] = db_config['database_obs']
     conn, cursor = connect_db(db_config)
     query = f"""
             SELECT * FROM masterdata;

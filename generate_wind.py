@@ -253,7 +253,20 @@ def get_turbines(turbine_path: str,
         }
     return power_curves, cp_curves, specs
 
-
+def get_ageing_degradation(
+        time_vector: pd.DatetimeIndex,
+        mean_age_years: float = 15.0,
+        std_dev_age_years: float = 5.0,
+        annual_load_factor_loss_rate: float = 0.0063) -> tuple[np.ndarray, str]:
+    start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
+    start_age = max(0.0, start_age)
+    end_age = start_age + 1
+    commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
+    base_efficiency = 1.0 - annual_load_factor_loss_rate
+    efficiency_factor_start = base_efficiency ** start_age
+    efficiency_factor_end = base_efficiency ** end_age
+    efficiency_vector = np.linspace(efficiency_factor_start, efficiency_factor_end, num=len(time_vector))
+    return efficiency_vector, commissioning_date
 
 def apply_noise(wind_power: pd.Series,
                 rated_power: float,
@@ -290,18 +303,21 @@ def generate_wind_power(data: pd.DataFrame,
                         features: dict,
                         params: dict,
                         power_curve: pd.DataFrame,
-                        Cp: pd.Series) -> pd.Series:
+                        Cp: pd.Series,
+                        degradation_vector: np.ndarray = None) -> pd.Series:
     rated_power = power_curve.max()  # Watts
     rotor_diameter = params['rotor_diameter']
     cut_in, cut_out = params['cut_in'], params['cut_out']
     rho = data[features['density_hub']['name']]
     wind_speed_hub = data[features['wind_speed_hub']['name']]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
+    if degradation_vector is None:
+        degradation_vector = np.ones(len(data))
     wind_power = np.where(
         wind_speed_hub < cut_in, 0,
         np.where(
             wind_speed_hub <= cut_out,
-            np.minimum(rated_power, 0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3),
+            np.minimum(rated_power, 0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3 * degradation_vector),
             0
         )
     )
@@ -317,7 +333,8 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                        features: dict,
                        df: pd.DataFrame,
                        cp_curves: pd.DataFrame,
-                       specs: dict) -> pd.DataFrame:
+                       specs: dict,
+                       degradation_vector: np.ndarray = None) -> pd.DataFrame:
     params['rotor_diameter'] = specs[turbine]['diameter']
     params['hub_height'] = specs[turbine]['height']
     params['cut_in'] = specs[turbine]['cut_in']
@@ -334,11 +351,14 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     power_curve = merge_curve(data=df,
                             curve=power_curve,
                             features=features)
+    #degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
+    #params['commissioning_date'] = commissioning_date
     power = generate_wind_power(data=df,
                             features=features,
                             params=params,
                             power_curve=power_curve,
-                            Cp=Cp)
+                            Cp=Cp,
+                            degradation_vector=degradation_vector)
     df[turbine] = power
     #drop_columns = [features['wind_speed_hub']['name'], 'temperature_hub', 'density_hub', 'sat_vap_pressure_hub']
     #df.drop(drop_columns, axis=1, inplace=True)
@@ -376,6 +396,7 @@ def main() -> None:
     turbine_list = list(power_curves.columns)
     for id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         df = frame.copy()
+        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
         for turbine in turbine_list:
             df = gen_full_dataframe(
                     power_curves=power_curves,
@@ -384,10 +405,12 @@ def main() -> None:
                     features=features,
                     df=df,
                     cp_curves=cp_curves,
-                    specs=specs
+                    specs=specs,
+                    degradation_vector=degradation_vector
             )
         df.to_csv(os.path.join(synth_dir, f'synth_{id}.csv'), sep=";", decimal=".")
-
+    # Save the turbine specs
+    #specs_df = pd.DataFrame.from_dict(specs, orient='index')
 
 if __name__ == "__main__":
     main()

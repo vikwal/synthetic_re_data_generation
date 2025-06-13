@@ -219,7 +219,6 @@ def create_stations_table(db_config: dict,
 def write_tables(db_config: dict,
                  df_list: list,
                  master_data=None):
-    db_config['database'] = db_config['database_obs']
     conn, cursor = utils.connect_db(db_config)
     if master_data:
         query = f"""

@@ -20,7 +20,6 @@ def get_nearest_point(db_config: dict,
     :param latitude: Latitude of the current point.
     :return: Next point in the grid.
     """
-    db_config['database'] = db_config['database_frcst']
     conn, cursor = utils.connect_db(db_config)
     query = f"""
         SELECT DISTINCT ST_X(geom), ST_Y(geom)
@@ -46,7 +45,6 @@ def get_level_from_height(db_config: dict,
     :param db_config: Database configuration dictionary.
     :return: List of tuples with toplevel and bottomlevel.
     """
-    db_config['database'] = db_config['database_frcst']
     conn, cursor = utils.connect_db(db_config)
     query = f"""
         SELECT DISTINCT toplevel, bottomlevel
@@ -75,7 +73,6 @@ def query_for_location(config: dict,
     :return: DataFrame with the queried data.
     """
     db_config = config['write']['db_conf']
-    db_config['database'] = db_config['database_frcst']
     if table == 'singlelevelfields':
         vars = config['data']['hor_vars'].copy()
         vars[:0] = ['starttime', 'forecasttime']

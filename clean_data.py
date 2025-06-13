@@ -99,7 +99,6 @@ def main():
     wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
-    db_config['database'] = db_config['database_obs']
 
     pv_features, wind_features = relevant_features(features=features)
     master_data = utils.get_master_data(db_config=db_config)
