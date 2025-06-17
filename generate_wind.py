@@ -134,7 +134,7 @@ def interpolate(power_curve: pd.DataFrame, cut_out: float):
     interpol.drop(columns=[0], inplace=True)
     interpol.iloc[-1] = rated_power
     interpol = interpol.interpolate(method='polynomial', order=3)
-    interpol = interpol.clip(upper=rated_power)
+    interpol = interpol.clip(upper=rated_power, lower=0)
     interpol.fillna(0, inplace=True)
     return pd.Series(interpol.iloc[:,-1], index=interpol.index)
 
@@ -153,7 +153,7 @@ def get_cp_from_power_curve(data: pd.DataFrame,
     if degradation_vector is None:
         degradation_vector = np.ones(len(data))
     degradation_vector = pd.Series(degradation_vector, index=wind_speed.index)
-    wind_speed_after_degradation = wind_speed * (1/degradation_vector)**(1/3)
+    wind_speed_after_degradation = wind_speed.iloc[:,-1] * (1/degradation_vector)**(1/3)
     Cp = power.iloc[:,-1] / (0.5 * rho * rotor_area * wind_speed_after_degradation**3)
     #Cp = Cp * degradation_vector
     Cp.clip(lower=0, upper=1, inplace=True)
