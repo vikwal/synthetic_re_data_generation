@@ -64,17 +64,16 @@ wind_params:
              'Vestas V80-1.8']
   hub_heights: [57,138,149,95,119,78]
   h1: 10
-  rated_speed: ''
   p_s_model: 'huang'
   v2_method: 'alphaI'
   karman: 0.4
   temp_gradient: 0.00649
   interpol_method: 'polynomial'
   polynom_grad: 2
-  noise: 0.075
+  noise: 0.0
   mean_age_years: 15
   std_dev_age_years: 5
-  annual_degradation: 0.0063
+  annual_degradation: 0.05 #0.0063
 
 logging:
   verbose: False

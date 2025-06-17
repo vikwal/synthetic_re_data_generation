@@ -142,14 +142,20 @@ def interpolate(power_curve: pd.DataFrame, cut_out: float):
 def get_cp_from_power_curve(data: pd.DataFrame,
                             power_curve: pd.Series,
                             features: dict,
-                            params: dict) -> pd.Series:
-    wind = data[[features["wind_speed_hub"]['name']]]
+                            params: dict,
+                            degradation_vector: np.ndarray = None) -> pd.Series:
+    wind_speed = data[[features["wind_speed_hub"]['name']]]
     rho = data[features['density_hub']['name']]
-    power = pd.merge(wind, power_curve.reset_index(),left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
-    power.index = wind.index
+    power = pd.merge(wind_speed, power_curve.reset_index(),left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
+    power.index = wind_speed.index
     rotor_diameter = params['rotor_diameter']
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
-    Cp = power.iloc[:,-1] / (0.5 * rho * rotor_area * wind.iloc[:,0]**3)
+    if degradation_vector is None:
+        degradation_vector = np.ones(len(data))
+    degradation_vector = pd.Series(degradation_vector, index=wind_speed.index)
+    wind_speed_after_degradation = wind_speed * (1/degradation_vector)**(1/3)
+    Cp = power.iloc[:,-1] / (0.5 * rho * rotor_area * wind_speed_after_degradation**3)
+    #Cp = Cp * degradation_vector
     Cp.clip(lower=0, upper=1, inplace=True)
     return Cp
 
@@ -249,7 +255,8 @@ def get_turbines(turbine_path: str,
             'diameter': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Rotordurchmesser'].values[0]),
             'height': params['hub_heights'][height],
             'cut_in': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Einschaltgeschwindigkeit'].values[0]),
-            'cut_out': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Abschaltgeschwindigkeit'].values[0])
+            'cut_out': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Abschaltgeschwindigkeit'].values[0]),
+            'rated': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Nennwindgeschwindigkeit'].values[0])
         }
     return power_curves, cp_curves, specs
 
@@ -257,7 +264,7 @@ def get_ageing_degradation(
         time_vector: pd.DatetimeIndex,
         mean_age_years: float = 15.0,
         std_dev_age_years: float = 5.0,
-        annual_load_factor_loss_rate: float = 0.0063) -> tuple[np.ndarray, str]:
+        annual_load_factor_loss_rate: float = 0.0063):
     start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
     start_age = max(0.0, start_age)
     end_age = start_age + 1
@@ -307,17 +314,22 @@ def generate_wind_power(data: pd.DataFrame,
                         degradation_vector: np.ndarray = None) -> pd.Series:
     rated_power = power_curve.max()  # Watts
     rotor_diameter = params['rotor_diameter']
-    cut_in, cut_out = params['cut_in'], params['cut_out']
+    cut_in, cut_out, rated_speed = params['cut_in'], params['cut_out'], params['rated']
     rho = data[features['density_hub']['name']]
     wind_speed_hub = data[features['wind_speed_hub']['name']]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
     if degradation_vector is None:
         degradation_vector = np.ones(len(data))
+    else:
+        degradation_vector = degradation_vector.copy()
+        rated_speed_vector = rated_speed * (1/degradation_vector)**(1/3)
+        degradation_vector[wind_speed_hub >= rated_speed_vector] = 1.0
     wind_power = np.where(
         wind_speed_hub < cut_in, 0,
         np.where(
             wind_speed_hub <= cut_out,
-            np.minimum(rated_power, 0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3 * degradation_vector),
+            0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3,
+            #np.minimum(rated_power, 0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3 * degradation_vector),
             0
         )
     )
@@ -351,7 +363,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     power_curve = merge_curve(data=df,
                             curve=power_curve,
                             features=features)
-    #degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
+    degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
     #params['commissioning_date'] = commissioning_date
     power = generate_wind_power(data=df,
                             features=features,
