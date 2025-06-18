@@ -1,10 +1,9 @@
 import os
-import re
 import math
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from typing import List, Dict, Optional
+from typing import List
 
 from sklearn.impute import KNNImputer
 from sklearn.preprocessing import StandardScaler
@@ -144,36 +143,47 @@ def get_cp_from_power_curve(data: pd.DataFrame,
                             features: dict,
                             params: dict,
                             degradation_vector: np.ndarray = None) -> pd.Series:
-    wind_speed = data[[features["wind_speed_hub"]['name']]]
+    wind_speed = data[features["wind_speed_hub"]['name']]
     rho = data[features['density_hub']['name']]
-    power = pd.merge(wind_speed, power_curve.reset_index(),left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
-    power.index = wind_speed.index
     rotor_diameter = params['rotor_diameter']
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
     if degradation_vector is None:
         degradation_vector = np.ones(len(data))
     degradation_vector = pd.Series(degradation_vector, index=wind_speed.index)
-    wind_speed_after_degradation = wind_speed.iloc[:,-1] * (1/degradation_vector)**(1/3)
-    Cp = power.iloc[:,-1] / (0.5 * rho * rotor_area * wind_speed_after_degradation**3)
-    #Cp = Cp * degradation_vector
-    Cp.clip(lower=0, upper=1, inplace=True)
+    cp_values = []
+    for t in wind_speed.index:
+        v = wind_speed.loc[t]
+        dr = degradation_vector.loc[t]
+        rho_t = rho.loc[t]
+        degraded_ws = power_curve.index * (1/dr)**(1/3)
+        degraded_power_curve = pd.Series(power_curve.values, index=degraded_ws).sort_index()
+        power = np.interp(v, degraded_power_curve.index, degraded_power_curve.values)
+        cp = power / (0.5 * rho_t * rotor_area * v**3)
+        cp_values.append(cp)
+    Cp = pd.Series(cp_values, index=wind_speed.index, name="Cp").clip(lower=0, upper=1)
     return Cp
 
 def get_saturated_vapor_pressure(temperature: pd.Series,
-                                 model: str = 'improved magnus') -> pd.Series:
-    if model == 'huang':
-        p_s = np.where(
-            temperature > 0,
-            np.exp(34.494 - (4924.99 / (temperature + 237.1))) / (temperature + 105) ** 1.57,
-            np.exp(43.494 - (6545.8 / (temperature + 278))) / (temperature + 868) ** 2
+                                 model: str = 'improved_magnus') -> pd.Series:
+    def huang(temp):
+        return np.where(
+            temp > 0,
+            np.exp(34.494 - (4924.99 / (temp + 237.1))) / (temp + 105) ** 1.57,
+            np.exp(43.494 - (6545.8 / (temp + 278))) / (temp + 868) ** 2
         )
-    elif model == 'improved_magnus':
-        p_s = np.where(
-            temperature > 0,
-            610.94 * np.exp((17.625 * temperature) / (temperature + 243.04)),
-            611.21 * np.exp((22.587 * temperature) / (temperature + 273.86))
+    def improved_magnus(temp):
+        return np.where(
+            temp > 0,
+            610.94 * np.exp((17.625 * temp) / (temp + 243.04)),
+            611.21 * np.exp((22.587 * temp) / (temp + 273.86))
         )
-    return p_s
+    model_functions = {
+        'huang': huang,
+        'improved_magnus': improved_magnus,
+    }
+    if model not in model_functions:
+        raise ValueError(f"Unknown model: {model}")
+    return model_functions[model](temperature)
 
 def get_rho(data: pd.DataFrame,
             features: dict) -> pd.Series:
@@ -309,10 +319,9 @@ def get_features(data: pd.DataFrame,
 def generate_wind_power(data: pd.DataFrame,
                         features: dict,
                         params: dict,
-                        power_curve: pd.DataFrame,
+                        rated_power: float,
                         Cp: pd.Series,
                         degradation_vector: np.ndarray = None) -> pd.Series:
-    rated_power = power_curve.max()  # Watts
     rotor_diameter = params['rotor_diameter']
     cut_in, cut_out, rated_speed = params['cut_in'], params['cut_out'], params['rated']
     rho = data[features['density_hub']['name']]
@@ -368,7 +377,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     power = generate_wind_power(data=df,
                             features=features,
                             params=params,
-                            power_curve=power_curve,
+                            rated_power=power_curve.max(),
                             Cp=Cp,
                             degradation_vector=degradation_vector)
     df[turbine] = power

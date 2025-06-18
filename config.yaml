@@ -70,10 +70,10 @@ wind_params:
   temp_gradient: 0.00649
   interpol_method: 'polynomial'
   polynom_grad: 2
-  noise: 0.0
+  noise: 0.05
   mean_age_years: 15
   std_dev_age_years: 5
-  annual_degradation: 0.05 #0.0063
+  annual_degradation: 0.0063
 
 logging:
   verbose: False
