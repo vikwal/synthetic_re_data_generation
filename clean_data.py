@@ -13,15 +13,17 @@ def relevant_features(features: dict):
     pv_features = [features['ghi']['name'],
                    features['dhi']['name'],
                    features['temperature']['name'],
-                   features['dewpoint']['name'],
+                   #features['dewpoint']['name'],
                    features['wind_speed']['name'],
-                   features['pressure']['name']]
+                   #features['pressure']['name'],
+                   ]
     wind_features = [features['wind_speed']['name'],
                      features['temperature']['name'],
                      features['relhum']['name'],
                      features['sigma_wind_lon']['name'],
                      features['pressure']['name'],
-                     features['d_wind']['name']]
+                     features['d_wind']['name'],
+                     ]
     return pv_features, wind_features
 
 def get_station_ids(db_config: dict):

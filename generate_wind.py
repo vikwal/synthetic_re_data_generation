@@ -225,24 +225,11 @@ def read_dfs(dir: str,
         w_vert = w_vert.resample('1H', closed='left', label='left', origin='start').mean()
         data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
         # knn impute the data
-        data = knn_imputer(data=data, n_neighbors=5)
+        data = utils.knn_imputer(data=data, n_neighbors=5)
         dfs.append(data)
         station_ids.append(station_id)
     return dfs, station_ids
 
-def knn_imputer(data: pd.DataFrame,
-               n_neighbors: int = 5):
-    # To help KNNImputer estimating the temporal saisonalities we add encoded temporal features.
-    data['hour_sin'] = np.sin(2 * np.pi * data.index.hour / 24)
-    data['hour_cos'] = np.cos(2 * np.pi * data.index.hour / 24)
-    data['month_sin'] = np.sin(2 * np.pi * data.index.month / 12)
-    data['month_cos'] = np.cos(2 * np.pi * data.index.month / 12)
-    imputer = KNNImputer(n_neighbors=n_neighbors)
-    scaler = StandardScaler()
-    df_scaled = scaler.fit_transform(data)
-    df = pd.DataFrame(scaler.inverse_transform(imputer.fit_transform(df_scaled)), columns=data.columns, index=data.index)
-    df.drop(['hour_sin', 'hour_cos', 'month_sin', 'month_cos'], axis=1, inplace=True)
-    return df
 
 def get_turbines(turbine_path: str,
                  cp_path: str,
