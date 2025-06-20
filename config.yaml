@@ -2,6 +2,7 @@ data:
   dir: '/mnt/nas/observed_weather'
   synth_dir: 'data/synthetic'
   raw_dir: 'data/raw'
+  re_ninja_dir: 'data/renewables.ninja'
   w_vert_dir: 'data/vertical_wind'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
