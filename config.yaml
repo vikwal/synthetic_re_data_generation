@@ -35,8 +35,8 @@ write:
   write_master: True
   write: True
   threshold: 0.001
-  clean_pv: False
-  clean_wind: True
+  clean_pv: True
+  clean_wind: False
   get_vertical_wind: False
   db_conf:
     host: 'localhost'
@@ -55,6 +55,8 @@ pv_params:
   albedo: 0.25
   eta_inv_nom: 0.96
   eta_inv_ref: 0.9637
+  faiman_u0: 25
+  faiman_u1: 6.84
 
 wind_params:
   turbines: ['Enercon E-70 E4 2.300',

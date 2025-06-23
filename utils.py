@@ -3,8 +3,12 @@ import yaml
 import pickle
 import getpass
 import psycopg2
+import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
+
+from sklearn.impute import KNNImputer
+from sklearn.preprocessing import StandardScaler
 
 def load_config(config_path: str) -> dict:
     """
@@ -75,3 +79,17 @@ def days_timedelta(date: str,
     new_date = date_object + timedelta(days=days)
     new_date = new_date.strftime("%Y-%m-%d")
     return new_date
+
+def knn_imputer(data: pd.DataFrame,
+               n_neighbors: int = 5):
+    # To help KNNImputer estimating the temporal saisonalities we add encoded temporal features.
+    data['hour_sin'] = np.sin(2 * np.pi * data.index.hour / 24)
+    data['hour_cos'] = np.cos(2 * np.pi * data.index.hour / 24)
+    data['month_sin'] = np.sin(2 * np.pi * data.index.month / 12)
+    data['month_cos'] = np.cos(2 * np.pi * data.index.month / 12)
+    imputer = KNNImputer(n_neighbors=n_neighbors)
+    scaler = StandardScaler()
+    df_scaled = scaler.fit_transform(data)
+    df = pd.DataFrame(scaler.inverse_transform(imputer.fit_transform(df_scaled)), columns=data.columns, index=data.index)
+    df.drop(['hour_sin', 'hour_cos', 'month_sin', 'month_cos'], axis=1, inplace=True)
+    return df
