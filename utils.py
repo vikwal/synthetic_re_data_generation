@@ -92,4 +92,5 @@ def knn_imputer(data: pd.DataFrame,
     df_scaled = scaler.fit_transform(data)
     df = pd.DataFrame(scaler.inverse_transform(imputer.fit_transform(df_scaled)), columns=data.columns, index=data.index)
     df.drop(['hour_sin', 'hour_cos', 'month_sin', 'month_cos'], axis=1, inplace=True)
+    df[df < 0.01] = 0
     return df

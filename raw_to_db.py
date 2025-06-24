@@ -16,13 +16,8 @@ import utils
 
 
 def get_all_stations_files(dir: str,
-                           features: dict,
                            column_names: list,
                            vars: list):
-    feature_names = []
-    for feature in features:
-        if not feature == 'threshold':
-            feature_names.append(features[feature]['old_name'])
     # get all station files
     station_files = []
     for root, dirs, files in os.walk(dir):
@@ -158,9 +153,11 @@ def rename_columns(data: pd.DataFrame,
                    features: dict) -> pd.DataFrame:
     df = data.copy()
     mapping = {}
-    for key, value in features:
+    for key, value in features.items():
+        if 'old_name' not in value.keys():
+            continue
         if value['old_name'] in df.columns:
-            mapping[key] = value['name']
+            mapping[value['old_name']] = value['name']
     df.rename(columns=mapping, inplace=True)
     return df
 
@@ -242,7 +239,7 @@ def write_tables(db_config: dict,
             conflict_sql_part = f"DO UPDATE SET {update_clause}"
         else:
             conflict_sql_part = "DO NOTHING"
-        # in case of updating conflicting columnsDO UPDATE SET {update_clause}
+        # in case of updating conflicting columns DO UPDATE SET {update_clause}
         query = f"""
             INSERT INTO stations ({columns})
             VALUES %s
@@ -257,7 +254,8 @@ def write_tables(db_config: dict,
 def main() -> None:
     config = utils.load_config("config.yaml")
     directory = config['data']['dir']
-    target_dir = config['data']['final_data']
+    target_dir = config['data']['pkl_dir']
+    os.makedirs(target_dir, exist_ok=True)
     features = config['features']
     vars = config['scraping']['vars']
     passw = getpass.getpass("Enter postgres users password: ")
@@ -278,7 +276,6 @@ def main() -> None:
         "geoBreite", "geoLaenge", "Stationsname", "Bundesland", "Abgabe"
     ]
     stations = get_all_stations_files(dir=directory,
-                                      features=features,
                                       column_names=column_names,
                                       vars=vars)
     to_date = str(stations['bis_datum'].max().date())
@@ -314,7 +311,8 @@ def main() -> None:
             print('Create recent dfs.')
             recent_dfs, master_data = make_final_frames(path_list=recent_paths,
                                                         stations=stations,
-                                                        from_date=recent_from_date)
+                                                        from_date=recent_from_date,
+                                                        features=features)
             utils.to_pickle(path=target_dir,
                             name=recent_pkl,
                             obj=recent_dfs)
@@ -331,8 +329,9 @@ def main() -> None:
         if write_historical:
             print('Create historical dfs.')
             historical_dfs, master_data = make_final_frames(path_list=historical_paths,
-                                            stations=stations,
-                                            from_date=from_date)
+                                                            stations=stations,
+                                                            from_date=from_date,
+                                                            features=features)
             utils.to_pickle(path=target_dir,
                     name=historical_pkl,
                     obj=historical_dfs)

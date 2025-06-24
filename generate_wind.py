@@ -11,9 +11,39 @@ from sklearn.preprocessing import StandardScaler
 import clean_data
 import utils
 
+def get_park_params(station_id: str,
+                        masterdata: pd.DataFrame,
+                        params: dict,
+                        commissioning_date: str) -> dict:
+    specific_params = params.copy()
+    # drop turbine information
+    del specific_params['turbines']
+    del specific_params['hub_heights']
+    del specific_params['h1']
+    del specific_params['p_s_model']
+    del specific_params['v2_method']
+    del specific_params['karman']
+    del specific_params['temp_gradient']
+    del specific_params['interpol_method']
+    del specific_params['polynom_grad']
+    del specific_params['noise']
+    del specific_params['mean_age_years']
+    del specific_params['std_dev_age_years']
+    del specific_params['annual_degradation']
+    # from stations masterdata
+    longitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
+    latitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    altitude = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
+    specific_params['longitude'] = longitude
+    specific_params['latitude'] = latitude
+    specific_params['altitude'] = altitude
+    specific_params['commissioning_date'] = commissioning_date
+    return specific_params
+
 def get_windspeed_at_height(data: pd.DataFrame,
                             features: dict,
-                            params: dict
+                            params: dict,
+                            h2: float
                             ):
     """
     Calculate the wind speed (v2) using different methods.
@@ -45,7 +75,6 @@ def get_windspeed_at_height(data: pd.DataFrame,
     v1 = data[features['wind_speed']['name']]
     method = params['v2_method']
     h1 = params['h1']
-    h2 = params['hub_height']
     if method == 'alphaI':
         direction = data[features['d_wind']['name']]
         sigma_u = data[features['sigma_wind_lon']['name']]
@@ -69,11 +98,11 @@ def get_windspeed_at_height(data: pd.DataFrame,
 
 def get_temperature_at_height(data: pd.DataFrame,
                               features: dict,
-                              params: dict) -> pd.Series:
+                              params: dict,
+                              h2: float) -> pd.Series:
     t1 = data[features['temperature']['name']]
     t1 = t1 + 273.15
     h1 = 2 # in meters
-    h2 = params['hub_height']
     temp_gradient = params['temp_gradient']
     delta_h = h2 - h1
     t2 = t1 - temp_gradient * delta_h
@@ -84,14 +113,14 @@ def get_temperature_at_height(data: pd.DataFrame,
 def get_pressure_at_height(data: pd.DataFrame,
                            features: dict,
                            params: dict,
-                           h1: float) -> pd.Series:
+                           h1: float,
+                           h2: float) -> pd.Series:
     R = 8.31451
     M_air = 0.028949 # dry air
     g = 9.81
     p1 = data[features['pressure']['name']]
     t1 = data[features['temperature']['name']]
     t1 = t1 + 273.15
-    h2 = params['hub_height']
     temp_gradient = params['temp_gradient']
     M = M_air # molar mass of air (including water vapor) is less than that of dry air
     delta_h = h2 - h1
@@ -100,7 +129,8 @@ def get_pressure_at_height(data: pd.DataFrame,
 
 def get_density_at_height(data: pd.DataFrame,
                           features: dict,
-                          params: dict) -> pd.Series:
+                          params: dict,
+                          h2: float) -> pd.Series:
     R = 8.31451
     M_air = 0.028949 # dry air
     M_h20 = 0.018015 # water
@@ -109,7 +139,6 @@ def get_density_at_height(data: pd.DataFrame,
     t1 = data[features['temperature']['name']]
     t1 = t1 + 273.15
     h1 = 2 # because of temperature measured at 2 m
-    h2 = params['hub_height']
     temp_gradient = params['temp_gradient']
     M = M_air # molar mass of air (including water vapor) is less than that of dry air
     delta_h = h2 - h1
@@ -141,11 +170,10 @@ def interpolate(power_curve: pd.DataFrame, cut_out: float):
 def get_cp_from_power_curve(data: pd.DataFrame,
                             power_curve: pd.Series,
                             features: dict,
-                            params: dict,
+                            rotor_diameter: float,
                             degradation_vector: np.ndarray = None) -> pd.Series:
     wind_speed = data[features["wind_speed_hub"]['name']]
     rho = data[features['density_hub']['name']]
-    rotor_diameter = params['rotor_diameter']
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
     if degradation_vector is None:
         degradation_vector = np.ones(len(data))
@@ -283,13 +311,16 @@ def apply_noise(wind_power: pd.Series,
 
 def get_features(data: pd.DataFrame,
                  features: dict,
-                 params: dict) -> pd.DataFrame:
+                 params: dict,
+                 hub_height: float) -> pd.DataFrame:
     data[features['wind_speed_hub']['name']] = round(get_windspeed_at_height(data=data,
                                                                   features=features,
-                                                                  params=params), 2)
+                                                                  params=params,
+                                                                  h2=hub_height), 2)
     data[features['temperature_hub']['name']] = get_temperature_at_height(data=data,
                                                                          features=features,
-                                                                         params=params)
+                                                                         params=params,
+                                                                         h2=hub_height)
     temperature = data[features['temperature']['name']]
     data[features['sat_vap_pressure']['name']] = get_saturated_vapor_pressure(temperature=temperature,
                                                                              model=params['p_s_model'])
@@ -300,7 +331,8 @@ def get_features(data: pd.DataFrame,
                                                features=features)
     data[features['density_hub']['name']] = get_density_at_height(data=data,
                                                                  features=features,
-                                                                 params=params)
+                                                                 params=params,
+                                                                 h2=hub_height)
     return data
 
 def generate_wind_power(data: pd.DataFrame,
@@ -308,9 +340,11 @@ def generate_wind_power(data: pd.DataFrame,
                         params: dict,
                         rated_power: float,
                         Cp: pd.Series,
+                        rotor_diameter: float,
+                        cut_in: float,
+                        cut_out: float,
+                        rated_speed: float,
                         degradation_vector: np.ndarray = None) -> pd.Series:
-    rotor_diameter = params['rotor_diameter']
-    cut_in, cut_out, rated_speed = params['cut_in'], params['cut_out'], params['rated']
     rho = data[features['density_hub']['name']]
     wind_speed_hub = data[features['wind_speed_hub']['name']]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
@@ -343,29 +377,35 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                        cp_curves: pd.DataFrame,
                        specs: dict,
                        degradation_vector: np.ndarray = None) -> pd.DataFrame:
-    params['rotor_diameter'] = specs[turbine]['diameter']
-    params['hub_height'] = specs[turbine]['height']
-    params['cut_in'] = specs[turbine]['cut_in']
-    params['cut_out'] = specs[turbine]['cut_out']
+    rotor_diameter = specs[turbine]['diameter']
+    hub_height = specs[turbine]['height']
+    cut_in = specs[turbine]['cut_in']
+    cut_out = specs[turbine]['cut_out']
+    rated_speed = specs[turbine]['rated']
     df = get_features(data=df,
             features=features,
-            params=params)
+            params=params,
+            hub_height=hub_height)
     power_curve = interpolate(power_curve=power_curves[turbine],
-                              cut_out=params['cut_out'])
+                              cut_out=cut_out)
     Cp = get_cp_from_power_curve(data=df,
                                 power_curve=power_curve,
                                 features=features,
-                                params=params)
+                                rotor_diameter=rotor_diameter)
     power_curve = merge_curve(data=df,
                             curve=power_curve,
                             features=features)
-    degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
+    #degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
     #params['commissioning_date'] = commissioning_date
     power = generate_wind_power(data=df,
                             features=features,
                             params=params,
                             rated_power=power_curve.max(),
                             Cp=Cp,
+                            rotor_diameter=rotor_diameter,
+                            cut_in=cut_in,
+                            cut_out=cut_out,
+                            rated_speed=rated_speed,
                             degradation_vector=degradation_vector)
     df[turbine] = power
     #drop_columns = [features['wind_speed_hub']['name'], 'temperature_hub', 'density_hub', 'sat_vap_pressure_hub']
@@ -375,6 +415,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
 
 def main() -> None:
     config = utils.load_config("config.yaml")
+    db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
     synth_dir = os.path.join(config['data']['synth_dir'], 'wind')
@@ -395,6 +436,7 @@ def main() -> None:
     _, wind_features = clean_data.relevant_features(features=features)
 
     frames, station_ids = read_dfs(dir=raw_dir, w_vert_dir=w_vert_dir, features=wind_features)
+    masterdata = utils.get_master_data(db_config)
     power_curves, cp_curves, specs = get_turbines(
         turbine_path=turbine_path,
         cp_path=cp_path,
@@ -402,9 +444,15 @@ def main() -> None:
         params=params
     )
     turbine_list = list(power_curves.columns)
+    power_master = {}
     for id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
+        specific_params = get_park_params(station_id=id,
+                                          masterdata=masterdata,
+                                          params=params,
+                                          commissioning_date=commissioning_date)
+        power_master[id] = specific_params
         for turbine in turbine_list:
             df = gen_full_dataframe(
                     power_curves=power_curves,
@@ -417,8 +465,14 @@ def main() -> None:
                     degradation_vector=degradation_vector
             )
         df.to_csv(os.path.join(synth_dir, f'synth_{id}.csv'), sep=";", decimal=".")
-    # Save the turbine specs
-    #specs_df = pd.DataFrame.from_dict(specs, orient='index')
+    # Save the park parameters
+    df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
+    df_power_master.index.name = 'park_id'
+    df_power_master.to_csv(os.path.join(synth_dir, 'wind_parameter.csv'), sep=";", decimal=".")
+    # save the turbine parameters
+    df_turbine_master = pd.DataFrame.from_dict(specs, orient='index')
+    df_turbine_master.index.name = 'turbine'
+    df_turbine_master.to_csv(os.path.join(synth_dir, 'turbine_parameter.csv'), sep=";", decimal=".")
 
 if __name__ == "__main__":
     main()

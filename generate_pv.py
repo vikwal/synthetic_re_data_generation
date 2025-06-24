@@ -32,21 +32,43 @@ def read_dfs(dir: str,
         station_ids.append(station_id)
     return dfs, station_ids
 
+def get_location_and_elevation(station_id: str,
+                               db_config: dict):
+    masterdata = utils.get_master_data(db_config)
+    latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
+    longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    elevation = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
+    return latitude, longitude, elevation
+
+def get_specific_params(station_id: str,
+                        masterdata: pd.DataFrame,
+                        params: dict,
+                        commissioning_date: str) -> dict:
+    specific_params = params.copy()
+    del specific_params['gamma_pdc']
+    del specific_params['eta_inv_ref']
+    longitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
+    latitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    altitude = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
+    specific_params['longitude'] = longitude
+    specific_params['latitude'] = latitude
+    specific_params['altitude'] = altitude
+    specific_params['commissioning_date'] = commissioning_date
+    return specific_params
+
 def get_features(data: pd.DataFrame,
                  features: dict,
                  params: dict
                 ):
     # calculate pressure
     #pressure = pvlib.atmosphere.alt2pres(elevation)
-    dhi = data[features['dhi']['name']]
-    ghi = data[features['ghi']['name']]
     #pressure = data[features['pressure']['name']]
     temperature = data[features['temperature']['name']]
     wind_speed = data[features['wind_speed']['name']]
-    latitude = data[features['latitude']['name']]
-    longitude = data[features['longitude']['name']]
-    elevation = data[features['elevation']['name']]
 
+    latitude = params['latitude']
+    longitude = params['longitude']
+    altitude = params['altitude']
     surface_tilt = params['surface_tilt']
     surface_azimuth = params['surface_azimuth']
     albedo = params['albedo']
@@ -58,7 +80,7 @@ def get_features(data: pd.DataFrame,
         time=data.index,
         latitude=latitude,
         longitude=longitude,
-        altitude=elevation,
+        altitude=altitude,
         temperature=temperature,
         #pressure=pressure,
     )
@@ -66,13 +88,23 @@ def get_features(data: pd.DataFrame,
     solar_azimuth = solpos['azimuth']
 
     # GHI and DHI in W/m^2 --> J / cm^2 = J / 0,0001 m^2 = 10000 J / m^2 --> Dividing by 600 seconds (DWD is giving GHI as sum of 10 minutes))
-    dhi = data[features['dhi']['name']] * 1e4 / 600
-    ghi = data[features['ghi']['name']] * 1e4 / 600
+    dhi_col = features['dhi']['name']
+    ghi_col = features['ghi']['name']
+    dhi = data[dhi_col] * 1e4 / 600
+    ghi = data[ghi_col] * 1e4 / 600
+    data[dhi_col] = dhi
+    data[ghi_col] = ghi
+
+    # set extremely low values to zero
+    data.loc[data[dhi_col]< 0.01, dhi_col] = 0
+    data.loc[data[ghi_col] < 0.01, ghi_col] = 0
 
     # get dni from ghi, dni and zenith
     dni = pvlib.irradiance.dni(ghi=ghi,
                                dhi=dhi,
                                zenith=solar_zenith)
+    dni.fillna(0, inplace=True)
+    data[features['dni']['name']] = dni
 
     # get total irradiance
     total_irradiance = pvlib.irradiance.get_total_irradiance(
@@ -87,6 +119,8 @@ def get_features(data: pd.DataFrame,
         albedo=albedo,
         model='haydavies',
     )
+    total_irradiance.fillna(0, inplace=True)
+    total_irradiance[total_irradiance < 0.01] = 0
     cell_temperature = pvlib.temperature.faiman(total_irradiance['poa_global'],
                                                 temperature,
                                                 wind_speed,
@@ -97,27 +131,64 @@ def get_features(data: pd.DataFrame,
 
 def generate_pv_power(total_irradiance: pd.Series,
                       cell_temperature: pd.Series,
-                      params: dict
+                      params: dict,
+                      degradation_vector: np.ndarray = None
                       ) -> pd.Series:
 
-    installed_power = params['installed_power']
+    dc_rating = params['dc_rating_watts']
+    ac_rating = dc_rating / params['dc_ac_ratio']
     gamma_pdc = params['gamma_pdc']
-    eta_env_nom = params['eta_env_nom']
-    eta_env_ref = params['eta_env_ref']
+    eta_inv_nom = params['eta_inv_nom']
+    eta_inv_ref = params['eta_inv_ref']
 
     power_dc = pvlib.pvsystem.pvwatts_dc(total_irradiance,
                                          cell_temperature,
-                                         installed_power,
+                                         dc_rating,
                                          gamma_pdc=gamma_pdc,
                                          temp_ref=25.0)
+    power_ac = pvlib.inverter.pvwatts(power_dc,
+                                      ac_rating,
+                                      eta_inv_nom=eta_inv_nom,
+                                      eta_inv_ref=eta_inv_ref)
+    return power_ac
 
-    return pvlib.inverter.pvwatts(power_dc,
-                                  installed_power,
-                                  eta_inv_nom=eta_env_nom,
-                                  eta_inv_ref=eta_env_ref)
+def get_ageing_degradation(
+        time_vector: pd.DatetimeIndex,
+        mean_age_years: float = 10,
+        std_dev_age_years: float = 3.33,
+        annual_load_factor_loss_rate: float = 0.08):
+    start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
+    start_age = max(0.0, start_age)
+    end_age = start_age + 1
+    commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
+    base_efficiency = 1.0 - annual_load_factor_loss_rate
+    efficiency_factor_start = base_efficiency ** start_age
+    efficiency_factor_end = base_efficiency ** end_age
+    efficiency_vector = np.linspace(efficiency_factor_start, efficiency_factor_end, num=len(time_vector))
+    return efficiency_vector, commissioning_date
+
+def gen_full_dataframe(params: dict,
+                       features: dict,
+                       df: pd.DataFrame,
+                       degradation_vector: np.ndarray = None) -> pd.DataFrame:
+    total_irradiance, cell_temperature = get_features(data=df,
+                                                      features=features,
+                                                      params=params)
+    total = total_irradiance['poa_global']
+    #direct = total_irradiance['poa_direct']
+    #diffuse = total_irradiance['poa_diffuse']
+    #sky_dhi = total_irradiance['poa_sky_diffuse']
+    #ground_dhi = total_irradiance['poa_ground_diffuse']
+    power = generate_pv_power(total_irradiance=total,
+                              cell_temperature=cell_temperature,
+                              params=params,
+                              degradation_vector=degradation_vector)
+    df['power'] = power
+    return df
 
 def main() -> None:
     config = utils.load_config("config.yaml")
+    db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'solar')
     synth_dir = os.path.join(config['data']['synth_dir'], 'solar')
@@ -130,17 +201,28 @@ def main() -> None:
     pv_features, _ = clean_data.relevant_features(features=features)
 
     frames, station_ids = read_dfs(dir=raw_dir, features=pv_features)
+    masterdata = utils.get_master_data(db_config)
 
+    power_master = {}
     for id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         df = frame.copy()
+        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
+        specific_params = get_specific_params(station_id=id,
+                                              masterdata=masterdata,
+                                              params=params,
+                                              commissioning_date=commissioning_date)
+        power_master[id] = specific_params
         df = gen_full_dataframe(
-                params=params,
+                params=specific_params,
                 features=features,
                 df=df,
+                degradation_vector=degradation_vector
         )
         df.to_csv(os.path.join(synth_dir, f'synth_{id}.csv'), sep=";", decimal=".")
-    # Save the specs
-    #specs_df = pd.DataFrame.from_dict(specs, orient='index')
+    # Save the technical parameters
+    df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
+    df_power_master.index.name = 'park_id'
+    df_power_master.to_csv(os.path.join(synth_dir, 'pv_parameter.csv'), sep=";", decimal=".")
 
 if __name__ == '__main__':
     main()

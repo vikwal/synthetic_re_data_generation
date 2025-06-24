@@ -2,7 +2,8 @@ data:
   dir: '/mnt/nas/observed_weather'
   synth_dir: 'data/synthetic'
   raw_dir: 'data/raw'
-  re_ninja_dir: 'data/renewables.ninja'
+  pkl_dir: 'data/pkl_files'
+  re_ninja_dir: 'mnt/nas/renewables.ninja'
   w_vert_dir: 'data/vertical_wind'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
@@ -32,9 +33,9 @@ write:
   create_table: False
   write_historical: True
   write_recent: True
-  write_master: True
+  write_master: False
   write: True
-  threshold: 0.001
+  threshold: 0.001 # 0.1 % missing values
   clean_pv: True
   clean_wind: False
   get_vertical_wind: False
@@ -44,13 +45,14 @@ write:
     port: 5432
     user: 'postgres'
     passw: ''
-    do_update: False # on conflict do what?
+    do_update: True # on conflict do update?
 
 
 pv_params:
-  installed_power: 100
-  surface_tilt: 40
-  surface_azimuth: 245
+  dc_rating_watts: 10000 # in Watts
+  dc_ac_ratio: 1
+  surface_tilt: 35
+  surface_azimuth: 180
   gamma_pdc: -0.0035
   albedo: 0.25
   eta_inv_nom: 0.96
@@ -107,6 +109,9 @@ features:
   dhi:
     old_name: 'DS_10'
     name: 'dhi'
+    unit: 'W/m$^2$'
+  dni:
+    name: 'dni'
     unit: 'W/m$^2$'
   ghi:
     old_name: 'GS_10'
