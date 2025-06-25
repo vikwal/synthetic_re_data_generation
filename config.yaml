@@ -13,6 +13,8 @@ data:
   turbine_cp: "turbine_cp.csv"
   turbine_ct: "turbine_ct.csv"
   turbine_names: "turbine_names.csv"
+  wind_ages: 'data/wind_ages.npy'
+  pv_ages: 'data/pv_ages.npy'
   hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
   vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
   sleep: 0.25
@@ -35,7 +37,7 @@ write:
   write_recent: True
   write_master: False
   write: True
-  threshold: 0.001 # 0.1 % missing values
+  threshold: 0.008 # 0.8 % missing values
   clean_pv: True
   clean_wind: False
   get_vertical_wind: False
@@ -168,22 +170,22 @@ features:
     name: 'saturated_vapor_pressure'
     unit: 'Pa'
   sat_vap_pressure_hub:
-    name: 'saturated_vapor_pressure_hub'
+    name: 'saturated_vapor_pressure'
     unit: 'Pa'
   wind_speed_hub:
-    name: 'wind_speed_hub'
+    name: 'wind_speed'
     unit: 'm/s'
   wind_speed_vertical:
     name: 'w_vert' # change later to wind_speed_vertical
     unit: 'm/s'
   pressure_hub:
-    name: 'pressure_hub'
+    name: 'pressure'
     unit: 'Pa'
   temperature_hub:
-    name: 'temperature_hub'
+    name: 'temperature'
     unit: '°C'
   density_hub:
-    name: 'density_hub'
+    name: 'density'
     unit: 'kg/m$^3$'
   cp_curve:
     name: 'cp'

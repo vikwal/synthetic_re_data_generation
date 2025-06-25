@@ -5,9 +5,6 @@ import pandas as pd
 from tqdm import tqdm
 from typing import List
 
-from sklearn.impute import KNNImputer
-from sklearn.preprocessing import StandardScaler
-
 import clean_data
 import utils
 
@@ -171,9 +168,12 @@ def get_cp_from_power_curve(data: pd.DataFrame,
                             power_curve: pd.Series,
                             features: dict,
                             rotor_diameter: float,
-                            degradation_vector: np.ndarray = None) -> pd.Series:
-    wind_speed = data[features["wind_speed_hub"]['name']]
-    rho = data[features['density_hub']['name']]
+                            degradation_vector: np.ndarray = None,
+                            suffix: str = '_hub') -> pd.Series:
+    wind_speed_hub_col = f'{features["wind_speed_hub"]['name']}{suffix}'
+    rho_hub_col = f'{features['density_hub']['name']}{suffix}'
+    wind_speed = data[wind_speed_hub_col]
+    rho = data[rho_hub_col]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
     if degradation_vector is None:
         degradation_vector = np.ones(len(data))
@@ -233,24 +233,24 @@ def get_rho(data: pd.DataFrame,
     return rho
 
 
-def read_dfs(dir: str,
+def read_dfs(path: str,
              w_vert_dir: str,
              features: list) -> List[pd.DataFrame]:
     dfs = []
     station_ids = []
-    for file in os.listdir(dir):
+    for file in os.listdir(path):
         station_id = file.split('.csv')[0].split('_')[1]
         w_vert_file = f'w_vert_{station_id}.csv'
-        data = pd.read_csv(os.path.join(dir, file), delimiter= ",")
+        data = pd.read_csv(os.path.join(path, file), delimiter= ",")
         data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
         data.set_index('timestamp', inplace=True)
-        data = data.resample('1H', closed='left', label='left', origin='start').mean()
+        data = data.resample('h', closed='left', label='left', origin='start').mean()
         data = data[features]
         # get the vertical wind_speed
         w_vert = pd.read_csv(os.path.join(w_vert_dir, w_vert_file), delimiter=",")
         w_vert['timestamp'] = pd.to_datetime(w_vert['timestamp'], utc=True)
         w_vert.set_index('timestamp', inplace=True)
-        w_vert = w_vert.resample('1H', closed='left', label='left', origin='start').mean()
+        w_vert = w_vert.resample('h', closed='left', label='left', origin='start').mean()
         data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
         # knn impute the data
         data = utils.knn_imputer(data=data, n_neighbors=5)
@@ -289,8 +289,12 @@ def get_ageing_degradation(
         time_vector: pd.DatetimeIndex,
         mean_age_years: float = 15.0,
         std_dev_age_years: float = 5.0,
-        annual_load_factor_loss_rate: float = 0.0063):
-    start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
+        annual_load_factor_loss_rate: float = 0.0063,
+        real_ages: np.ndarray = None):
+    if real_ages is None:
+        start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
+    else:
+        start_age = float(np.random.choice(real_ages, size=1, replace=False)[0])
     start_age = max(0.0, start_age)
     end_age = start_age + 1
     commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
@@ -312,24 +316,33 @@ def apply_noise(wind_power: pd.Series,
 def get_features(data: pd.DataFrame,
                  features: dict,
                  params: dict,
-                 hub_height: float) -> pd.DataFrame:
-    data[features['wind_speed_hub']['name']] = round(get_windspeed_at_height(data=data,
+                 hub_height: float,
+                 suffix: str = '_hub') -> pd.DataFrame:
+    wind_speed_hub_col = f"{features['wind_speed_hub']['name']}{suffix}"
+    temperature_col = features['temperature']['name']
+    temperature_hub_col = f"{features['temperature_hub']['name']}{suffix}"
+    sat_vap_ps_col = features['sat_vap_pressure']['name']
+    sat_vap_ps_hub_col = f"{features['sat_vap_pressure']['name']}{suffix}"
+    density_col = features['density']['name']
+    density_hub_col = f"{features['density']['name']}{suffix}"
+
+    data[wind_speed_hub_col] = round(get_windspeed_at_height(data=data,
                                                                   features=features,
                                                                   params=params,
                                                                   h2=hub_height), 2)
-    data[features['temperature_hub']['name']] = get_temperature_at_height(data=data,
+    data[temperature_hub_col] = get_temperature_at_height(data=data,
                                                                          features=features,
                                                                          params=params,
                                                                          h2=hub_height)
-    temperature = data[features['temperature']['name']]
-    data[features['sat_vap_pressure']['name']] = get_saturated_vapor_pressure(temperature=temperature,
+    temperature = data[temperature_col]
+    data[sat_vap_ps_col] = get_saturated_vapor_pressure(temperature=temperature,
                                                                              model=params['p_s_model'])
-    temperature_hub = data[features['temperature_hub']['name']]
-    data[features['sat_vap_pressure_hub']['name']] = get_saturated_vapor_pressure(temperature=temperature_hub,
+    temperature_hub = data[temperature_hub_col]
+    data[sat_vap_ps_hub_col] = get_saturated_vapor_pressure(temperature=temperature_hub,
                                                                                  model=params['p_s_model'])
-    data[features['density']['name']] = get_rho(data=data,
+    data[density_col] = get_rho(data=data,
                                                features=features)
-    data[features['density_hub']['name']] = get_density_at_height(data=data,
+    data[density_hub_col] = get_density_at_height(data=data,
                                                                  features=features,
                                                                  params=params,
                                                                  h2=hub_height)
@@ -374,9 +387,9 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                        params: dict,
                        features: dict,
                        df: pd.DataFrame,
-                       cp_curves: pd.DataFrame,
                        specs: dict,
-                       degradation_vector: np.ndarray = None) -> pd.DataFrame:
+                       degradation_vector: np.ndarray = None,
+                       suffix_for_turbine_cols: str = '') -> pd.DataFrame:
     rotor_diameter = specs[turbine]['diameter']
     hub_height = specs[turbine]['height']
     cut_in = specs[turbine]['cut_in']
@@ -385,13 +398,15 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     df = get_features(data=df,
             features=features,
             params=params,
-            hub_height=hub_height)
+            hub_height=hub_height,
+            suffix=suffix_for_turbine_cols)
     power_curve = interpolate(power_curve=power_curves[turbine],
                               cut_out=cut_out)
     Cp = get_cp_from_power_curve(data=df,
                                 power_curve=power_curve,
                                 features=features,
-                                rotor_diameter=rotor_diameter)
+                                rotor_diameter=rotor_diameter,
+                                suffix=suffix_for_turbine_cols)
     power_curve = merge_curve(data=df,
                             curve=power_curve,
                             features=features)
@@ -407,7 +422,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                             cut_out=cut_out,
                             rated_speed=rated_speed,
                             degradation_vector=degradation_vector)
-    df[turbine] = power
+    df[f"power{suffix_for_turbine_cols}"] = power
     #drop_columns = [features['wind_speed_hub']['name'], 'temperature_hub', 'density_hub', 'sat_vap_pressure_hub']
     #df.drop(drop_columns, axis=1, inplace=True)
     return df
@@ -427,6 +442,8 @@ def main() -> None:
     specs_path = os.path.join(turbine_dir, specs_path)
     cp_path = config["data"]["turbine_cp"]
     cp_path = os.path.join(turbine_dir, cp_path)
+    wind_ages_path = config['data']['wind_ages']
+    wind_ages = np.load(wind_ages_path)
 
     os.makedirs(synth_dir, exist_ok=True)
 
@@ -435,9 +452,9 @@ def main() -> None:
 
     _, wind_features = clean_data.relevant_features(features=features)
 
-    frames, station_ids = read_dfs(dir=raw_dir, w_vert_dir=w_vert_dir, features=wind_features)
+    frames, station_ids = read_dfs(path=raw_dir, w_vert_dir=w_vert_dir, features=wind_features)
     masterdata = utils.get_master_data(db_config)
-    power_curves, cp_curves, specs = get_turbines(
+    power_curves, _, specs = get_turbines(
         turbine_path=turbine_path,
         cp_path=cp_path,
         specs_path=specs_path,
@@ -445,26 +462,28 @@ def main() -> None:
     )
     turbine_list = list(power_curves.columns)
     power_master = {}
-    for id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
+    for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         df = frame.copy()
-        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
-        specific_params = get_park_params(station_id=id,
+        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index, real_ages=wind_ages)
+        specific_params = get_park_params(station_id=station_id,
                                           masterdata=masterdata,
                                           params=params,
                                           commissioning_date=commissioning_date)
-        power_master[id] = specific_params
-        for turbine in turbine_list:
+        power_master[station_id] = specific_params
+        for turbine_id, turbine in enumerate(turbine_list, start=1):
             df = gen_full_dataframe(
                     power_curves=power_curves,
                     turbine=turbine,
                     params=params,
                     features=features,
                     df=df,
-                    cp_curves=cp_curves,
                     specs=specs,
-                    degradation_vector=degradation_vector
+                    degradation_vector=degradation_vector,
+                    suffix_for_turbine_cols=turbine_id
             )
-        df.to_csv(os.path.join(synth_dir, f'synth_{id}.csv'), sep=";", decimal=".")
+            if 'turbine_id' not in specs[turbine].keys():
+                specs[turbine]['turbine_id'] = turbine_id
+        df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
     # Save the park parameters
     df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
     df_power_master.index.name = 'park_id'

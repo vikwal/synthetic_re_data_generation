@@ -4,7 +4,7 @@ import argparse
 import pandas as pd
 from tqdm import tqdm
 import logging
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple
 
 import utils
 
@@ -100,6 +100,9 @@ def query_for_location(config: dict,
             WHERE ST_X(geom) = {latitude} AND ST_Y(geom) = {longitude}
             ORDER BY starttime, forecasttime, toplevel;
         """
+    else:
+        logging.error(f'Table {table} is not a correct table name.')
+        return False
     conn, cursor = utils.connect_db(db_config)
     try:
         cursor.execute(query)
@@ -148,7 +151,7 @@ def get_data_from_db(config: dict,
     # obtaining the nearest grids in analysisfields is sufficient, because the grid is the same for both tables single and multilevelfields
     for lat, lon in tqdm(stations_of_interest, desc='Finding nearest grid points'):
         nearest_point = get_nearest_point(db_config=db_config,
-                                          table="singlelevelfields", # maybe in future change to analysisfields
+                                          table="analysisfields",
                                           latitude=lat,
                                           longitude=lon)
         nearest_points.append(nearest_point)
