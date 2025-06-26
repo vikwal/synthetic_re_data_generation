@@ -157,14 +157,14 @@ def get_data_from_db(config: dict,
         nearest_points.append(nearest_point)
     forecasts = []
     vertical_winds = []
-    for lat, lon in tqdm(nearest_points, desc=f'Get {table} forecasts'):
-        if config['write']['get_wind']:
+    for lat, lon in tqdm(nearest_points, desc=f'Get {table} data.'):
+        if config['write']['get_wind'] | config['write']['get_pv']:
             forecast = query_for_location(config=config,
                                             table=table,
                                             latitude=lat,
                                             longitude=lon)
             forecasts.append(forecast)
-        if config['write']['get_vertical_wind']:
+        if config['write']['get_wind_vertical']:
             w_vert = get_vertical_wind(config=config,
                                     latitude=lat,
                                     longitude=lon)
@@ -179,6 +179,15 @@ def get_data_from_db(config: dict,
             w_vert.to_csv(os.path.join('data', 'vertical_wind', f'w_vert_{id}.csv'))
 
 def main():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        #datefmt=datefmt,
+        handlers=[
+            #logging.FileHandler(log_file),
+            logging.StreamHandler()
+            ]
+    )
     config = utils.load_config("config.yaml")
     db_config = config['write']['db_conf']
     parser = argparse.ArgumentParser(description="Extract and save NWP forecasts for PV and wind stations.")
@@ -202,13 +211,20 @@ def main():
                          stations=pv_stations,
                          master_data=master_data,
                          table='singlelevelfields')
-    if config['write']['get_wind'] | config['write']['get_vertical_wind']:
+    if config['write']['get_wind']:
         wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
         wind_stations = os.listdir(wind_dir)
         get_data_from_db(config=config,
                          stations=wind_stations,
                          master_data=master_data,
                          table='multilevelfields')
+    if config['write']['get_wind_vertical']:
+        wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
+        wind_stations = os.listdir(wind_dir)
+        get_data_from_db(config=config,
+                         stations=wind_stations,
+                         master_data=master_data,
+                         table='analysisfields')
 
 if __name__ == '__main__':
     main()

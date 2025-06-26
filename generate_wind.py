@@ -479,7 +479,7 @@ def main() -> None:
                     df=df,
                     specs=specs,
                     degradation_vector=degradation_vector,
-                    suffix_for_turbine_cols=turbine_id
+                    suffix_for_turbine_cols=f'_t{turbine_id}'
             )
             if 'turbine_id' not in specs[turbine].keys():
                 specs[turbine]['turbine_id'] = turbine_id

@@ -38,9 +38,8 @@ write:
   write_master: False
   write: True
   threshold: 0.008 # 0.8 % missing values
-  clean_pv: True
-  clean_wind: False
-  get_vertical_wind: False
+  clean_pv: False
+  clean_wind: True
   db_conf:
     host: 'localhost'
     database: 'WeatherDB'
