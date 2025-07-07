@@ -3,7 +3,7 @@ data:
   synth_dir: 'data/synthetic'
   raw_dir: 'data/raw'
   pkl_dir: 'data/pkl_files'
-  re_ninja_dir: 'mnt/nas/renewables.ninja'
+  re_ninja_dir: 'data/renewables.ninja'
   w_vert_dir: 'data/vertical_wind'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
