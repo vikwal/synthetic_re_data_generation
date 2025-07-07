@@ -27,6 +27,8 @@ def get_park_params(station_id: str,
     del specific_params['mean_age_years']
     del specific_params['std_dev_age_years']
     del specific_params['annual_degradation']
+    del specific_params['apply_ageing']
+    del specific_params['hourly_resolution']
     # from stations masterdata
     longitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
     latitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
@@ -144,9 +146,11 @@ def get_density_at_height(data: pd.DataFrame,
 
 def merge_curve(data: pd.DataFrame,
                 curve: pd.Series,
-                features: dict) -> pd.Series:
-    wind = data[[features["wind_speed_hub"]['name']]]
-    values = pd.merge(wind, curve,left_on=features["wind_speed_hub"]['name'], right_on='wind_speed', how="left")
+                features: dict,
+                suffix: str = '_hub') -> pd.Series:
+    wind_speed_hub_col = f'{features["wind_speed_hub"]['name']}{suffix}'
+    wind = data[wind_speed_hub_col].to_frame()
+    values = pd.merge(wind, curve,left_on=wind_speed_hub_col, right_on='wind_speed', how="left")
     values.index = wind.index
     return values[curve.name]
 
@@ -182,7 +186,7 @@ def get_cp_from_power_curve(data: pd.DataFrame,
     for t in wind_speed.index:
         v = wind_speed.loc[t]
         dr = degradation_vector.loc[t]
-        rho_t = rho.loc[t]
+        rho_t = 1.225 # standard air density for stable cp values # rho.loc[t]
         degraded_ws = power_curve.index * (1/dr)**(1/3)
         degraded_power_curve = pd.Series(power_curve.values, index=degraded_ws).sort_index()
         power = np.interp(v, degraded_power_curve.index, degraded_power_curve.values)
@@ -235,7 +239,8 @@ def get_rho(data: pd.DataFrame,
 
 def read_dfs(path: str,
              w_vert_dir: str,
-             features: list) -> List[pd.DataFrame]:
+             features: list,
+             hourly_resolution: bool = True) -> List[pd.DataFrame]:
     dfs = []
     station_ids = []
     for file in os.listdir(path):
@@ -244,14 +249,22 @@ def read_dfs(path: str,
         data = pd.read_csv(os.path.join(path, file), delimiter= ",")
         data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
         data.set_index('timestamp', inplace=True)
-        data = data.resample('h', closed='left', label='left', origin='start').mean()
+        if hourly_resolution:
+            data = data.resample('h', closed='left', label='left', origin='start').mean()
         data = data[features]
         # get the vertical wind_speed
         w_vert = pd.read_csv(os.path.join(w_vert_dir, w_vert_file), delimiter=",")
         w_vert['timestamp'] = pd.to_datetime(w_vert['timestamp'], utc=True)
         w_vert.set_index('timestamp', inplace=True)
         w_vert = w_vert.resample('h', closed='left', label='left', origin='start').mean()
-        data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
+        #data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
+        data = pd.merge_asof(
+            data,
+            w_vert,
+            left_index=True,
+            right_index=True,
+            direction='backward',         # wähle den letzten bekannten Wert
+        )
         # knn impute the data
         data = utils.knn_imputer(data=data, n_neighbors=5)
         dfs.append(data)
@@ -331,15 +344,15 @@ def get_features(data: pd.DataFrame,
                                                                   params=params,
                                                                   h2=hub_height), 2)
     data[temperature_hub_col] = get_temperature_at_height(data=data,
-                                                                         features=features,
-                                                                         params=params,
-                                                                         h2=hub_height)
+                                                          features=features,
+                                                          params=params,
+                                                          h2=hub_height)
     temperature = data[temperature_col]
     data[sat_vap_ps_col] = get_saturated_vapor_pressure(temperature=temperature,
-                                                                             model=params['p_s_model'])
+                                                        model=params['p_s_model'])
     temperature_hub = data[temperature_hub_col]
     data[sat_vap_ps_hub_col] = get_saturated_vapor_pressure(temperature=temperature_hub,
-                                                                                 model=params['p_s_model'])
+                                                            model=params['p_s_model'])
     data[density_col] = get_rho(data=data,
                                                features=features)
     data[density_hub_col] = get_density_at_height(data=data,
@@ -357,9 +370,12 @@ def generate_wind_power(data: pd.DataFrame,
                         cut_in: float,
                         cut_out: float,
                         rated_speed: float,
-                        degradation_vector: np.ndarray = None) -> pd.Series:
-    rho = data[features['density_hub']['name']]
-    wind_speed_hub = data[features['wind_speed_hub']['name']]
+                        degradation_vector: np.ndarray = None,
+                        suffix: str = '_hub') -> pd.Series:
+    wind_speed_hub_col = f"{features['wind_speed_hub']['name']}{suffix}"
+    density_hub_col = f"{features['density']['name']}{suffix}"
+    rho = data[density_hub_col]
+    wind_speed_hub = data[wind_speed_hub_col]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
     if degradation_vector is None:
         degradation_vector = np.ones(len(data))
@@ -409,7 +425,8 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                                 suffix=suffix_for_turbine_cols)
     power_curve = merge_curve(data=df,
                             curve=power_curve,
-                            features=features)
+                            features=features,
+                            suffix=suffix_for_turbine_cols)
     #degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index)
     #params['commissioning_date'] = commissioning_date
     power = generate_wind_power(data=df,
@@ -421,7 +438,8 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                             cut_in=cut_in,
                             cut_out=cut_out,
                             rated_speed=rated_speed,
-                            degradation_vector=degradation_vector)
+                            degradation_vector=degradation_vector,
+                            suffix=suffix_for_turbine_cols)
     df[f"power{suffix_for_turbine_cols}"] = power
     #drop_columns = [features['wind_speed_hub']['name'], 'temperature_hub', 'density_hub', 'sat_vap_pressure_hub']
     #df.drop(drop_columns, axis=1, inplace=True)
@@ -452,7 +470,10 @@ def main() -> None:
 
     _, wind_features = clean_data.relevant_features(features=features)
 
-    frames, station_ids = read_dfs(path=raw_dir, w_vert_dir=w_vert_dir, features=wind_features)
+    frames, station_ids = read_dfs(path=raw_dir,
+                                   w_vert_dir=w_vert_dir,
+                                   features=wind_features,
+                                   hourly_resolution=params['hourly_resolution'])
     masterdata = utils.get_master_data(db_config)
     power_curves, _, specs = get_turbines(
         turbine_path=turbine_path,
@@ -465,6 +486,9 @@ def main() -> None:
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index, real_ages=wind_ages)
+        if not params['apply_ageing']:
+            degradation_vector = None
+            commissioning_date = '-'
         specific_params = get_park_params(station_id=station_id,
                                           masterdata=masterdata,
                                           params=params,
@@ -482,7 +506,7 @@ def main() -> None:
                     suffix_for_turbine_cols=f'_t{turbine_id}'
             )
             if 'turbine_id' not in specs[turbine].keys():
-                specs[turbine]['turbine_id'] = turbine_id
+                specs[turbine]['turbine_id'] = f'_t{turbine_id}'
         df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
     # Save the park parameters
     df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
