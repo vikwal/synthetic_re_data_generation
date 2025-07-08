@@ -1,5 +1,6 @@
 import os
 import math
+import logging
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -422,6 +423,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                                 power_curve=power_curve,
                                 features=features,
                                 rotor_diameter=rotor_diameter,
+                                degradation_vector=degradation_vector,
                                 suffix=suffix_for_turbine_cols)
     power_curve = merge_curve(data=df,
                             curve=power_curve,
@@ -451,7 +453,7 @@ def main() -> None:
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind')
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind_noage')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -462,6 +464,16 @@ def main() -> None:
     cp_path = os.path.join(turbine_dir, cp_path)
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        #datefmt=datefmt,
+        handlers=[
+            #logging.FileHandler(log_file),
+            logging.StreamHandler()
+            ]
+    )
 
     os.makedirs(synth_dir, exist_ok=True)
 
@@ -483,7 +495,9 @@ def main() -> None:
     )
     turbine_list = list(power_curves.columns)
     power_master = {}
+    logging.info(f'Starting wind power generation. Ageing is set to {params["apply_ageing"]}')
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
+        logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index, real_ages=wind_ages)
         if not params['apply_ageing']:
