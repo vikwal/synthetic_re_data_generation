@@ -100,7 +100,7 @@ def get_temperature_at_height(data: pd.DataFrame,
                               features: dict,
                               params: dict,
                               h2: float) -> pd.Series:
-    t1 = data[features['temperature']['name']]
+    t1 = data[features['temperature']['name']].copy()
     t1 = t1 + 273.15
     h1 = 2 # in meters
     temp_gradient = params['temp_gradient']
@@ -118,8 +118,8 @@ def get_pressure_at_height(data: pd.DataFrame,
     R = 8.31451
     M_air = 0.028949 # dry air
     g = 9.81
-    p1 = data[features['pressure']['name']]
-    t1 = data[features['temperature']['name']]
+    p1 = data[features['pressure']['name']].copy()
+    t1 = data[features['temperature']['name']].copy()
     t1 = t1 + 273.15
     temp_gradient = params['temp_gradient']
     M = M_air # molar mass of air (including water vapor) is less than that of dry air
@@ -135,8 +135,8 @@ def get_density_at_height(data: pd.DataFrame,
     M_air = 0.028949 # dry air
     M_h20 = 0.018015 # water
     g = 9.81
-    rho1 = data[features['density']['name']]
-    t1 = data[features['temperature']['name']]
+    rho1 = data[features['density']['name']].copy()
+    t1 = data[features['temperature']['name']].copy()
     t1 = t1 + 273.15
     h1 = 2 # because of temperature measured at 2 m
     temp_gradient = params['temp_gradient']
@@ -222,10 +222,11 @@ def get_rho(data: pd.DataFrame,
             features: dict) -> pd.Series:
     R_dry = 287.05  # Specific gas constant dry air (J/(kg·K))
     R_w = 461.5  # Specific gas constaint water vapor (J/(kg·K))
-    air_pressure = data[features['pressure']['name']] * 100 # * 100 -> hPa to Pa
-    temperature = data[features['temperature']['name']]
-    relhum = data[features['relhum']['name']]
-    p_s = data[features['sat_vap_pressure']['name']]
+    air_pressure = data[features['pressure']['name']].copy()
+    air_pressure *= 100 # * 100 -> hPa to Pa
+    temperature = data[features['temperature']['name']].copy()
+    relhum = data[features['relhum']['name']].copy()
+    p_s = data[features['sat_vap_pressure']['name']].copy()
     # check if relative humidity is in the range between 0 and 1
     if relhum.max() > 1:
         relhum /= 100
@@ -453,7 +454,7 @@ def main() -> None:
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind_noage')
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -520,7 +521,7 @@ def main() -> None:
                     suffix_for_turbine_cols=f'_t{turbine_id}'
             )
             if 'turbine_id' not in specs[turbine].keys():
-                specs[turbine]['turbine_id'] = f'_t{turbine_id}'
+                specs[turbine]['turbine_id'] = f't{turbine_id}'
         df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
     # Save the park parameters
     df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
