@@ -7,7 +7,7 @@ import pvlib
 from tqdm import tqdm
 from typing import List
 
-import utils, clean_data
+from utils import tools, clean_data
 
 def read_dfs(path: str,
              features: list) -> List[pd.DataFrame]:
@@ -21,14 +21,14 @@ def read_dfs(path: str,
         data = data.resample('1H', closed='left', label='left', origin='start').mean()
         data = data[features]
         # knn impute the data
-        data = utils.knn_imputer(data=data, n_neighbors=5)
+        data = tools.knn_imputer(data=data, n_neighbors=5)
         dfs.append(data)
         station_ids.append(station_id)
     return dfs, station_ids
 
 def get_location_and_elevation(station_id: str,
                                db_config: dict):
-    masterdata = utils.get_master_data(db_config)
+    masterdata = tools.get_master_data(db_config)
     latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
     longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
     elevation = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
@@ -41,8 +41,8 @@ def get_specific_params(station_id: str,
     specific_params = params.copy()
     del specific_params['gamma_pdc']
     del specific_params['eta_inv_ref']
-    longitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
-    latitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
     altitude = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
     specific_params['longitude'] = longitude
     specific_params['latitude'] = latitude
@@ -185,7 +185,7 @@ def gen_full_dataframe(params: dict,
     return df
 
 def main() -> None:
-    config = utils.load_config("config.yaml")
+    config = tools.load_config("config.yaml")
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'solar')
@@ -201,7 +201,7 @@ def main() -> None:
     pv_features, _ = clean_data.relevant_features(features=features)
 
     frames, station_ids = read_dfs(path=raw_dir, features=pv_features)
-    masterdata = utils.get_master_data(db_config)
+    masterdata = tools.get_master_data(db_config)
 
     power_master = {}
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):

@@ -80,7 +80,7 @@ wind_params:
   mean_age_years: 15
   std_dev_age_years: 5
   annual_degradation: 0.0063
-  apply_ageing: False
+  apply_ageing: True
   hourly_resolution: True
 
 logging:

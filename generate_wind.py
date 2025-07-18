@@ -6,8 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 from typing import List
 
-import clean_data
-import utils
+from utils import tools, clean_data
 
 def get_park_params(station_id: str,
                         masterdata: pd.DataFrame,
@@ -31,8 +30,8 @@ def get_park_params(station_id: str,
     del specific_params['apply_ageing']
     del specific_params['hourly_resolution']
     # from stations masterdata
-    longitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
-    latitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
+    latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
     altitude = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
     specific_params['longitude'] = longitude
     specific_params['latitude'] = latitude
@@ -267,7 +266,7 @@ def read_dfs(path: str,
             direction='backward',         # wähle den letzten bekannten Wert
         )
         # knn impute the data
-        data = utils.knn_imputer(data=data, n_neighbors=5)
+        data = tools.knn_imputer(data=data, n_neighbors=5)
         dfs.append(data)
         station_ids.append(station_id)
     return dfs, station_ids
@@ -449,7 +448,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
 
 
 def main() -> None:
-    config = utils.load_config("config.yaml")
+    config = tools.load_config("config.yaml")
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
@@ -486,7 +485,7 @@ def main() -> None:
                                    w_vert_dir=w_vert_dir,
                                    features=wind_features,
                                    hourly_resolution=params['hourly_resolution'])
-    masterdata = utils.get_master_data(db_config)
+    masterdata = tools.get_master_data(db_config)
     power_curves, _, specs = get_turbines(
         turbine_path=turbine_path,
         cp_path=cp_path,
