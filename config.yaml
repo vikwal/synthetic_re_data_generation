@@ -62,12 +62,18 @@ pv_params:
   faiman_u1: 6.84
 
 wind_params:
+  # turbines: ['Enercon E-66/18.70',
+  #            'Enercon E-66/18.70',
+  #            'Enercon E-66/18.70',
+  #            'Enercon E-66/18.70',
+  #            'Enercon E-66/18.70']
   turbines: ['Enercon E-70 E4 2.300',
              'Enercon E-82 E2 2.000',
              'Enercon E-115 2.500',
              'Vestas V90',
              'Vestas V112-3.45',
              'Vestas V80-1.8']
+  #hub_heights: [65,65,65,65,65]
   hub_heights: [57,138,149,95,119,78]
   h1: 10
   p_s_model: 'huang'

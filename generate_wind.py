@@ -154,7 +154,7 @@ def merge_curve(data: pd.DataFrame,
     values.index = wind.index
     return values[curve.name]
 
-def interpolate(power_curve: pd.DataFrame, cut_out: float):
+def interpolate(power_curve: pd.Series, cut_out: float):
     ticks = np.arange(0, cut_out*100, 1) / 100.0
     rated_power = power_curve.max()
     interpol = pd.Series(index=ticks, dtype=float)
@@ -241,11 +241,14 @@ def get_rho(data: pd.DataFrame,
 def read_dfs(path: str,
              w_vert_dir: str,
              features: list,
-             hourly_resolution: bool = True) -> List[pd.DataFrame]:
+             hourly_resolution: bool = True,
+             specific_id: str = None) -> List[pd.DataFrame]:
     dfs = []
     station_ids = []
     for file in os.listdir(path):
         station_id = file.split('.csv')[0].split('_')[1]
+        if specific_id and (station_id != specific_id):
+            continue
         w_vert_file = f'w_vert_{station_id}.csv'
         data = pd.read_csv(os.path.join(path, file), delimiter= ",")
         data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
@@ -270,6 +273,8 @@ def read_dfs(path: str,
         data = tools.knn_imputer(data=data, n_neighbors=5)
         dfs.append(data)
         station_ids.append(station_id)
+        if specific_id:
+            break
     return dfs, station_ids
 
 
@@ -281,7 +286,9 @@ def get_turbines(turbine_path: str,
     # read power curves
     power_curves = pd.read_csv(turbine_path, sep=";", decimal=".")
     power_curves.set_index('wind_speed', inplace=True)
-    power_curves = power_curves[turbines] * 1000
+    power_curves = power_curves[turbines] * 1000 # MW -> kW
+    if power_curves.columns.duplicated().any():
+        power_curves = power_curves.loc[:, ~power_curves.columns.duplicated()]
     # read cp curves
     cp_curves = pd.read_csv(cp_path, sep=";", decimal=".")
     cp_curves.set_index('wind_speed', inplace=True)
@@ -304,14 +311,18 @@ def get_ageing_degradation(
         mean_age_years: float = 15.0,
         std_dev_age_years: float = 5.0,
         annual_load_factor_loss_rate: float = 0.0063,
-        real_ages: np.ndarray = None):
+        real_ages: np.ndarray = None,
+        commissioning_date: str = None):
     if real_ages is None:
         start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
     else:
         start_age = float(np.random.choice(real_ages, size=1, replace=False)[0])
     start_age = max(0.0, start_age)
-    end_age = start_age + 1
-    commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
+    if commissioning_date:
+        start_age = (time_vector[0] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
+    else:
+        commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
+    end_age = (time_vector[-1] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
     base_efficiency = 1.0 - annual_load_factor_loss_rate
     efficiency_factor_start = base_efficiency ** start_age
     efficiency_factor_end = base_efficiency ** end_age
@@ -417,7 +428,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
             params=params,
             hub_height=hub_height,
             suffix=suffix_for_turbine_cols)
-    power_curve = interpolate(power_curve=power_curves[turbine],
+    power_curve = interpolate(power_curve=power_curves[turbine], # filter
                               cut_out=cut_out)
     Cp = get_cp_from_power_curve(data=df,
                                 power_curve=power_curve,
@@ -453,7 +464,7 @@ def main() -> None:
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind')
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'wind_age')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -464,6 +475,9 @@ def main() -> None:
     cp_path = os.path.join(turbine_dir, cp_path)
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
+
+    specific_id = None #'04745'
+    commissioning_date = None #'2003-06-01'
 
     logging.basicConfig(
         level=logging.INFO,
@@ -485,7 +499,9 @@ def main() -> None:
     frames, station_ids = read_dfs(path=raw_dir,
                                    w_vert_dir=w_vert_dir,
                                    features=wind_features,
-                                   hourly_resolution=params['hourly_resolution'])
+                                   hourly_resolution=params['hourly_resolution'],
+                                   specific_id=specific_id)
+
     masterdata = tools.get_master_data(db_config)
     power_curves, _, specs = get_turbines(
         turbine_path=turbine_path,
@@ -499,7 +515,8 @@ def main() -> None:
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
-        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index, real_ages=wind_ages)
+        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
+                                                                        real_ages=wind_ages, commissioning_date=commissioning_date)
         if not params['apply_ageing']:
             degradation_vector = None
             commissioning_date = '-'
