@@ -464,7 +464,7 @@ def main() -> None:
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'wind_age')
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'real_parks')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -476,8 +476,8 @@ def main() -> None:
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
 
-    specific_id = None #'04745'
-    commissioning_date = None #'2003-06-01'
+    specific_id = '04745'
+    commissioning_date = '2003-06-01'
 
     logging.basicConfig(
         level=logging.INFO,
@@ -509,7 +509,6 @@ def main() -> None:
         specs_path=specs_path,
         params=params
     )
-    turbine_list = list(power_curves.columns)
     power_master = {}
     logging.info(f'Starting wind power generation. Ageing is set to {params["apply_ageing"]}')
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
@@ -525,7 +524,7 @@ def main() -> None:
                                           params=params,
                                           commissioning_date=commissioning_date)
         power_master[station_id] = specific_params
-        for turbine_id, turbine in enumerate(turbine_list, start=1):
+        for turbine_id, turbine in enumerate(params['turbines'], start=1):
             df = gen_full_dataframe(
                     power_curves=power_curves,
                     turbine=turbine,
