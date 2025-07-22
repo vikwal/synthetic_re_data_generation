@@ -284,7 +284,7 @@ def get_turbines(turbine_path: str,
                  params: dict):
     turbines = params['turbines']
     # read power curves
-    power_curves = pd.read_csv(turbine_path, sep=";", decimal=".")
+    power_curves = pd.read_csv(turbine_path, sep=";", decimal=",")
     power_curves.set_index('wind_speed', inplace=True)
     power_curves = power_curves[turbines] * 1000 # MW -> kW
     if power_curves.columns.duplicated().any():
@@ -318,7 +318,7 @@ def get_ageing_degradation(
     else:
         start_age = float(np.random.choice(real_ages, size=1, replace=False)[0])
     start_age = max(0.0, start_age)
-    if commissioning_date:
+    if commissioning_date is not None:
         start_age = (time_vector[0] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
     else:
         commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
@@ -328,6 +328,30 @@ def get_ageing_degradation(
     efficiency_factor_end = base_efficiency ** end_age
     efficiency_vector = np.linspace(efficiency_factor_start, efficiency_factor_end, num=len(time_vector))
     return efficiency_vector, commissioning_date
+
+def apply_rotor_inertia(power: np.ndarray,
+                        wind_speed: pd.Series,
+                        cut_in: float,
+                        alpha: float = 1.0,
+                        tau: float = 2.0,
+                        min_tau: float = 0.2) -> np.ndarray:
+    adjusted_power = power.copy()
+    tail_power = 0.0
+    if wind_speed.index is not None and len(wind_speed.index) > 1:
+        dt_hours = (wind_speed.index[1] - wind_speed.index[0]) / np.timedelta64(1, 'h')
+    else:
+        dt_hours = 1.0
+    decay_factor = np.exp(-dt_hours / tau)
+    for i in range(1, len(power)):
+        if power[i] < power[i-1]:
+            delta_v = cut_in - wind_speed.iloc[i]
+            tau_eff = max(min_tau, tau * (1 + alpha * delta_v))
+            decay_factor = np.exp(-dt_hours / tau_eff)
+            tail_power *= decay_factor
+            adjusted_power[i] = tail_power
+        else:
+            tail_power = adjusted_power[i]
+    return adjusted_power
 
 def apply_noise(wind_power: pd.Series,
                 rated_power: float,
@@ -404,7 +428,9 @@ def generate_wind_power(data: pd.DataFrame,
             0
         )
     )
-    # apply noise
+    #power = apply_rotor_inertia(power=wind_power,
+    #                            wind_speed=wind_speed_hub,
+    #                            cut_in=cut_in)
     power = apply_noise(wind_power=wind_power,
                         rated_power=rated_power,
                         noise=params['noise'])
@@ -464,7 +490,7 @@ def main() -> None:
     db_config = config['write']['db_conf']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'real_parks')
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'real_parks_noage')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -476,8 +502,8 @@ def main() -> None:
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
 
-    specific_id = '04745'
-    commissioning_date = '2003-06-01'
+    specific_id = '07374'
+    commissioning_date = None#'2003-06-01'
 
     logging.basicConfig(
         level=logging.INFO,
@@ -510,7 +536,7 @@ def main() -> None:
         params=params
     )
     power_master = {}
-    logging.info(f'Starting wind power generation. Ageing is set to {params["apply_ageing"]}')
+    logging.info(f'Starting wind power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
@@ -538,6 +564,7 @@ def main() -> None:
             if 'turbine_id' not in specs[turbine].keys():
                 specs[turbine]['turbine_id'] = f't{turbine_id}'
         df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
+        commissioning_date = None
     # Save the park parameters
     df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
     df_power_master.index.name = 'park_id'
