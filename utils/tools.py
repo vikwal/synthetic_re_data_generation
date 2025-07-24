@@ -56,7 +56,7 @@ def connect_db(conf: dict):
     :return: Connection and cursor objects.
     """
     if conf['passw'] == '':
-        passw = getpass.getpass("Enter postgres users password: ")
+        passw = 'qgGxB&W96)'#getpass.getpass("Enter postgres users password: ")
         conf['passw'] = passw
     conn = psycopg2.connect(
         host=conf['host'],
@@ -82,6 +82,8 @@ def days_timedelta(date: str,
 
 def knn_imputer(data: pd.DataFrame,
                n_neighbors: int = 5):
+    # increase vertical wind speed to avoid nulling when inverse transform
+    data['w_vert'] *= 1000
     # To help KNNImputer estimating the temporal saisonalities we add encoded temporal features.
     data['hour_sin'] = np.sin(2 * np.pi * data.index.hour / 24)
     data['hour_cos'] = np.cos(2 * np.pi * data.index.hour / 24)
@@ -93,4 +95,5 @@ def knn_imputer(data: pd.DataFrame,
     df = pd.DataFrame(scaler.inverse_transform(imputer.fit_transform(df_scaled)), columns=data.columns, index=data.index)
     df.drop(['hour_sin', 'hour_cos', 'month_sin', 'month_cos'], axis=1, inplace=True)
     df[df.abs() < 0.01] = 0
+    df['w_vert'] /= 1000
     return df

@@ -1,0 +1,194 @@
+data:
+  dir: '/mnt/nas/observed_weather'
+  synth_dir: 'data/synthetic'
+  raw_dir: 'data/raw'
+  pkl_dir: 'data/pkl_files'
+  re_ninja_dir: 'data/renewables.ninja'
+  w_vert_dir: 'data/vertical_wind'
+  from_date: '2023-07-24'
+  hist_date: '2023-12-31'
+  turbine_dir: "power_curves"
+  turbine_power: 'turbine_power.csv'
+  turbine_specs: "turbine_specs.csv"
+  turbine_cp: "turbine_cp.csv"
+  turbine_ct: "turbine_ct.csv"
+  turbine_names: "turbine_names.csv"
+  wind_ages: 'data/wind_ages.npy'
+  pv_ages: 'data/pv_ages.npy'
+  hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
+  vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
+  sleep: 0.25
+
+scraping:
+  download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
+  vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
+  sleep: 1
+  get_historical: True
+  get_recent: True
+  overwrite: True
+
+
+write:
+  recent_pkl: 'recent_dfs.pkl'
+  historical_pkl: 'historical_dfs.pkl'
+  master_pkl: 'master_data.pkl'
+  create_table: False
+  write_historical: True
+  write_recent: True
+  write_master: False
+  write: True
+  threshold: 0.008 # 0.8 % missing values
+  clean_pv: False
+  clean_wind: True
+  db_conf:
+    host: 'localhost'
+    database: 'WeatherDB'
+    port: 5432
+    user: 'postgres'
+    passw: ''
+    do_update: True # on conflict do update?
+
+
+pv_params:
+  dc_rating_watts: 10000 # in Watts
+  dc_ac_ratio: 1
+  surface_tilt: 35
+  surface_azimuth: 180
+  gamma_pdc: -0.0035
+  albedo: 0.25
+  eta_inv_nom: 0.96
+  eta_inv_ref: 0.9637
+  faiman_u0: 25
+  faiman_u1: 6.84
+
+wind_params:
+  turbines: ['Vestas V126-3.3']
+  hub_heights: [137]
+  h1: 10
+  p_s_model: 'huang'
+  v2_method: 'alphaI'
+  karman: 0.4
+  temp_gradient: 0.00649
+  interpol_method: 'polynomial'
+  polynom_grad: 2
+  noise: 0.0
+  mean_age_years: 15
+  std_dev_age_years: 5
+  annual_degradation: 0.0063
+  apply_ageing: False
+  hourly_resolution: False
+
+logging:
+  verbose: False
+  log_file_write: 'write_db.log'
+  datefmt: '%Y-%m-%d %H:%M:%S'
+
+features:
+  pressure:
+    old_name: 'PP_10'
+    name: 'pressure'
+    unit: 'Pa'
+  temperature:
+    old_name: 'TT_10'
+    name: 'temperature_2m'
+    unit: '°C'
+  temperature_5cm:
+    old_name: 'TM5_10'
+    name: 'temperature_5cm'
+    unit: '°C'
+  relhum:
+    old_name: 'RF_10'
+    name: 'relative_humidity'
+    unit: '%'
+  dewpoint:
+    old_name: 'TD_10'
+    name: 'dew_point'
+    unit: '°C'
+  dhi:
+    old_name: 'DS_10'
+    name: 'dhi'
+    unit: 'W/m$^2$'
+  dni:
+    name: 'dni'
+    unit: 'W/m$^2$'
+  ghi:
+    old_name: 'GS_10'
+    name: 'ghi'
+    unit: 'W/m$^2$'
+  sun_duration:
+    old_name: 'SD_10'
+    name: 'sun_duration'
+    unit: 'h'
+  longwave_rad:
+    old_name: 'LS_10'
+    name: 'longwave_rad'
+    unit: 'J/m$^2'
+  wind_speed:
+    old_name: 'FF_10'
+    name: 'wind_speed'
+    unit: 'm/s'
+  d_wind:
+    old_name: 'DD_10'
+    name: 'wind_direction'
+    unit: '°'
+  prec:
+    old_name: 'RWS_10'
+    name: 'precipitation_rate'
+    unit: 'mm'
+  prec_dau:
+    old_name: 'RWS_DAU_10'
+    name: 'precipitation_duration'
+    unit: 'min'
+  sigma_wind_lat:
+    old_name: 'SLA_10'
+    name: 'std_u_wind'
+    unit: ''
+  sigma_wind_lon:
+    old_name: 'SLO_10'
+    name: 'std_v_wind'
+    unit: ''
+  latitude:
+    old_name: 'geoBreite'
+    name: 'latitude'
+    unit: '°'
+  longitude:
+    old_name: 'geoLaenge'
+    name: 'longitude'
+    unit: '°'
+  elevation:
+    old_name: 'Stationshoehe'
+    name: 'station_height'
+    unit: 'm'
+  density:
+    name: 'density'
+    unit: 'kg/m$^3$'
+  sat_vap_pressure:
+    name: 'saturated_vapor_pressure'
+    unit: 'Pa'
+  sat_vap_pressure_hub:
+    name: 'saturated_vapor_pressure'
+    unit: 'Pa'
+  wind_speed_hub:
+    name: 'wind_speed'
+    unit: 'm/s'
+  wind_speed_vertical:
+    name: 'w_vert' # change later to wind_speed_vertical
+    unit: 'm/s'
+  pressure_hub:
+    name: 'pressure'
+    unit: 'Pa'
+  temperature_hub:
+    name: 'temperature'
+    unit: '°C'
+  density_hub:
+    name: 'density'
+    unit: 'kg/m$^3$'
+  cp_curve:
+    name: 'cp'
+    unit: '-'
+  power_curve:
+    name: 'power_curve'
+    unit: 'Watt'
+  power:
+    name: 'power'
+    unit: 'Watt'

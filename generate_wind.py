@@ -1,10 +1,12 @@
 import os
 import math
 import logging
+import argparse
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from typing import List
+from collections import defaultdict
 
 from utils import tools, clean_data
 
@@ -286,7 +288,7 @@ def get_turbines(turbine_path: str,
     # read power curves
     power_curves = pd.read_csv(turbine_path, sep=";", decimal=",")
     power_curves.set_index('wind_speed', inplace=True)
-    power_curves = power_curves[turbines] * 1000 # MW -> kW
+    power_curves = power_curves[turbines] * 1000 # kW -> W
     if power_curves.columns.duplicated().any():
         power_curves = power_curves.loc[:, ~power_curves.columns.duplicated()]
     # read cp curves
@@ -486,11 +488,30 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
 
 
 def main() -> None:
-    config = tools.load_config("config.yaml")
+
+    parser = argparse.ArgumentParser(description="Synthetic Wind Power Time Series Simulation")
+    parser.add_argument('-p', '--park_id', type=str, default='', help='Select park_id (default: None)')
+    args = parser.parse_args()
+
+    if args.park_id == '':
+        config_suffix = ''
+        park_id = None
+        dwd_station_id = None
+    else:
+        park_id = args.park_id
+        config_suffix = f'_{park_id}'
+        dwd_station_id = park_id[:5]
+
+    config = tools.load_config(f"configs/config{config_suffix}.yaml")
     db_config = config['write']['db_conf']
+    features = config['features']
+    params = config['wind_params']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'real_parks_noage')
+    ageing_flag = '_noage'
+    if params['apply_ageing']:
+        ageing_flag = '_age'
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', f'real_parks{ageing_flag}')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -502,7 +523,6 @@ def main() -> None:
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
 
-    specific_id = '07374'
     commissioning_date = None#'2003-06-01'
 
     logging.basicConfig(
@@ -517,16 +537,13 @@ def main() -> None:
 
     os.makedirs(synth_dir, exist_ok=True)
 
-    features = config['features']
-    params = config['wind_params']
-
     _, wind_features = clean_data.relevant_features(features=features)
 
     frames, station_ids = read_dfs(path=raw_dir,
                                    w_vert_dir=w_vert_dir,
                                    features=wind_features,
                                    hourly_resolution=params['hourly_resolution'],
-                                   specific_id=specific_id)
+                                   specific_id=dwd_station_id)
 
     masterdata = tools.get_master_data(db_config)
     power_curves, _, specs = get_turbines(
@@ -537,7 +554,10 @@ def main() -> None:
     )
     power_master = {}
     logging.info(f'Starting wind power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
+    turbine_master = {}
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
+        if park_id is None:
+            park_id = station_id
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
@@ -561,18 +581,32 @@ def main() -> None:
                     degradation_vector=degradation_vector,
                     suffix_for_turbine_cols=f'_t{turbine_id}'
             )
-            if 'turbine_id' not in specs[turbine].keys():
-                specs[turbine]['turbine_id'] = f't{turbine_id}'
-        df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
+            turbine_master[f't{turbine_id}'] = specs[turbine]
+            turbine_master[f't{turbine_id}']['turbine_name'] = turbine
+            turbine_master[f't{turbine_id}']['park_id'] = park_id
+        df.to_csv(os.path.join(synth_dir, f'synth_{park_id}.csv'), sep=";", decimal=".")
         commissioning_date = None
     # Save the park parameters
+    wind_parameter_path = os.path.join(synth_dir, 'wind_parameter.csv')
+    write_header = not os.path.exists(wind_parameter_path) and not park_id
     df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
     df_power_master.index.name = 'park_id'
-    df_power_master.to_csv(os.path.join(synth_dir, 'wind_parameter.csv'), sep=";", decimal=".")
+    # check if the entries are already in the file if it exists
+    df_power_master.to_csv(wind_parameter_path, sep=";", decimal=".", mode='a', header=write_header)
+    # drop duplicates
+    df_power_master = pd.read_csv(wind_parameter_path, sep=";", decimal=".")
+    df_power_master.drop_duplicates(inplace=True)
+    df_power_master.to_csv(wind_parameter_path, sep=";", decimal=".", index=False)
     # save the turbine parameters
-    df_turbine_master = pd.DataFrame.from_dict(specs, orient='index')
+    turbine_master_path = os.path.join(synth_dir, 'turbine_parameter.csv')
+    write_header = not os.path.exists(turbine_master_path) and not park_id
+    df_turbine_master = pd.DataFrame.from_dict(turbine_master, orient='index')
     df_turbine_master.index.name = 'turbine'
-    df_turbine_master.to_csv(os.path.join(synth_dir, 'turbine_parameter.csv'), sep=";", decimal=".")
+    df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", mode='a', header=write_header)
+    # drop duplicates
+    df_turbine_master = pd.read_csv(turbine_master_path, sep=";", decimal=".")
+    df_turbine_master.drop_duplicates(inplace=True)
+    df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", index=False)
 
 if __name__ == "__main__":
     main()
