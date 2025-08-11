@@ -372,18 +372,12 @@ def get_features(data: pd.DataFrame,
                  params: dict,
                  hub_height: float,
                  suffix: str = '_hub') -> pd.DataFrame:
-    wind_speed_hub_col = f"{features['wind_speed_hub']['name']}{suffix}"
     temperature_col = features['temperature']['name']
     temperature_hub_col = f"{features['temperature_hub']['name']}{suffix}"
     sat_vap_ps_col = features['sat_vap_pressure']['name']
     sat_vap_ps_hub_col = f"{features['sat_vap_pressure']['name']}{suffix}"
     density_col = features['density']['name']
     density_hub_col = f"{features['density']['name']}{suffix}"
-
-    data[wind_speed_hub_col] = round(get_windspeed_at_height(data=data,
-                                                                  features=features,
-                                                                  params=params,
-                                                                  h2=hub_height), 2)
     data[temperature_hub_col] = get_temperature_at_height(data=data,
                                                           features=features,
                                                           params=params,
@@ -519,10 +513,11 @@ def main(config_file: str = None) -> None:
     params = config['wind_params']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
+    reninja_dir = os.path.join(config['data']['raw_dir'], 'wind_reninja')
     ageing_flag = '_noage'
     if params['apply_ageing']:
         ageing_flag = '_age'
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', f'hrly_real_parks{ageing_flag}')
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', f'reninja_real_parks{ageing_flag}')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -533,9 +528,9 @@ def main(config_file: str = None) -> None:
     cp_path = os.path.join(turbine_dir, cp_path)
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
-
-    commissioning_date = params.get('commissioning_date', None)
     params['hourly_resolution'] = True
+
+    commissioning_date = params['commissioning_date']
 
     logging.basicConfig(
         level=logging.INFO,
@@ -569,6 +564,12 @@ def main(config_file: str = None) -> None:
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         if args.park_id == '' and park_id == None:
             park_id = station_id
+        frame_reninja = pd.read_csv(os.path.join(reninja_dir, f'{park_id}.csv'), decimal='.', sep=';')
+        frame_reninja['timestamp'] = pd.to_datetime(frame_reninja['timestamp'], utc=True)
+        frame_reninja.set_index('timestamp', inplace=True)
+        wind_speed_cols = [col for col in frame_reninja.columns if 'wind_speed' in col]
+        for col in wind_speed_cols:
+            frame[col] = frame_reninja[col]#.reindex(frame.index)
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
@@ -604,7 +605,7 @@ def main(config_file: str = None) -> None:
             turbine_master[f't{turbine_id}']['cut_out'] = specs[turbine]['cut_out']
             turbine_master[f't{turbine_id}']['rated'] = specs[turbine]['rated']
             turbine_master[f't{turbine_id}']['turbine_name'] = turbine
-            turbine_master[f't{turbine_id}']['park_id'] = park_id
+            turbine_master[f't{turbine_id}']['park_id'] = str(park_id)
         df.to_csv(os.path.join(synth_dir, f'synth_{park_id}.csv'), sep=";", decimal=".")
         commissioning_date = None
     # Save the park parameters
@@ -630,8 +631,10 @@ def main(config_file: str = None) -> None:
     df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", index=False)
 
 if __name__ == "__main__":
-    config_files = os.listdir('configs/real_park_configs')
-    for config_name in config_files:
+    station_ids = os.listdir('data/raw/wind_reninja')
+    for station in station_ids:
+        station_id = station.split('.')[0]
+        config_name = f'config_{station_id}.yaml'
         print(f'Config: {config_name}')
         main(config_name)
     #main(None)

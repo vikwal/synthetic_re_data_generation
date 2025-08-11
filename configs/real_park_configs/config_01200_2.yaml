@@ -62,16 +62,13 @@ pv_params:
   faiman_u1: 6.84
 
 wind_params:
-  turbines: ['Nordex N117 2400',
-             'Nordex N117 2400',
-             'Nordex N117 2400',
-             'Nordex N117 2400',
-             'Nordex N117 2400',
-             'Nordex N117 2400',
-             'Nordex N117 2400',
-             'Nordex N117 2400']
-  #hub_heights: [141,141,141,141,141,141,141,141]
-  hub_heights: [445,445,445,445,445,445,445,445]
+  turbines: ['Senvion 3.2M114',
+             'Senvion 3.2M114',
+             'Senvion 3.2M114',
+             'Senvion 3.2M114',
+             'Senvion 3.2M114']
+  hub_heights: [93,93,93,93,93]
+  #hub_heights: [108,108,108,108,108]
   h1: 10
   p_s_model: 'huang'
   v2_method: 'alphaI'

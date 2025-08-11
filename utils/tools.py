@@ -56,7 +56,7 @@ def connect_db(conf: dict):
     :return: Connection and cursor objects.
     """
     if conf['passw'] == '':
-        passw = 'qgGxB&W96)'#getpass.getpass("Enter postgres users password: ")
+        passw = getpass.getpass("Enter postgres users password: ")
         conf['passw'] = passw
     conn = psycopg2.connect(
         host=conf['host'],

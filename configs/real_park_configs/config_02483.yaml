@@ -62,8 +62,11 @@ pv_params:
   faiman_u1: 6.84
 
 wind_params:
-  turbines: ['Vestas V126-3.3']
-  hub_heights: [137]
+  turbines: ['Enercon E-115 3.000',
+             'Enercon E-115 3.000',
+             'Enercon E-115 3.000']
+  #hub_heights: [149,149,149]
+  hub_heights: [-126,-126,-126]
   h1: 10
   p_s_model: 'huang'
   v2_method: 'alphaI'
@@ -76,6 +79,7 @@ wind_params:
   std_dev_age_years: 5
   annual_degradation: 0.0063
   apply_ageing: False
+  commissioning_date: '1995-01-01' #https://wind-turbine.com/anlagenbetreiber/mattenberg-gmbh-co-kg-energie
   hourly_resolution: False
 
 logging:

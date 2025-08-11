@@ -62,8 +62,17 @@ pv_params:
   faiman_u1: 6.84
 
 wind_params:
-  turbines: ['Senvion MM100']
-  hub_heights: [98]
+  turbines: ['Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58',
+             'Enercon E-58/10.58']
+  hub_heights: [71,71,71,71,71,71,71,71,71]
+  #hub_heights: [-41,-41,-41,-41,-41,-41,-41,-41,-41]
   h1: 10
   p_s_model: 'huang'
   v2_method: 'alphaI'
