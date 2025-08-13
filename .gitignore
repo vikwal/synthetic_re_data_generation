@@ -1,8 +1,7 @@
 .DS_Store
+.vscode
 __pycache__
 data
+results
 synthre
 figs
-solar
-wind
-masterdata.csv
