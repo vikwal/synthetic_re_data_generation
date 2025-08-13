@@ -1,5 +1,6 @@
 import os
 import yaml
+from ruamel.yaml import YAML
 import pickle
 import getpass
 import psycopg2
@@ -18,7 +19,30 @@ def load_config(config_path: str) -> dict:
     """
     with open(config_path, "r") as file:
         return yaml.safe_load(file)
+    
+def load_config_ruamel(config_path: str) -> dict:
+    """
+    Load the configuration file using ruamel.
+    :param config_path: Path to the configuration file.
+    :return: Configuration dictionary.
+    """
+    yaml = YAML()
+    with open(config_path, "r") as file:
+        return yaml.load(file)
+    
+def write_config(config: dict, config_path: str) -> None:
+    """
+    Write back to the configuration file while preserving the format.
+    :param config: Configuration dictionary.
+    :param config_path: Path to the configuration file.
+    """
+    yaml = YAML()
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    yaml.default_flow_style = None
 
+    with open(config_path, "w") as file:
+        yaml.dump(config, file)
+    
 def get_master_data(db_config: dict):
     """
     Get the master data from the database.

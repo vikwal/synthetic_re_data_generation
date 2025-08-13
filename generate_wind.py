@@ -1,10 +1,12 @@
 import os
 import math
 import logging
+import argparse
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from typing import List
+from collections import defaultdict
 
 from utils import tools, clean_data
 
@@ -14,6 +16,7 @@ def get_park_params(station_id: str,
                         commissioning_date: str) -> dict:
     specific_params = params.copy()
     # drop turbine information
+    if 'rated' in specific_params: del specific_params['rated']
     del specific_params['turbines']
     del specific_params['hub_heights']
     del specific_params['h1']
@@ -91,6 +94,8 @@ def get_windspeed_at_height(data: pd.DataFrame,
         alpha = 1/7
     else:
         alpha = 1/7 # 'seven_power'
+    if h2 < 0:
+        h2 = h1
     v2 = v1 * (h2 / h1) ** alpha
     return v2
 
@@ -148,7 +153,7 @@ def merge_curve(data: pd.DataFrame,
                 curve: pd.Series,
                 features: dict,
                 suffix: str = '_hub') -> pd.Series:
-    wind_speed_hub_col = f'{features["wind_speed_hub"]['name']}{suffix}'
+    wind_speed_hub_col = f'{features["wind_speed_hub"]["name"]}{suffix}'
     wind = data[wind_speed_hub_col].to_frame()
     values = pd.merge(wind, curve,left_on=wind_speed_hub_col, right_on='wind_speed', how="left")
     values.index = wind.index
@@ -174,8 +179,8 @@ def get_cp_from_power_curve(data: pd.DataFrame,
                             rotor_diameter: float,
                             degradation_vector: np.ndarray = None,
                             suffix: str = '_hub') -> pd.Series:
-    wind_speed_hub_col = f'{features["wind_speed_hub"]['name']}{suffix}'
-    rho_hub_col = f'{features['density_hub']['name']}{suffix}'
+    wind_speed_hub_col = f'{features["wind_speed_hub"]["name"]}{suffix}'
+    rho_hub_col = f'{features["density_hub"]["name"]}{suffix}'
     wind_speed = data[wind_speed_hub_col]
     rho = data[rho_hub_col]
     rotor_area = np.pi * (rotor_diameter / 2) ** 2
@@ -286,7 +291,7 @@ def get_turbines(turbine_path: str,
     # read power curves
     power_curves = pd.read_csv(turbine_path, sep=";", decimal=",")
     power_curves.set_index('wind_speed', inplace=True)
-    power_curves = power_curves[turbines] * 1000 # MW -> kW
+    power_curves = power_curves[turbines] * 1000 # kW -> W
     if power_curves.columns.duplicated().any():
         power_curves = power_curves.loc[:, ~power_curves.columns.duplicated()]
     # read cp curves
@@ -299,7 +304,7 @@ def get_turbines(turbine_path: str,
     for height, turbine in enumerate(turbines):
         specs[turbine] = {
             'diameter': float(turbine_specs.loc[turbine_specs['Turbine'] == turbine, 'Rotordurchmesser'].values[0]),
-            'height': params['hub_heights'][height],
+            #'height': params['hub_heights'][height],
             'cut_in': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Einschaltgeschwindigkeit'].values[0]),
             'cut_out': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Abschaltgeschwindigkeit'].values[0]),
             'rated': float(turbine_specs[turbine_specs['Turbine'] == turbine]['Nennwindgeschwindigkeit'].values[0])
@@ -431,6 +436,7 @@ def generate_wind_power(data: pd.DataFrame,
     #power = apply_rotor_inertia(power=wind_power,
     #                            wind_speed=wind_speed_hub,
     #                            cut_in=cut_in)
+    wind_power = np.minimum(wind_power, rated_power)
     power = apply_noise(wind_power=wind_power,
                         rated_power=rated_power,
                         noise=params['noise'])
@@ -441,11 +447,13 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
                        params: dict,
                        features: dict,
                        df: pd.DataFrame,
+                       hub_height: float,
                        specs: dict,
+                       rated_power = None,
                        degradation_vector: np.ndarray = None,
                        suffix_for_turbine_cols: str = '') -> pd.DataFrame:
     rotor_diameter = specs[turbine]['diameter']
-    hub_height = specs[turbine]['height']
+    #hub_height = specs[turbine]['height']
     cut_in = specs[turbine]['cut_in']
     cut_out = specs[turbine]['cut_out']
     rated_speed = specs[turbine]['rated']
@@ -456,6 +464,8 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
             suffix=suffix_for_turbine_cols)
     power_curve = interpolate(power_curve=power_curves[turbine], # filter
                               cut_out=cut_out)
+    if rated_power == None:
+        rated_power = power_curve.max()
     Cp = get_cp_from_power_curve(data=df,
                                 power_curve=power_curve,
                                 features=features,
@@ -471,7 +481,7 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     power = generate_wind_power(data=df,
                             features=features,
                             params=params,
-                            rated_power=power_curve.max(),
+                            rated_power=rated_power,
                             Cp=Cp,
                             rotor_diameter=rotor_diameter,
                             cut_in=cut_in,
@@ -485,12 +495,34 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     return df
 
 
-def main() -> None:
-    config = tools.load_config("config.yaml")
+def main(config_file: str = None) -> None:
+
+    parser = argparse.ArgumentParser(description="Synthetic Wind Power Time Series Simulation")
+    parser.add_argument('-p', '--park_id', type=str, default='', help='Select park_id (default: None)')
+    args = parser.parse_args()
+
+    if config_file:
+        args.park_id = str(config_file.split('.')[0][7:])
+
+    if args.park_id == '':
+        config_suffix = ''
+        park_id = None
+        dwd_station_id = None
+    else:
+        park_id = args.park_id
+        config_suffix = f'_{park_id}'
+        dwd_station_id = str(park_id[:5])
+
+    config = tools.load_config(f"configs/config{config_suffix}.yaml")
     db_config = config['write']['db_conf']
+    features = config['features']
+    params = config['wind_params']
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', 'real_parks_noage')
+    ageing_flag = '_noage'
+    if params['apply_ageing']:
+        ageing_flag = '_age'
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', f'real_parks{ageing_flag}')
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -502,7 +534,6 @@ def main() -> None:
     wind_ages_path = config['data']['wind_ages']
     wind_ages = np.load(wind_ages_path)
 
-    specific_id = '07374'
     commissioning_date = None#'2003-06-01'
 
     logging.basicConfig(
@@ -514,11 +545,7 @@ def main() -> None:
             logging.StreamHandler()
             ]
     )
-
     os.makedirs(synth_dir, exist_ok=True)
-
-    features = config['features']
-    params = config['wind_params']
 
     _, wind_features = clean_data.relevant_features(features=features)
 
@@ -526,7 +553,7 @@ def main() -> None:
                                    w_vert_dir=w_vert_dir,
                                    features=wind_features,
                                    hourly_resolution=params['hourly_resolution'],
-                                   specific_id=specific_id)
+                                   specific_id=dwd_station_id)
 
     masterdata = tools.get_master_data(db_config)
     power_curves, _, specs = get_turbines(
@@ -536,8 +563,11 @@ def main() -> None:
         params=params
     )
     power_master = {}
-    logging.info(f'Starting wind power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
+    logging.info(f'Starting wind power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params["hourly_resolution"]}')
+    turbine_master = defaultdict(dict)
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
+        if args.park_id == '' and park_id == None:
+            park_id = station_id
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
@@ -549,31 +579,56 @@ def main() -> None:
                                           masterdata=masterdata,
                                           params=params,
                                           commissioning_date=commissioning_date)
-        power_master[station_id] = specific_params
+        power_master[park_id] = specific_params
         for turbine_id, turbine in enumerate(params['turbines'], start=1):
+            hub_height = params['hub_heights'][turbine_id-1]
             df = gen_full_dataframe(
                     power_curves=power_curves,
                     turbine=turbine,
                     params=params,
                     features=features,
                     df=df,
+                    hub_height=hub_height,
+                    rated_power=params['rated'][turbine_id-1]*1000, # only needed when to curtail rated power
                     specs=specs,
                     degradation_vector=degradation_vector,
                     suffix_for_turbine_cols=f'_t{turbine_id}'
             )
-            if 'turbine_id' not in specs[turbine].keys():
-                specs[turbine]['turbine_id'] = f't{turbine_id}'
-        df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
+            turbine_master[f't{turbine_id}']['diameter'] = specs[turbine]['diameter']
+            turbine_master[f't{turbine_id}']['hub_height'] = hub_height
+            turbine_master[f't{turbine_id}']['cut_in'] = specs[turbine]['cut_in']
+            turbine_master[f't{turbine_id}']['cut_out'] = specs[turbine]['cut_out']
+            turbine_master[f't{turbine_id}']['rated'] = specs[turbine]['rated']
+            turbine_master[f't{turbine_id}']['turbine_name'] = turbine
+            turbine_master[f't{turbine_id}']['park_id'] = park_id
+        df.to_csv(os.path.join(synth_dir, f'synth_{park_id}.csv'), sep=";", decimal=".")
         commissioning_date = None
     # Save the park parameters
+    wind_parameter_path = os.path.join(synth_dir, 'wind_parameter.csv')
+    write_header = not os.path.exists(wind_parameter_path) #and not park_id
     df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
     df_power_master.index.name = 'park_id'
-    df_power_master.to_csv(os.path.join(synth_dir, 'wind_parameter.csv'), sep=";", decimal=".")
+    # check if the entries are already in the file if it exists
+    df_power_master.to_csv(wind_parameter_path, sep=";", decimal=".", mode='a', header=write_header)
+    # drop duplicates
+    df_power_master = pd.read_csv(wind_parameter_path, sep=";", decimal=".", dtype={'park_id': str})
+    df_power_master.drop_duplicates(inplace=True)
+    df_power_master.to_csv(wind_parameter_path, sep=";", decimal=".", index=False)
     # save the turbine parameters
-    df_turbine_master = pd.DataFrame.from_dict(specs, orient='index')
+    turbine_master_path = os.path.join(synth_dir, 'turbine_parameter.csv')
+    write_header = not os.path.exists(turbine_master_path) #and not park_id
+    df_turbine_master = pd.DataFrame.from_dict(turbine_master, orient='index')
     df_turbine_master.index.name = 'turbine'
-    df_turbine_master.to_csv(os.path.join(synth_dir, 'turbine_parameter.csv'), sep=";", decimal=".")
+    df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", mode='a', header=write_header)
+    # drop duplicates
+    df_turbine_master = pd.read_csv(turbine_master_path, sep=";", decimal=".")
+    df_turbine_master.drop_duplicates(inplace=True)
+    df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", index=False)
 
 if __name__ == "__main__":
-    main()
+    #config_files = os.listdir('configs/real_park_configs')
+    #for config_name in config_files:
+    #    print(f'Config: {config_name}')
+    #    main(config_name)
+    main(None)
 
