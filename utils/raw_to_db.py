@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime
 from psycopg2.extras import execute_values
 
-from utils import tools
+from . import tools
 
 
 def get_all_stations_files(dir: str,

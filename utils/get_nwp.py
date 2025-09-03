@@ -6,7 +6,7 @@ from tqdm import tqdm
 import logging
 from typing import List, Tuple
 
-from utils import tools
+from . import tools
 
 
 def get_nearest_point(db_config: dict,
@@ -188,7 +188,7 @@ def main():
             logging.StreamHandler()
             ]
     )
-    config = tools.load_config("config.yaml")
+    config = tools.load_config("configs/config.yaml")
     db_config = config['write']['db_conf']
     parser = argparse.ArgumentParser(description="Extract and save NWP forecasts for PV and wind stations.")
     parser.add_argument('--get_pv', action='store_true', help='Extract PV forecast data')

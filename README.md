@@ -38,7 +38,7 @@ To clear old raw data:
 **Run:**
 
 ```bash
-python utils/scrape_stations.py
+python -m utils.scrape_stations
 ```
 
 ---
@@ -48,7 +48,7 @@ python utils/scrape_stations.py
 The downloaded files are zipped. To unzip:
 
 ```bash
-python utils/unzip.py
+python -m utils.unzip
 ```
 
 ---
@@ -70,7 +70,7 @@ Control what gets written using:
 **Run:**
 
 ```bash
-python utils/raw_to_db.py
+python -m utils.raw_to_db
 ```
 
 ---
@@ -90,7 +90,7 @@ You can choose to clean:
 **Run:**
 
 ```bash
-python utils/clean_data.py
+python -m utils.clean_data
 ```
 
 The result of this script is a directory called raw, where are CSV-file stored, each for PV and for wind, with raw weather station data.
@@ -113,7 +113,7 @@ You can control what gets queried using command-line flags:
 **Run for PV, wind and vertical wind:**
 
 ```bash
-python utils/get_nwp.py --get_pv --get_wind --get_wind_vertical
+python -m utils.get_nwp --get_pv --get_wind --get_wind_vertical
 ```
 
 The result is a directory called `singlelevelfields` or `multilevelfields` for the requested NWP data.

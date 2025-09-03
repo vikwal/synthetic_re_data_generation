@@ -1,11 +1,19 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: 'data/synthetic'
+  synth_dir: '/mnt/nas/synthetic'
   raw_dir: 'data/raw'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
+  w_vert_dir: 'data/vertical_wind'
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
+  turbine_dir: "power_curves"
+  turbine_power: 'turbine_power.csv'
+  turbine_specs: "turbine_specs.csv"
+  turbine_cp: "turbine_cp.csv"
+  turbine_ct: "turbine_ct.csv"
+  turbine_names: "turbine_names.csv"
+  wind_ages: 'data/wind_ages.npy'
   pv_ages: 'data/pv_ages.npy'
   hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
   vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
@@ -18,6 +26,7 @@ scraping:
   get_historical: True
   get_recent: True
   overwrite: True
+
 
 write:
   recent_pkl: 'recent_dfs.pkl'
@@ -38,6 +47,28 @@ write:
     user: 'postgres'
     passw: ''
     do_update: True # on conflict do update?
+
+
+wind_params:
+  turbines: ['Enercon E-70 E4 2.300',
+             'Enercon E-82 E2 2.000',
+             'Enercon E-115 2.500',
+             'Vestas V90',
+             'Vestas V112-3.45',
+             'Vestas V80-1.8']
+  hub_heights: [57,138,149,95,119,78]
+  h1: 10
+  p_s_model: 'huang'
+  v2_method: 'alphaI'
+  karman: 0.4
+  temp_gradient: 0.00649
+  interpol_method: 'polynomial'
+  polynom_grad: 2
+  noise: 0.0
+  annual_degradation: 0.0063
+  apply_ageing: True
+  hourly_resolution: True
+  random_seed: 42
 
 logging:
   verbose: False
@@ -126,21 +157,27 @@ features:
   sat_vap_pressure:
     name: 'saturated_vapor_pressure'
     unit: 'Pa'
-  cell_temperature:
-    name: 'temperature_mod'
+  sat_vap_pressure_hub:
+    name: 'saturated_vapor_pressure'
+    unit: 'Pa'
+  wind_speed_hub:
+    name: 'wind_speed'
+    unit: 'm/s'
+  wind_speed_vertical:
+    name: 'w_vert' # change later to wind_speed_vertical
+    unit: 'm/s'
+  pressure_hub:
+    name: 'pressure'
+    unit: 'Pa'
+  temperature_hub:
+    name: 'temperature'
     unit: '°C'
-  dhi_poa:
-    name: 'dhi_poa'
-    unit: 'W/m$^2$'
-  dni_poa:
-    name: 'dni_poa'
-    unit: 'W/m$^2$'
-  ghi_poa:
-    name: 'ghi_poa'
-    unit: 'W/m$^2$'
-  albedo:
-    name: 'albedo'
-    unit: ''
+  density_hub:
+    name: 'density'
+    unit: 'kg/m$^3$'
+  cp_curve:
+    name: 'cp'
+    unit: '-'
   power_curve:
     name: 'power_curve'
     unit: 'Watt'

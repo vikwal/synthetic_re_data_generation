@@ -1,5 +1,6 @@
 import os
 import math
+import shutil
 import logging
 import argparse
 import numpy as np
@@ -27,8 +28,6 @@ def get_park_params(station_id: str,
     del specific_params['interpol_method']
     del specific_params['polynom_grad']
     del specific_params['noise']
-    del specific_params['mean_age_years']
-    del specific_params['std_dev_age_years']
     del specific_params['annual_degradation']
     del specific_params['apply_ageing']
     del specific_params['hourly_resolution']
@@ -317,7 +316,9 @@ def get_ageing_degradation(
         std_dev_age_years: float = 5.0,
         annual_load_factor_loss_rate: float = 0.0063,
         real_ages: np.ndarray = None,
-        commissioning_date: str = None):
+        commissioning_date: str = None,
+        random_seed: int = 42) -> (np.ndarray, str):
+    np.random.seed(random_seed)
     if real_ages is None:
         start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
     else:
@@ -360,7 +361,9 @@ def apply_rotor_inertia(power: np.ndarray,
 
 def apply_noise(wind_power: pd.Series,
                 rated_power: float,
-                noise: float = 0.05) -> pd.DataFrame:
+                noise: float = 0.05,
+                random_seed: int = 42) -> np.ndarray:
+    np.random.seed(random_seed)
     noise_factor = np.random.normal(loc=1, scale=noise, size=len(wind_power))
     noisy_power = wind_power * noise_factor
     noisy_power = np.maximum(0, noisy_power)
@@ -505,7 +508,7 @@ def main(config_file: str = None) -> None:
         args.park_id = str(config_file.split('.')[0][7:])
 
     if args.park_id == '':
-        config_suffix = ''
+        config_suffix = '_wind'
         park_id = None
         dwd_station_id = None
     else:
@@ -513,7 +516,10 @@ def main(config_file: str = None) -> None:
         config_suffix = f'_{park_id}'
         dwd_station_id = str(park_id[:5])
 
-    config = tools.load_config(f"configs/real_park_configs/config{config_suffix}.yaml")
+    if not config_file:
+        config = tools.load_config(f"configs/config{config_suffix}.yaml")
+    else:
+        config = tools.load_config(f"configs/real_wind_parks/{config_file}")
     db_config = config['write']['db_conf']
     features = config['features']
     params = config['wind_params']
@@ -521,8 +527,16 @@ def main(config_file: str = None) -> None:
     raw_dir = os.path.join(config['data']['raw_dir'], 'wind')
     ageing_flag = '_noage'
     if params['apply_ageing']:
-        ageing_flag = '_age'
-    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', f'hrly_real_parks{ageing_flag}')
+        ageing_flag = 'age'
+    if params['hourly_resolution']:
+        resolution = 'hourly'
+    else:
+        resolution = '10min'
+    synth_dir = os.path.join(config['data']['synth_dir'], 'wind', f'wind_{resolution}_{ageing_flag}')
+    # delete dir
+    if os.path.exists(synth_dir):
+        shutil.rmtree(synth_dir)
+    os.makedirs(synth_dir, exist_ok=True)
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
     turbine_power = config['data']['turbine_power']
@@ -535,7 +549,6 @@ def main(config_file: str = None) -> None:
     wind_ages = np.load(wind_ages_path)
 
     commissioning_date = params.get('commissioning_date', None)
-    params['hourly_resolution'] = True
 
     logging.basicConfig(
         level=logging.INFO,
@@ -546,7 +559,6 @@ def main(config_file: str = None) -> None:
             logging.StreamHandler()
             ]
     )
-    os.makedirs(synth_dir, exist_ok=True)
 
     _, wind_features = clean_data.relevant_features(features=features)
 
@@ -567,12 +579,13 @@ def main(config_file: str = None) -> None:
     logging.info(f'Starting wind power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
     turbine_master = defaultdict(dict)
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
-        if args.park_id == '' and park_id == None:
+        if not args.park_id:
             park_id = station_id
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
-                                                                        real_ages=wind_ages, commissioning_date=commissioning_date)
+                                                                        real_ages=wind_ages, commissioning_date=commissioning_date,
+                                                                        random_seed=params['random_seed'])
         if not params['apply_ageing']:
             degradation_vector = None
             commissioning_date = '-'
@@ -605,6 +618,7 @@ def main(config_file: str = None) -> None:
             turbine_master[f't{turbine_id}']['rated'] = specs[turbine]['rated']
             turbine_master[f't{turbine_id}']['turbine_name'] = turbine
             turbine_master[f't{turbine_id}']['park_id'] = park_id
+        params['random_seed'] += 1
         df.to_csv(os.path.join(synth_dir, f'synth_{park_id}.csv'), sep=";", decimal=".")
         commissioning_date = None
     # Save the park parameters
@@ -630,9 +644,9 @@ def main(config_file: str = None) -> None:
     df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", index=False)
 
 if __name__ == "__main__":
-    config_files = os.listdir('configs/real_park_configs')
-    for config_name in config_files:
-        print(f'Config: {config_name}')
-        main(config_name)
-    #main(None)
+    # config_files = os.listdir('configs/real_wind_parks')
+    # for config_name in config_files:
+    #     print(f'Config: {config_name}')
+    #     main(config_name)
+    main(None)
 

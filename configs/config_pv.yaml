@@ -1,7 +1,8 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: 'data/synthetic'
+  synth_dir: '/mnt/nas/synthetic'
   raw_dir: 'data/raw'
+  cams_dir: '/mnt/nas/cams/sqltocsv'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
   from_date: '2023-07-24'
@@ -38,6 +39,28 @@ write:
     user: 'postgres'
     passw: ''
     do_update: True # on conflict do update?
+
+
+pv_params:
+  tilt_az_list: [[30, 135], [35, 135], [40, 135],
+                 [30, 180], [35, 180], [40, 180],
+                 [30, 225], [35, 225], [40, 225]]
+  dc_rating_watts: 10000 # in Watts
+  dc_ac_ratio: 1
+  gamma_pdc: -0.0035
+  albedo: 0.25
+  mean_eta_inv_nom: 0.95
+  eta_inv_ref: 0.9637
+  faiman_u0: 25
+  faiman_u1: 6.84
+  annual_degradation: 0.005
+  v_depos: 0.009 # m/s
+  cleaning_thresh_day: 5 # mm
+  cleaning_factor_day: 0.1
+  apply_ageing: True
+  apply_soiling: True
+  hourly_resolution: True
+  random_seed: 42
 
 logging:
   verbose: False
@@ -126,6 +149,12 @@ features:
   sat_vap_pressure:
     name: 'saturated_vapor_pressure'
     unit: 'Pa'
+  pm2_5:
+    name: 'pm2_5'
+    unit: 'kg/m$^3$'
+  pm10:
+    name: 'pm10'
+    unit: 'kg/m$^3$'
   cell_temperature:
     name: 'temperature_mod'
     unit: '°C'

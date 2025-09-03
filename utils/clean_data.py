@@ -7,7 +7,7 @@ from tqdm import tqdm
 from typing import List
 import logging
 
-from utils import tools, get_nwp
+from . import tools
 
 def relevant_features(features: dict):
     pv_features = [features['ghi']['name'],
@@ -16,6 +16,8 @@ def relevant_features(features: dict):
                    #features['dewpoint']['name'],
                    features['wind_speed']['name'],
                    #features['pressure']['name'],
+                   features['prec']['name'],
+                   features['prec_dau']['name']
                    ]
     wind_features = [features['wind_speed']['name'],
                      features['temperature']['name'],
@@ -93,7 +95,7 @@ def main():
             ]
     )
 
-    config = tools.load_config('config.yaml')
+    config = tools.load_config('./configs/config.yaml')
     db_config = config['write']['db_conf']
     features = config['features']
     threshold = config['write']['threshold']
