@@ -24,8 +24,9 @@ Each directory contains:
 - `recent/`: last 17 months
 - `now/`: current day
 
-> ✅ **Only `historical/` and `recent/` are needed**
-> ✅ **You only need to update `recent/` regularly**
+> ✅ **Only `historical/` and `recent/` are needed** <br>
+> ✅ **You only need to update `recent/` regularly** <br>
+> ✅ **You need to update `historical/` once a year**
 
 You can control what gets downloaded using:
 

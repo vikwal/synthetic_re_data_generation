@@ -19,7 +19,7 @@ def extract_files(directory, delete_after_extract=True):
                     os.remove(zip_path)
 
 def main():
-    config_path = "config.yaml"
+    config_path = "configs/config.yaml"
     config = load_config(config_path)
     base_directory = config['data']['dir']
     extract_files(base_directory, delete_after_extract=True)

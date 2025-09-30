@@ -31,6 +31,7 @@ def get_park_params(station_id: str,
     del specific_params['annual_degradation']
     del specific_params['apply_ageing']
     del specific_params['hourly_resolution']
+    del specific_params['random_seed']
     # from stations masterdata
     longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
     latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]

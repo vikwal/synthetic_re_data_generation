@@ -3,6 +3,7 @@ data:
   synth_dir: '/mnt/nas/synthetic'
   raw_dir: 'data/raw'
   cams_dir: '/mnt/nas/cams/sqltocsv'
+  era5_dir: '/mnt/nas/era5/data'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
   from_date: '2023-07-24'
@@ -42,9 +43,14 @@ write:
 
 
 pv_params:
-  tilt_az_list: [[30, 135], [35, 135], [40, 135],
-                 [30, 180], [35, 180], [40, 180],
-                 [30, 225], [35, 225], [40, 225]]
+  tilt_az_list: [
+    [[15, 135], [15, 180], [15, 225], [15, 225]],
+    [[20, 135], [20, 180], [20, 225], [20, 225]],
+    [[25, 135], [25, 180], [25, 225], [25, 225]],
+    [[30, 135], [30, 180], [30, 225], [30, 225]],
+    [[35, 135], [35, 180], [35, 225], [35, 225]],
+    [[40, 135], [40, 135], [40, 135], [40, 135]]
+  ]
   dc_rating_watts: 10000 # in Watts
   dc_ac_ratio: 1
   gamma_pdc: -0.0035

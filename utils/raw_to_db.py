@@ -11,17 +11,18 @@ from itertools import combinations
 from collections import defaultdict
 from datetime import datetime
 from psycopg2.extras import execute_values
+import logging
 
 from . import tools
 
 
 def get_all_stations_files(dir: str,
                            column_names: list,
-                           vars: list):
+                           scraping_vars: list):
     # get all station files
     station_files = []
     for root, dirs, files in os.walk(dir):
-        if not any(var in root for var in vars):
+        if not any(var in root for var in scraping_vars):
             continue
         for file in files:
             if 'Stationen' in file:
@@ -49,21 +50,20 @@ def filter_stations(dir: str,
                     stations: pd.DataFrame,
                     to_date: str,
                     from_date: str,
-                    vars: list):
+                    scraping_vars: list):
     for root, dirs, files in os.walk(dir):
-        if not any(var in root for var in vars):
+        if not any(var in root for var in scraping_vars):
             continue
-        print(f'In {root} are {len(files)} files.')
-    print('Group sizes of all tables.')
-    print('')
-    print(stations.groupby('Table').size().sort_index(ascending=False))
+        logging.debug(f'In {root} are {len(files)} files.')
+    logging.debug('Group sizes of all tables.')
+    logging.debug(stations.groupby('Table').size().sort_index(ascending=False))
     stations.drop(stations[stations.bis_datum < to_date].index, inplace=True)
     stations.drop(stations[stations.von_datum > from_date].index, inplace=True)
     counts = stations.groupby(['Stations_id']).size().value_counts().sort_index()
-    print(f'{len(stations.Stations_id.unique())} unique weather stations \n')
+    logging.info(f'{len(stations.Stations_id.unique())} unique weather stations \n')
     for e, c in enumerate(counts, start=1):
-        print(f'{c} stations with values in {e} tables.')
-    print('\nAbsolute number of stations for:')
+        logging.debug(f'{c} stations with values in {e} tables.')
+    logging.debug('\nAbsolute number of stations for:')
     stations.groupby('Table').size()
     grouped = stations.groupby(['Stations_id'])['Table'].apply(list)
     combination_counts = {}
@@ -73,39 +73,37 @@ def filter_stations(dir: str,
             combination_counts[pair] = combination_counts.get(pair, 0) + 1
     grouped_counts = stations.groupby(["Stations_id", "Table"]).size().unstack(fill_value=0)
     single_entries = grouped_counts[grouped_counts.sum(axis=1) == 1].sum()
-    matrix = pd.DataFrame(0, index=vars, columns=vars)
+    matrix = pd.DataFrame(0, index=scraping_vars, columns=scraping_vars)
     for (cat1, cat2), count in combination_counts.items():
         matrix.loc[cat1, cat2] += count
         matrix.loc[cat2, cat1] += count
-    for category in vars:
+    for category in scraping_vars:
         if category in single_entries:
             matrix.loc[category, category] = single_entries[category]
-    print(matrix)
+    #print(matrix)
     temp_temp = str(matrix['air_temperature'].loc['air_temperature'])
     #temp_solar = str(matrix['air_temperature'].loc['solar'])
-    print('')
-    print(f'There are {temp_temp} stations where air_temperature was the only measurement.')
-    #print(f'There are {temp_solar} stations where air_temperature and solar are measured.')
+    logging.debug(f'There are {temp_temp} stations where air_temperature was the only measurement.')
+    #logging.debug(f'There are {temp_solar} stations where air_temperature and solar are measured.')
     return stations
 
 def get_valid_stations(stations: pd.DataFrame,
-                       vars: list):
-    valid_stations = (stations.groupby("Stations_id")["Table"].apply(lambda x: set(x) == set(vars)))
+                       scraping_vars: list):
+    valid_stations = (stations.groupby("Stations_id")["Table"].apply(lambda x: set(x) == set(scraping_vars)))
     valid_stations_ids = valid_stations[valid_stations].index
     stations = stations[stations["Stations_id"].isin(valid_stations_ids)]
-    print('')
-    print(f'{len(stations.Stations_id.unique())} unique weather stations after cleaning. \n')
+    logging.debug(f'{len(stations.Stations_id.unique())} unique weather stations after cleaning. \n')
     return stations
 
 def get_file_paths(dir: str,
                    stations: pd.DataFrame,
                    to_date: str,
-                   vars: list):
+                   scraping_vars: list):
     stations_ids = stations.Stations_id.unique()
     # get list of relevant station files
     file_paths = []
     for root, dirs, files in os.walk(dir):
-        if not any(var in root for var in vars):
+        if not any(var in root for var in scraping_vars):
             continue
         for file in files:
             if 'produkt' in file:
@@ -130,10 +128,10 @@ def get_file_paths(dir: str,
     df_proof = pd.DataFrame(extracted_data, columns=["Category", "Date", "Stations_ID"])
     proof = [id for id in df_proof.Stations_ID.unique() if not id in stations_ids]
     if proof:
-        print(f'There are inconsistent stations ({len(stations_ids)}) in your dataframe for to_date={to_date}.')
+        logging.warning(f'There are inconsistent stations ({len(stations_ids)}) in your dataframe for to_date={to_date}.')
     else:
-        print(f'The stations ({len(stations_ids)}) are consistent with your stations_ids list for to_date={to_date}.')
-    grouped = defaultdict(lambda: {var: None for var in vars})
+        logging.info(f'The stations ({len(stations_ids)}) are consistent with your stations_ids list for to_date={to_date}.')
+    grouped = defaultdict(lambda: {var: None for var in scraping_vars})
     for path in file_paths:
         parts = re.split(r'[\/_.]', path)
         category = parts[-9]
@@ -145,8 +143,9 @@ def get_file_paths(dir: str,
         grouped[station_id][category] = path
     structured_list = []
     for station_id, paths in grouped.items():
-        if all(paths[cat] for cat in vars):
-            structured_list.append([paths[var] for var in vars])
+        #if all(paths[cat] for cat in scraping_vars):
+        structured_list.append([paths[var] for var in scraping_vars])
+    structured_list = [[x for x in row if x is not None] for row in structured_list]
     return structured_list
 
 def rename_columns(data: pd.DataFrame,
@@ -228,7 +227,7 @@ def write_tables(db_config: dict,
             """
         execute_values(cursor, query, master_data)
         conn.commit()
-        print('Master data written to db.')
+        logging.info('Master data written to db.')
     primary_key = ['timestamp', 'station_id']
     for df in tqdm(df_list, desc='Writing data to db'):
         df.reset_index(inplace=True)
@@ -251,13 +250,44 @@ def write_tables(db_config: dict,
     cursor.close()
     conn.close()
 
+def get_stations_df(directory: str,
+                    column_names: list,
+                    scraping_vars: list,
+                    from_date: str):
+    stations = get_all_stations_files(dir=directory,
+                                      column_names=column_names,
+                                      scraping_vars=scraping_vars)
+    to_date = str(stations['bis_datum'].max().date())
+    to_date = tools.days_timedelta(date=to_date, days=-1)
+    stations = filter_stations(dir=directory,
+                               stations=stations,
+                               to_date=to_date,
+                               from_date=from_date,
+                               scraping_vars=scraping_vars)
+    stations = get_valid_stations(stations=stations,
+                                  scraping_vars=scraping_vars)
+    return stations
+
 def main() -> None:
-    config = tools.load_config("config.yaml")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        #datefmt=datefmt,
+        handlers=[
+            #logging.FileHandler(log_file),
+            logging.StreamHandler()
+            ]
+    )
+
+    config = tools.load_config("configs/config.yaml")
     directory = config['data']['dir']
     target_dir = config['data']['pkl_dir']
     os.makedirs(target_dir, exist_ok=True)
     features = config['features']
-    vars = config['scraping']['vars']
+    wind_vars = config['scraping']['wind_vars']
+    pv_vars = config['scraping']['pv_vars']
+    scraping_vars = list(set(wind_vars + pv_vars))
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
     db_config = config['write']['db_conf']
@@ -275,28 +305,27 @@ def main() -> None:
         "Stations_id", "von_datum", "bis_datum", "Stationshoehe",
         "geoBreite", "geoLaenge", "Stationsname", "Bundesland", "Abgabe"
     ]
-    stations = get_all_stations_files(dir=directory,
-                                      column_names=column_names,
-                                      vars=vars)
+    wind_stations = get_stations_df(directory=directory,
+                                    column_names=column_names,
+                                    scraping_vars=wind_vars,
+                                    from_date=from_date)
+    pv_stations = get_stations_df(directory=directory,
+                                    column_names=column_names,
+                                    scraping_vars=pv_vars,
+                                    from_date=from_date)
+    stations = pd.concat([wind_stations, pv_stations], ignore_index=True).drop_duplicates()
     to_date = str(stations['bis_datum'].max().date())
     to_date = tools.days_timedelta(date=to_date, days=-1)
-    stations = filter_stations(dir=directory,
-                               stations=stations,
-                               to_date=to_date,
-                               from_date=from_date,
-                               vars=vars)
-    stations = get_valid_stations(stations=stations,
-                                  vars=vars)
     if write_recent:
         recent_paths = get_file_paths(dir=directory,
-                                    stations=stations,
-                                    to_date=to_date,
-                                    vars=vars)
+                                      stations=stations,
+                                      to_date=to_date,
+                                      scraping_vars=scraping_vars)
     if write_historical:
         historical_paths = get_file_paths(dir=directory,
-                                      stations=stations,
-                                      to_date=hist_date,
-                                      vars=vars)
+                                          stations=stations,
+                                          to_date=hist_date,
+                                          scraping_vars=scraping_vars)
     recent_dfs_path = os.path.join(target_dir, recent_pkl)
     master_pkl_path = os.path.join(target_dir, master_pkl)
     if os.path.exists(recent_dfs_path) & os.path.exists(master_pkl_path):
@@ -308,7 +337,7 @@ def main() -> None:
         recent_from_date = tools.days_timedelta(date=hist_date,
                                                 days=1)
         if write_recent:
-            print('Create recent dfs.')
+            logging.info('Create recent dfs.')
             recent_dfs, master_data = make_final_frames(path_list=recent_paths,
                                                         stations=stations,
                                                         from_date=recent_from_date,
@@ -327,7 +356,7 @@ def main() -> None:
             master_data = pickle.load(file)
     else:
         if write_historical:
-            print('Create historical dfs.')
+            logging.info('Create historical dfs.')
             historical_dfs, master_data = make_final_frames(path_list=historical_paths,
                                                             stations=stations,
                                                             from_date=from_date,
@@ -343,12 +372,12 @@ def main() -> None:
         create_stations_table(db_config=db_config,
                               column_names=column_names)
     if write_historical:
-        print('Write historical data to db.')
+        logging.info('Write historical data to db.')
         write_tables(db_config=db_config,
                     df_list=historical_dfs,
                     master_data=master_data if config['write']['write_master'] else None)
     if write_recent:
-        print('Write recent data to db.')
+        logging.info('Write recent data to db.')
         write_tables(db_config=db_config,
                     df_list=recent_dfs)
 

@@ -1,11 +1,11 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: 'data/synthetic'
+  synth_dir: '/mnt/nas/synthetic'
   raw_dir: 'data/raw'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
-  from_date: '2023-07-24'
-  hist_date: '2023-12-31'
+  from_date: '2022-01-01'
+  hist_date: '2024-12-31'
   pv_ages: 'data/pv_ages.npy'
   hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
   vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
@@ -13,9 +13,10 @@ data:
 
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
-  vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
+  wind_vars: ['air_temperature', 'wind_test']
+  pv_vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
   sleep: 1
-  get_historical: True
+  get_historical: False
   get_recent: True
   overwrite: True
 
@@ -24,20 +25,20 @@ write:
   historical_pkl: 'historical_dfs.pkl'
   master_pkl: 'master_data.pkl'
   create_table: False
-  write_historical: True
+  write_historical: False
   write_recent: True
   write_master: False
   write: True
   threshold: 0.008 # 0.8 % missing values
-  clean_pv: True
-  clean_wind: False
+  clean_pv: False
+  clean_wind: True
   db_conf:
     host: 'localhost'
     database: 'WeatherDB'
     port: 5432
     user: 'postgres'
     passw: ''
-    do_update: True # on conflict do update?
+    do_update: False # on conflict do update?
 
 logging:
   verbose: False

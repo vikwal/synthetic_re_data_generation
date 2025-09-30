@@ -86,7 +86,7 @@ def get_drop_list(frames: List[pd.DataFrame],
 def main():
 
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.info,
         format='%(asctime)s - %(levelname)s - %(message)s',
         #datefmt=datefmt,
         handlers=[
@@ -99,8 +99,8 @@ def main():
     db_config = config['write']['db_conf']
     features = config['features']
     threshold = config['write']['threshold']
-    solar_dir = os.path.join(config['data']['raw_dir'], 'solar')
-    wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
+    solar_dir = os.path.join(config['data']['synth_dir'], 'raw', 'solar')
+    wind_dir = os.path.join(config['data']['synth_dir'], 'raw', 'wind')
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
 

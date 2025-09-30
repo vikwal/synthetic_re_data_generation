@@ -14,6 +14,7 @@ from utils import tools, clean_data
 
 def read_dfs(path: str,
              cams_dir: str,
+             era5_dir: str,
              features: list,
              hourly_resolution: bool = True) -> List[pd.DataFrame]:
     dfs = []
@@ -30,10 +31,16 @@ def read_dfs(path: str,
             }
             data = data.resample('h', closed='left', label='left', origin='start').agg(aggregation_rules)
         data = data[features]
+        # get cams data
         cams = pd.read_csv(os.path.join(cams_dir, f'cams_{station_id}.csv'), sep=',', decimal='.')
         cams['timestamp'] = pd.to_datetime(cams['timestamp'], utc=True)
         cams.set_index('timestamp', inplace=True)
         cams = cams.resample('h', closed='left', label='left', origin='start').mean()
+        # get era5 data
+        # era5 = pd.read_csv(os.path.join(era5_dir, f'era5_{station_id}.csv'), sep=',', decimal='.')
+        # era5['timestamp'] = pd.to_datetime(era5['timestamp'], utc=True)
+        # era5.set_index('timestamp', inplace=True)
+        # era5 = era5.resample('h', closed='left', label='left', origin='start').mean()
         #data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
         data = pd.merge_asof(
             data,
@@ -42,6 +49,13 @@ def read_dfs(path: str,
             right_index=True,
             direction='backward', # wähle den letzten bekannten Wert
         )
+        # data = pd.merge_asof(
+        #     data,
+        #     era5,
+        #     left_index=True,
+        #     right_index=True,
+        #     direction='backward', # wähle den letzten bekannten Wert
+        # )
         # knn impute the data
         data = tools.knn_imputer(data=data, n_neighbors=5)
         dfs.append(data)
@@ -141,6 +155,7 @@ def get_features(data: pd.DataFrame,
     #pressure = data[features['pressure']['name']]
     temperature = data[features['temperature']['name']]
     wind_speed = data[features['wind_speed']['name']]
+    #albedo = data[features['albedo']['name']]
 
     latitude = params['latitude']
     longitude = params['longitude']
@@ -171,8 +186,6 @@ def get_features(data: pd.DataFrame,
     ghi = data[ghi_col] * 1e4 / 600
     data[dhi_col] = dhi
     data[ghi_col] = ghi
-    # get albedo column
-    #albedo = data[params['albedo']['name']]
 
     # set extremely low values to zero
     data.loc[data[dhi_col]< 0.01, dhi_col] = 0

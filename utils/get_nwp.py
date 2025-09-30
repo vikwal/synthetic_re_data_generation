@@ -135,8 +135,10 @@ def get_vertical_wind(config: dict,
 def get_data_from_db(config: dict,
                      stations: List[str],
                      master_data: pd.DataFrame,
-                     table: str):
+                     table: str,
+                     target_dir: str):
     db_config = config['write']['db_conf']
+    prefix = 'ML'
     ids = []
     for id in tqdm(stations, desc='Extracting station ids'):
         match = re.split(r'_|\.csv', id)
@@ -169,14 +171,16 @@ def get_data_from_db(config: dict,
                                     latitude=lat,
                                     longitude=lon)
             vertical_winds.append(w_vert)
+    if table == 'singlelevelfields':
+        prefix = 'SL'
     if forecasts:
-        os.makedirs(os.path.join('data', table), exist_ok=True)
+        os.makedirs(os.path.join(target_dir, table), exist_ok=True)
         for id, fc in tqdm(zip(ids, forecasts), desc=f'Saving {table} forecasts'):
-            fc.to_csv(os.path.join('data', table, f'ML_Station_{id}.csv'), index=False)
+            fc.to_csv(os.path.join(target_dir, table, f'{prefix}_Station_{id}.csv'), index=False)
     if vertical_winds:
-        os.makedirs(os.path.join('data', 'vertical_wind'), exist_ok=True)
+        os.makedirs(os.path.join(target_dir, 'vertical_wind'), exist_ok=True)
         for id, w_vert in tqdm(zip(ids, vertical_winds), desc=f'Saving vertical wind data'):
-            w_vert.to_csv(os.path.join('data', 'vertical_wind', f'w_vert_{id}.csv'))
+            w_vert.to_csv(os.path.join(target_dir, 'vertical_wind', f'w_vert_{id}.csv'))
 
 def main():
     logging.basicConfig(
@@ -199,32 +203,37 @@ def main():
     config['write']['get_wind'] = args.get_wind
     config['write']['get_wind_vertical'] = args.get_wind_vert
 
+    target_dir = config['data']['synth_dir']
+
     logging.info(f'Get singlelevelfields: {config["write"]["get_pv"]}')
     logging.info(f'Get multilevelfields: {config["write"]["get_wind"]}')
     logging.info(f'Get vertical wind: {config["write"]["get_wind_vertical"]}')
 
     master_data = tools.get_master_data(db_config=db_config)
     if config['write']['get_pv']:
-        pv_dir = os.path.join(config['data']['raw_dir'], 'solar')
+        pv_dir = os.path.join(config['data']['synth_dir'], 'raw', 'solar')
         pv_stations = os.listdir(pv_dir)
         get_data_from_db(config=config,
                          stations=pv_stations,
                          master_data=master_data,
-                         table='singlelevelfields')
+                         table='singlelevelfields',
+                         target_dir=target_dir)
     if config['write']['get_wind']:
-        wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
+        wind_dir = os.path.join(config['data']['synth_dir'], 'raw', 'wind')
         wind_stations = os.listdir(wind_dir)
         get_data_from_db(config=config,
                          stations=wind_stations,
                          master_data=master_data,
-                         table='multilevelfields')
+                         table='multilevelfields',
+                         target_dir=target_dir)
     if config['write']['get_wind_vertical']:
-        wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
+        wind_dir = os.path.join(config['data']['synth_dir'], 'raw', 'wind')
         wind_stations = os.listdir(wind_dir)
         get_data_from_db(config=config,
                          stations=wind_stations,
                          master_data=master_data,
-                         table='analysisfields')
+                         table='analysisfields',
+                         target_dir=target_dir)
 
 if __name__ == '__main__':
     main()
