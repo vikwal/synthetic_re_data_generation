@@ -86,7 +86,7 @@ def get_drop_list(frames: List[pd.DataFrame],
 def main():
 
     logging.basicConfig(
-        level=logging.info,
+        level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         #datefmt=datefmt,
         handlers=[
