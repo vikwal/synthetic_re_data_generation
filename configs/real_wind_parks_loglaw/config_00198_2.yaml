@@ -1,10 +1,10 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: 'data/synthetic'
-  raw_dir: 'data/raw'
+  synth_dir: '/mnt/nas/synthetic'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
   w_vert_dir: 'data/vertical_wind'
+  nwp_data_path: /mnt/nas/open-meteo/wind/icon_d2
   from_date: '2023-07-24'
   hist_date: '2023-12-31'
   turbine_dir: "power_curves"
@@ -62,23 +62,29 @@ pv_params:
   faiman_u1: 6.84
 
 wind_params:
-  turbines: ['Vestas V126-3.3']
-  #hub_heights: [137]
-  hub_heights: [-53]
+  turbines: ['Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.45',
+             'Vestas V126-3.45',
+             'Vestas V150-4.2',
+             'Vestas V150-4.2']
+  #hub_heights: [149,149,149,149,149,149,149,149,166,166]
+  hub_heights: [224,224,224,224,224,224,224,224,241,241] # corrected
+  nwp_heights: [10,77.745,126.858,183.592]
   h1: 10
   p_s_model: 'huang'
-  v2_method: 'alphaI'
+  v2_method: 'loglaw'
   karman: 0.4
   temp_gradient: 0.00649
-  interpol_method: 'polynomial'
-  polynom_grad: 2
   noise: 0.0
-  mean_age_years: 15
-  std_dev_age_years: 5
   annual_degradation: 0.0063
-  apply_ageing: False
-  commissioning_date: '2016-09-26' # https://wind-turbine.com/anlagenbetreiber/windkraft-hoeheinoed-hermersberg
-  hourly_resolution: False
+  apply_ageing: True
+  commissioning_date: '2017-09-29' #https://wind-turbine.com/anlagenbetreiber/windkraft-vogelsberg-gmbh-co-kg
+  hourly_resolution: True
 
 logging:
   verbose: False
@@ -128,6 +134,18 @@ features:
   wind_speed:
     old_name: 'FF_10'
     name: 'wind_speed'
+    unit: 'm/s'
+  wind_speed_10:
+    name: 'wind_speed_10m'
+    unit: 'm/s'
+  wind_speed_80:
+    name: 'wind_speed_80m'
+    unit: 'm/s'
+  wind_speed_120:
+    name: 'wind_speed_120m'
+    unit: 'm/s'
+  wind_speed_180:
+    name: 'wind_speed_180m'
     unit: 'm/s'
   d_wind:
     old_name: 'DD_10'

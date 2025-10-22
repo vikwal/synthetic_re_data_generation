@@ -3,8 +3,17 @@ data:
   synth_dir: '/mnt/nas/synthetic'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
+  w_vert_dir: 'data/vertical_wind'
+  nwp_data_path: /mnt/nas/open-meteo/wind/icon_d2
   from_date: '2023-07-24'
-  hist_date: '2024-12-31'
+  hist_date: '2023-12-31'
+  turbine_dir: "power_curves"
+  turbine_power: 'turbine_power.csv'
+  turbine_specs: "turbine_specs.csv"
+  turbine_cp: "turbine_cp.csv"
+  turbine_ct: "turbine_ct.csv"
+  turbine_names: "turbine_names.csv"
+  wind_ages: 'data/wind_ages.npy'
   pv_ages: 'data/pv_ages.npy'
   hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
   vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
@@ -12,33 +21,70 @@ data:
 
 scraping:
   download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
-  wind_vars: ['air_temperature', 'wind_test']
-  pv_vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
+  vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
   sleep: 1
-  get_historical: False
+  get_historical: True
   get_recent: True
   overwrite: True
+
 
 write:
   recent_pkl: 'recent_dfs.pkl'
   historical_pkl: 'historical_dfs.pkl'
   master_pkl: 'master_data.pkl'
   create_table: False
-  write_historical: False
-  write_recent: False
-  write_master: True
+  write_historical: True
+  write_recent: True
+  write_master: False
   write: True
-  threshold: 0.05 # 5 % missing values
+  threshold: 0.008 # 0.8 % missing values
   clean_pv: False
   clean_wind: True
-  delete_before_clean: True
   db_conf:
     host: 'localhost'
     database: 'WeatherDB'
     port: 5432
     user: 'postgres'
     passw: ''
-    do_update: False # on conflict do update?
+    do_update: True # on conflict do update?
+
+
+pv_params:
+  dc_rating_watts: 10000 # in Watts
+  dc_ac_ratio: 1
+  surface_tilt: 35
+  surface_azimuth: 180
+  gamma_pdc: -0.0035
+  albedo: 0.25
+  eta_inv_nom: 0.96
+  eta_inv_ref: 0.9637
+  faiman_u0: 25
+  faiman_u1: 6.84
+
+wind_params:
+  turbines: ['Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.3',
+             'Vestas V126-3.45',
+             'Vestas V126-3.45',
+             'Vestas V150-4.2',
+             'Vestas V150-4.2']
+  #hub_heights: [149,149,149,149,149,149,149,149,166,166]
+  hub_heights: [224,224,224,224,224,224,224,224,241,241] # corrected
+  nwp_heights: [10,77.745,126.858,183.592]
+  h1: 10
+  p_s_model: 'huang'
+  v2_method: 'alphaI'
+  karman: 0.4
+  temp_gradient: 0.00649
+  noise: 0.0
+  annual_degradation: 0.0063
+  apply_ageing: True
+  commissioning_date: '2017-09-29' #https://wind-turbine.com/anlagenbetreiber/windkraft-vogelsberg-gmbh-co-kg
+  hourly_resolution: True
 
 logging:
   verbose: False
@@ -89,6 +135,18 @@ features:
     old_name: 'FF_10'
     name: 'wind_speed'
     unit: 'm/s'
+  wind_speed_10:
+    name: 'wind_speed_10m'
+    unit: 'm/s'
+  wind_speed_80:
+    name: 'wind_speed_80m'
+    unit: 'm/s'
+  wind_speed_120:
+    name: 'wind_speed_120m'
+    unit: 'm/s'
+  wind_speed_180:
+    name: 'wind_speed_180m'
+    unit: 'm/s'
   d_wind:
     old_name: 'DD_10'
     name: 'wind_direction'
@@ -127,21 +185,27 @@ features:
   sat_vap_pressure:
     name: 'saturated_vapor_pressure'
     unit: 'Pa'
-  cell_temperature:
-    name: 'temperature_mod'
+  sat_vap_pressure_hub:
+    name: 'saturated_vapor_pressure'
+    unit: 'Pa'
+  wind_speed_hub:
+    name: 'wind_speed'
+    unit: 'm/s'
+  wind_speed_vertical:
+    name: 'w_vert' # change later to wind_speed_vertical
+    unit: 'm/s'
+  pressure_hub:
+    name: 'pressure'
+    unit: 'Pa'
+  temperature_hub:
+    name: 'temperature'
     unit: '°C'
-  dhi_poa:
-    name: 'dhi_poa'
-    unit: 'W/m$^2$'
-  dni_poa:
-    name: 'dni_poa'
-    unit: 'W/m$^2$'
-  ghi_poa:
-    name: 'ghi_poa'
-    unit: 'W/m$^2$'
-  albedo:
-    name: 'albedo'
-    unit: ''
+  density_hub:
+    name: 'density'
+    unit: 'kg/m$^3$'
+  cp_curve:
+    name: 'cp'
+    unit: '-'
   power_curve:
     name: 'power_curve'
     unit: 'Watt'

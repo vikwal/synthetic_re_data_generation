@@ -43,7 +43,8 @@ def get_station_ids(db_config: dict):
         return []
 
 def iterate_stations(db_config: dict,
-                   station_ids: list):
+                     station_ids: list,
+                     from_date: str = None):
     conn, cursor = tools.connect_db(db_config)
     frames = []
     for id in tqdm(station_ids, desc='Iterate over stations'):
@@ -60,6 +61,8 @@ def iterate_stations(db_config: dict,
             #df['timestamp'] = df['timestamp'].dt.tz_convert("Europe/Berlin")
             df.set_index('timestamp', inplace=True)
             df.sort_index(inplace=True)
+            if from_date:
+                df = df[from_date:]
             frames.append(df)
         else:
             logging.warning(f"No data for station_id: {id} found.")
@@ -83,6 +86,14 @@ def get_drop_list(frames: List[pd.DataFrame],
                 continue
     return drop_list
 
+def delete_files(dir_path: str):
+    if not os.path.exists(dir_path):
+        return
+    for filename in os.listdir(dir_path):
+        file_path = os.path.join(dir_path, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
 def main():
 
     logging.basicConfig(
@@ -101,17 +112,25 @@ def main():
     threshold = config['write']['threshold']
     solar_dir = os.path.join(config['data']['synth_dir'], 'raw', 'solar')
     wind_dir = os.path.join(config['data']['synth_dir'], 'raw', 'wind')
+    from_date = config['data']['from_date']
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
 
+    if config['write']['delete_before_clean']:
+        delete_files(wind_dir)
+        #delete_files(solar_dir)
+
     pv_features, wind_features = relevant_features(features=features)
     master_data = tools.get_master_data(db_config=db_config)
+    master_data.rename(columns={'station_id': 'park_id'}, inplace=True)
+    #master_data.to_csv('master_data.csv', index=False, sep=';')
 
     logging.info('Getting distinct station ids')
     station_ids = get_station_ids(db_config=db_config)
     logging.info('Getting station dataframes')
     frames = iterate_stations(db_config=db_config,
-                              station_ids=station_ids)
+                              station_ids=station_ids,
+                              from_date=from_date)
     logging.info(f'Using an accepted threshold of {threshold*100}% missing rows per column, from {len(frames)} dataframes only remain:')
     if config['write']['clean_pv']:
         drop_pv_stations = get_drop_list(frames=frames,

@@ -49,7 +49,7 @@ def get_alpha(v1: pd.Series, h1: float, v2: pd.Series, h2: float) -> pd.Series:
     return alpha
 
 
-def interpolate_wind_speed(v1: pd.Series,
+def get_wind_speed(v1: pd.Series,
                            h1: float,
                            h2: float,
                            alpha: pd.Series):
@@ -286,7 +286,7 @@ def get_features(data: pd.DataFrame,
                                                        v2=data[wind_speed_col_list[i+1]],
                                                        h2=heights[i+1])
 
-            data[wind_speed_hub_col] = round(interpolate_wind_speed(v1=data[wind_speed_col_list[i]],
+            data[wind_speed_hub_col] = round(get_wind_speed(v1=data[wind_speed_col_list[i]],
                                                                     h1=heights[i],
                                                                     h2=hub_height,
                                                                     alpha=data[alpha_col]), 2)
@@ -406,7 +406,7 @@ def main() -> None:
     config = tools.load_config(f"configs/config_wind_{args.config}.yaml")
 
     features = config['features']
-    params = config['wind_params']
+    params = config['params']
     nwp_heights = params['nwp_heights']
 
     raw_dir = os.path.join(config['data']['raw_dir'])
@@ -486,6 +486,7 @@ def main() -> None:
                     degradation_vector=degradation_vector,
                     suffix_for_turbine_cols=f'_t{turbine_id}'
             )
+            df.rename(columns={'date': 'timestamp'}, inplace=True)
             turbine_master[f't{turbine_id}']['diameter'] = specs[turbine]['diameter']
             turbine_master[f't{turbine_id}']['hub_height'] = hub_height
             turbine_master[f't{turbine_id}']['cut_in'] = specs[turbine]['cut_in']

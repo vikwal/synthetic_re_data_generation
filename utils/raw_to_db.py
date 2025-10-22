@@ -212,9 +212,8 @@ def create_stations_table(db_config: dict,
     conn.close()
     print('Stations table created.')
 
-def write_tables(db_config: dict,
-                 df_list: list,
-                 master_data=None):
+def write_masterdata(db_config: dict,
+                     master_data=None):
     conn, cursor = tools.connect_db(db_config)
     if master_data:
         query = f"""
@@ -228,6 +227,10 @@ def write_tables(db_config: dict,
         execute_values(cursor, query, master_data)
         conn.commit()
         logging.info('Master data written to db.')
+
+def write_tables(db_config: dict,
+                 df_list: list):
+    conn, cursor = tools.connect_db(db_config)
     primary_key = ['timestamp', 'station_id']
     for df in tqdm(df_list, desc='Writing data to db'):
         df.reset_index(inplace=True)
@@ -372,11 +375,15 @@ def main() -> None:
         column_names = recent_dfs[0].columns
         create_stations_table(db_config=db_config,
                               column_names=column_names)
+
+    if config['write']['write_master']:
+       write_masterdata(db_config=db_config,
+                        master_data=master_data)
+
     if write_historical:
         logging.info('Write historical data to db.')
         write_tables(db_config=db_config,
-                    df_list=historical_dfs,
-                    master_data=master_data if config['write']['write_master'] else None)
+                    df_list=historical_dfs)
     if write_recent:
         logging.info('Write recent data to db.')
         write_tables(db_config=db_config,
