@@ -600,7 +600,7 @@ def main(config_file: str = None) -> None:
         dwd_station_id = None
     else:
         park_id = args.park_id
-        config_suffix = f'_{park_id}'
+        config_suffix = '_wind'#f'_{park_id}'
         dwd_station_id = str(park_id[:5])
 
     if not config_file:

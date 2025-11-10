@@ -16,6 +16,7 @@ def read_dfs(path: str,
              cams_dir: str,
              era5_dir: str,
              features: list,
+             drop_threshold: float = 1,
              hourly_resolution: bool = True) -> List[pd.DataFrame]:
     dfs = []
     station_ids = []
@@ -24,6 +25,15 @@ def read_dfs(path: str,
         data = pd.read_csv(os.path.join(path, file), delimiter= ",")
         data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
         data.set_index('timestamp', inplace=True)
+        # check on missing values
+        for feature in features:
+            share_of_missing_rows = data[feature].isna().sum() / len(data)
+            if share_of_missing_rows > drop_threshold:
+                skip_station = True
+                break
+        if skip_station:
+            continue
+        data = tools.knn_imputer(data=data, n_neighbors=5)
         if hourly_resolution:
             aggregation_rules = {
             col: 'sum' if col in ['precipitation', 'precipitation_rate'] else 'mean'
@@ -73,10 +83,11 @@ def get_location_and_elevation(station_id: str,
 def get_specific_params(station_id: str,
                         masterdata: pd.DataFrame,
                         params: dict,
-                        commissioning_date: str) -> dict:
+                        commissioning_date: str,
+                        random_seed: int = 42) -> dict:
     specific_params = params.copy()
     if 'eta_inv_nom' not in params:
-        eta_inv_nom = np.random.normal(loc=specific_params['mean_eta_inv_nom'], scale=0.01)
+        eta_inv_nom = np.random.normal(loc=specific_params['mean_eta_inv_nom'], scale=0.01, random_seed=random_seed)
         specific_params['eta_inv_nom'] = eta_inv_nom
     longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
     latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
@@ -313,6 +324,7 @@ def main() -> None:
 
     raw_dir = os.path.join(config['data']['raw_dir'], 'solar')
     cams_dir = config['data']['cams_dir']
+    era5_dir = config['data']['era5_dir']
     pv_ages_path = config['data']['pv_ages']
     pv_ages = np.load(pv_ages_path)
 
@@ -327,8 +339,10 @@ def main() -> None:
         resolution = 'hourly'
     else:
         resolution = '10min'
-    synth_dir = os.path.join(config['data']['synth_dir'], 'solar', f'solar_{resolution}_{aging_flag}')
-    if os.path.exists(synth_dir):
+    synth_dir = os.path.join(config['data']['synth_dir'],
+                             'solar',
+                             f'solar_{resolution}_{aging_flag}')
+    if os.path.exists(synth_dir) and config['write']['overwrite_synth_data']:
         shutil.rmtree(synth_dir)
     os.makedirs(synth_dir, exist_ok=True)
 
@@ -345,11 +359,14 @@ def main() -> None:
     )
     pv_features, _ = clean_data.relevant_features(features=features)
 
+    masterdata = tools.get_master_data(db_config)
+
     frames, station_ids = read_dfs(path=raw_dir,
                                    cams_dir=cams_dir,
+                                   era5_dir=era5_dir,
                                    features=pv_features,
+                                   drop_threshold=config['write']['drop_threshold'],
                                    hourly_resolution=params['hourly_resolution'])
-    masterdata = tools.get_master_data(db_config)
     logging.info(f'Starting solar power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
     power_master = {}
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):

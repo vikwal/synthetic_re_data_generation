@@ -116,10 +116,6 @@ def main():
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
 
-    if config['write']['delete_before_clean']:
-        delete_files(wind_dir)
-        #delete_files(solar_dir)
-
     pv_features, wind_features = relevant_features(features=features)
     master_data = tools.get_master_data(db_config=db_config)
     master_data.rename(columns={'station_id': 'park_id'}, inplace=True)
@@ -133,6 +129,8 @@ def main():
                               from_date=from_date)
     logging.info(f'Using an accepted threshold of {threshold*100}% missing rows per column, from {len(frames)} dataframes only remain:')
     if config['write']['clean_pv']:
+        if config['write']['delete_before_clean']:
+            delete_files(solar_dir)
         drop_pv_stations = get_drop_list(frames=frames,
                                          features=pv_features,
                                          threshold=threshold)
@@ -145,6 +143,8 @@ def main():
             if not station_id in drop_pv_stations:
                 df[pv_features].to_csv(os.path.join(solar_dir, file_name))
     if config['write']['clean_wind']:
+        if config['write']['delete_before_clean']:
+            delete_files(wind_dir)
         drop_wind_stations = get_drop_list(frames=frames,
                                            features=wind_features,
                                            threshold=threshold)

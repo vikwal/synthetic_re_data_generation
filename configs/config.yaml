@@ -26,10 +26,10 @@ write:
   create_table: False
   write_historical: False
   write_recent: False
-  write_master: True
+  write_master: False
   write: True
-  threshold: 0.05 # 5 % missing values
-  clean_pv: False
+  threshold: 1 # 5 % missing values
+  clean_pv: True
   clean_wind: True
   delete_before_clean: True
   db_conf:
