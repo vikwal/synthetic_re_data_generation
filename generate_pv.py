@@ -20,16 +20,23 @@ def read_dfs(path: str,
              hourly_resolution: bool = True) -> List[pd.DataFrame]:
     dfs = []
     station_ids = []
-    for file in os.listdir(path):
+    for file in tqdm(os.listdir(path), desc='Reading dataframes'):
+        logging.debug(f'Processing station {file}')
+        skip_station = False
         station_id = file.split('.csv')[0].split('_')[1]
         data = pd.read_csv(os.path.join(path, file), delimiter= ",")
         data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
         data.set_index('timestamp', inplace=True)
+        # skip dfs with 100 % missing values in at least one column
+        if data.isna().all().any():
+            logging.debug(f'Station {station_id} skipped due to too many missing values in at least one column')
+            continue
         # check on missing values
         for feature in features:
             share_of_missing_rows = data[feature].isna().sum() / len(data)
             if share_of_missing_rows > drop_threshold:
                 skip_station = True
+                logging.debug(f'Station {station_id} skipped due to too many missing values in {feature}')
                 break
         if skip_station:
             continue
@@ -85,9 +92,10 @@ def get_specific_params(station_id: str,
                         params: dict,
                         commissioning_date: str,
                         random_seed: int = 42) -> dict:
+    np.random.seed(random_seed)
     specific_params = params.copy()
     if 'eta_inv_nom' not in params:
-        eta_inv_nom = np.random.normal(loc=specific_params['mean_eta_inv_nom'], scale=0.01, random_seed=random_seed)
+        eta_inv_nom = np.random.normal(loc=specific_params['mean_eta_inv_nom'], scale=0.01)
         specific_params['eta_inv_nom'] = eta_inv_nom
     longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
     latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
@@ -322,7 +330,7 @@ def main() -> None:
     config = tools.load_config("configs/config_pv.yaml")
     db_config = config['write']['db_conf']
 
-    raw_dir = os.path.join(config['data']['raw_dir'], 'solar')
+    raw_dir = os.path.join(config['data']['synth_dir'], 'raw', 'solar')
     cams_dir = config['data']['cams_dir']
     era5_dir = config['data']['era5_dir']
     pv_ages_path = config['data']['pv_ages']
@@ -332,16 +340,19 @@ def main() -> None:
     params = config['pv_params']
     tilt_az_list = params['tilt_az_list']
 
-    aging_flag = '_noage'
+    aging_flag = 'noage'
     if params['apply_ageing']:
         aging_flag = 'age'
+    soiling_flag = 'nosoil'
+    if params['apply_soiling']:
+        soiling_flag = 'soil'
     if params['hourly_resolution']:
         resolution = 'hourly'
     else:
         resolution = '10min'
     synth_dir = os.path.join(config['data']['synth_dir'],
                              'solar',
-                             f'solar_{resolution}_{aging_flag}')
+                             f'solar_{resolution}_{aging_flag}_{soiling_flag}')
     if os.path.exists(synth_dir) and config['write']['overwrite_synth_data']:
         shutil.rmtree(synth_dir)
     os.makedirs(synth_dir, exist_ok=True)
@@ -349,7 +360,7 @@ def main() -> None:
     commissioning_date = params.get('commissioning_date', None)
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='%(asctime)s - %(levelname)s - %(message)s',
         #datefmt=datefmt,
         handlers=[
@@ -367,7 +378,7 @@ def main() -> None:
                                    features=pv_features,
                                    drop_threshold=config['write']['drop_threshold'],
                                    hourly_resolution=params['hourly_resolution'])
-    logging.info(f'Starting solar power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
+    logging.info(f'Starting solar power generation. Ageing: {params["apply_ageing"]}, Soiling: {params["apply_soiling"]}, Hourly resolution: {params["hourly_resolution"]}')
     power_master = {}
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
         df = frame.copy()

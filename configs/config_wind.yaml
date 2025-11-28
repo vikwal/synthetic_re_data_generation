@@ -38,10 +38,10 @@ write:
   write_recent: True
   write_master: False
   write: True
-  drop_threshold: 0.029 # 2.9 % missing values
+  drop_threshold: 1 # 2.9 % missing values
   clean_pv: False
   clean_wind: True
-  overwrite_synth_data: False
+  overwrite_synth_data: True
   db_conf:
     host: 'localhost'
     database: 'WeatherDB'

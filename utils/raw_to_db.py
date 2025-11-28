@@ -317,8 +317,7 @@ def main() -> None:
                                     scraping_vars=pv_vars,
                                     from_date=from_date)
     stations = pd.concat([wind_stations, pv_stations], ignore_index=True).drop_duplicates()
-    stations.to_csv('stations_list.csv', index=False)
-    return
+    #stations.to_csv('stations_list.csv', index=False)
     to_date = str(stations['bis_datum'].max().date())
     to_date = tools.days_timedelta(date=to_date, days=-1)
     if write_recent:
