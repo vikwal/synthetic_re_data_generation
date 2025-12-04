@@ -32,6 +32,8 @@ write:
   clean_pv: True
   clean_wind: True
   delete_before_clean: True
+  get_wind_nwp: True  # Set to True to process wind NWP data
+  get_solar_nwp: False  # Set to True to process solar NWP data
   db_conf:
     host: 'localhost'
     database: 'WeatherDB'
@@ -39,6 +41,11 @@ write:
     user: 'postgres'
     passw: ''
     do_update: False # on conflict do update?
+
+nwp:
+  n_closest_points: 1  # Number of closest grid points to consider
+  from_date: null  # Optional: start date filter for starttime (format: 'YYYY-MM-DD', null = no filter)
+  to_date: '2025-09-30'  # Optional: end date filter for starttime (format: 'YYYY-MM-DD', null = no filter)
 
 logging:
   verbose: False
