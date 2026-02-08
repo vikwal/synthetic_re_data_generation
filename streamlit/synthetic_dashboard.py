@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import streamlit as st
 import pandas as pd
 import sys
@@ -9,7 +10,7 @@ from utils.tools import load_config_ruamel, write_config
 from plots_utils import get_station_list,create_map,show_pv_plot,show_wind_plot,find_nearest_station_for_park
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Power generation Dashboard")
+st.set_page_config(page_title="Synthetic Renewables Data Generation Dashboard")
 
 # --- Custom CSS for Styling ---
 st.markdown("""
@@ -45,27 +46,54 @@ st.markdown("""
             font-size: 3.5em; /* Set to be roughly half the size of the main title */
         }
 
-        /* Style for buttons */
         .stButton > button {
-            display: block; /* Make button a block element to control margin */
-            margin-left: auto; /* Auto margin on left to center */
-            margin-right: auto; /* Auto margin on right to center */
-            font-size: 1.5em; /* Set to be roughly half the size of the main title */
-            padding: 18px 35px; /* More padding for a bigger click target */
-            border-radius: 10px; /* Slightly more rounded corners for buttons */
-            border: none; /* Remove default border */
-            background-color: #28A745; /* Green background for action buttons */
-            color: white; /* White text color */
-            cursor: pointer; /* Pointer cursor on hover */
-            transition: background-color 0.3s ease, transform 0.2s ease; /* Smooth transition for hover effect and slight scale */
-            box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15); /* More prominent shadow */
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            font-size: 1.5em;
+            padding: 18px 35px;
+            border-radius: 10px;
+            border: none;
+            background-color: #28A745;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
         }
 
         .stButton > button:hover {
-            background-color: #218838; /* Darker green on hover */
-            transform: translateY(-2px); /* Slight lift effect on hover */
+            background-color: #218838;
+            transform: translateY(-2px);
         }
 
+        /* ⬇ New style for smaller secondary buttons */
+        div[class*="st-key-back_to_home_visualise"] .stButton button{
+            font-size: 1em !important;
+            padding: 8px 20px !important;
+            background-color: #6c757d !important;
+            color: white !important;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+            margin-top: 10px !important;
+        }
+
+        div[class*="st-key-back_to_home_visualise"] .stButton button:hover {
+            background-color: #5a6268 !important;
+        }
+
+        /* Smaller button — back_to_home_compare */
+        div[class*="st-key-back_to_home_compare"] .stButton button {
+            font-size: 1em !important;
+            padding: 8px 20px !important;
+            background-color: #6c757d !important;
+            color: white !important;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+            margin-top: 10px !important;
+        }
+
+        div[class*="st-key-back_to_home_compare"] .stButton button:hover {
+            background-color: #5a6268 !important;
+        }
+            
         /* Style for selectbox labels (if used elsewhere) */
         .stSelectbox > label {
             display: block;
@@ -75,21 +103,35 @@ st.markdown("""
         }
             
         /* Outer sidebar container (dark grey background) */
-    section[data-testid="stSidebar"] {
-        width: 400px !important;
-        min-width: 400px !important;
-    }
+        section[data-testid="stSidebar"] {
+            width: 400px !important;
+            min-width: 400px !important;
+        }
 
-    /* Inner block that holds all widgets/content */
-    section[data-testid="stSidebar"] > div:first-child {
-        width: 400px !important;
-    }
+        /* Inner block that holds all widgets/content */
+        section[data-testid="stSidebar"] > div:first-child {
+            width: 400px !important;
+        }
 
-    /* Shift the main content accordingly */
-    div[data-testid="stSidebarContent"] {
-        width: 100% !important;
-    }
-    
+        /* Shift the main content accordingly */
+        div[data-testid="stSidebarContent"] {
+            width: 100% !important;
+        }
+        
+        /* Position the footer */
+        .fixed-footer {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                width: 100%;
+                background-color: #f0f2f6; /* A light gray background, similar to Streamlit's default */
+                color: #888;
+                text-align: center;
+                padding: 10px 0;
+                font-size: 0.8em;
+                z-index: 9999; /* Ensure it's on top of other elements */
+                border-top: 1px solid #e6e6e6;
+            }        
     </style>
 """, unsafe_allow_html=True)
 
@@ -121,20 +163,19 @@ turbine_types = pd.read_csv(turbine_filepath,sep=';').columns.tolist()
 pv_dir = "./data/solar"
 wind_dir = "./data/wind"
 
+#pv_columns = ["global_horizontal_irradiance","diffuse_horizontal_irradiance","direct_normal_irradiance"]
+
 # --- Main Application Logic based on current_view ---
 if st.session_state["current_view"] == "home":
     # --- Home Page Content ---
 
     st.markdown("<div style='margin-top: 40px;'></div>", unsafe_allow_html=True)
-    logo_left_col, logo_center_col, logo_right_col = st.columns([4, 2, 6])
+    logo_topleft_col, logo_topcenter_col, logo_topright_col = st.columns([6, 2, 4])
 
-    with logo_left_col:
-        st.image("./logos/logo.svg", width=300)
-        
-    with logo_right_col:
-        st.image("./logos/HKA_Logo.png", width=600)        
+    with logo_topleft_col:
+        st.image("./logos/HKA_Logo.png", width=600)       
 
-    st.markdown("<h1>Welcome to the Synthetic Data Generation Dashboard</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>Welcome to the Synthetic Renewables Data Generation Dashboard</h1>", unsafe_allow_html=True)
 
     # Centering the Radio Button using st.columns
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -153,26 +194,43 @@ if st.session_state["current_view"] == "home":
     # Simulate redirection by clicking a button
     # These buttons will change the 'current_view' and trigger a rerun
     if st.session_state["action_type"] == "Visualize Synthetic Plant":
-        if st.button("Go to Synthetic Plant Visualization"):
+        if st.button("Go to Synthetic Plant Visualization", key="visualize_button"):
             st.session_state["current_view"] = "visualize synthetic plant"
             st.rerun() 
 
     elif st.session_state["action_type"] == "Compare Your Plant":
-        if st.button("Go to Plant Comparison"):
+        if st.button("Go to Plant Comparison", key="compare_button"):
             st.session_state["current_view"] = "compare your plant"
             st.rerun() 
 
-    st.markdown("<div style='margin-top: 300px;'></div>", unsafe_allow_html=True)
-    ##logo_left_col, logo_right_col = st.columns([100, 0.5])
+    logo_bottomleft_col, logo_bottomcenter_col, logo_bottomright_col = st.columns([4, 2, 2])
+        
+    with logo_bottomright_col:
+        st.markdown('<div style="padding-top: 40px;"></div>', unsafe_allow_html=True)
+        st.caption("Funded by")
+        st.image("./logos/logo.svg", width=200)
 
-    ##with logo_left_col:
-    ##    st.caption("This work is done by Meghna Negi in the research project FederatedForecasts,funded by the German Federal Ministry of Research, Technology and Space [Grant 13FH587KX1]")
+    st.markdown("""
+        <div class="fixed-footer">
+            This work is done by Meghna Negi in the research project FederatedForecasts, funded by the German Federal Ministry of Research, Technology and Space [Grant 13FH587KX1]
+        </div>
+    """, unsafe_allow_html=True)
 
 elif st.session_state["current_view"] == "visualize synthetic plant":
     # --- Visualize Synthetic Plant Page logic ---
 
     #Creating a sidebar to choose solar/wind application
     with st.sidebar:
+
+        col_sd1,col_sd2 = st.columns([0.5,0.5])
+
+        with col_sd1:
+
+            if st.button("Back to Home", key="back_to_home_visualise"):
+                        st.session_state["current_view"] = "home"
+                        st.rerun()
+
+        
         typeInput = st.selectbox(label="Type of Energy resource",options=["Solar", "Wind"],index=None)
 
     if typeInput is not None:
@@ -184,15 +242,15 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
 
                 with colsd1:
 
-                    config['pv_params']['dc_rating_watts'] = st.number_input("Installed Power", value=10000)
+                    config['pv_params']['dc_rating_watts'] = st.number_input("Installed Capacity", value=10000)
                     config['pv_params']['surface_tilt'] = st.number_input("Surface Tilt", value=35)
                     config['pv_params']['surface_azimuth'] = st.number_input("Surface Azimuth", value=180)
 
                 with colsd2:
 
-                    config['pv_params']['gamma_pdc'] = st.number_input("Gamma PDC", value=-0.0035,format='%0.5f')
+                    config['pv_params']['gamma_pdc'] = st.number_input("Temperature Coefficient", value=-0.0035,format='%0.5f')
                     config['pv_params']['albedo'] = st.number_input("Albedo", value=0.25)
-                    config['pv_params']['eta_inv_nom'] = st.number_input("Eta Inverted Nom", value=0.96)
+                    config['pv_params']['eta_inv_nom'] = st.number_input("Inverter Efficiency", value=0.96)
 
                 write_config(config,config_path)
 
@@ -204,10 +262,10 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
             markers = {row['station_id']: [float(row['latitude']), float(row['longitude'])] for _, row in solardata.iterrows()}
 
             #For centering the content in the dashboard canvas
-            col1, col2, col3 = st.columns([0.1,0.8,0.1])
+            col1, col2, col3 = st.columns([0.01,0.99,0.01])
 
             with col2:
-                st.info("Click on the station marker you want to generate the data for!!", icon="ℹ️")
+                st.info("Click on the station marker you want to generate the data for.", icon="ℹ️")
                 with st.container(border=True):
 
                     map_data = create_map(markers)
@@ -260,7 +318,7 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
 
                 with col2:
 
-                    hub_height = st.number_input("Hub Height", value=5, key=f'height0')
+                    hub_height = st.number_input("Hub Height", value=10, key=f'height0')
                     height_list.append(hub_height)
 
                 for number in range(turbines_number-1):
@@ -270,7 +328,7 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
                         turbine_list.append(selected_turbine)
 
                     with col2:
-                        hub_height = st.number_input(label="Hub Height", label_visibility="hidden", value=5, key=f'height{number+1}')
+                        hub_height = st.number_input(label="Hub Height", label_visibility="hidden", value=10, key=f'height{number+1}')
                         height_list.append(hub_height)
 
                 config['wind_params']['turbines'] = turbine_list
@@ -286,10 +344,10 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
             markers = {row['station_id']: [row['latitude'], row['longitude']] for _, row in winddata.iterrows()}
 
             #For centering the content in the dashboard canvas
-            col1, col2, col3 = st.columns([0.1,0.8,0.1])
+            col1, col2, col3 = st.columns([0.01,0.99,0.01])
 
             with col2:
-                st.info("Click on the station marker you want to generate the data for!!", icon="ℹ️")
+                st.info("Click on the station marker you want to generate the data for.", icon="ℹ️")
                 with st.container(border=True):
 
                     map_data = create_map(markers)
@@ -314,11 +372,22 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
                         del st.session_state.selected_marker #Clearing the session state to show no plots when switched from wind to pv
 
 
+
 elif st.session_state["current_view"] == "compare your plant":
     # --- Compare Your Plant Page logic ---
 
     #Creating a sidebar to choose solar/wind application
     with st.sidebar:
+
+        col_sd1,col_sd2 = st.columns([0.5,0.5])
+
+        with col_sd1:
+
+            if st.button("Back to Home", key="back_to_home_compare"):
+                    st.session_state["current_view"] = "home"
+                    st.rerun()
+            
+
         typeInput = st.selectbox(label="Type of Energy resource",options=["Solar", "Wind"],index=None)
 
     if typeInput is not None:
@@ -335,27 +404,40 @@ elif st.session_state["current_view"] == "compare your plant":
                 # Use st.expander to create a collapsible section that looks like a pop-up
                 with st.expander(info_icon):
                     st.write(
-                        "Wiki for data schema is located in the `docs` subfolder "
+                        "Wiki for data schema is located in the `docs` subfolder. "
                     )
 
                 uploaded_file = st.file_uploader("Upload you park data", type="csv", accept_multiple_files=False)
+                #st.info("Upload the correct file", icon="ℹ️")
                 if uploaded_file is not None:
-                    real_park = pd.read_csv(uploaded_file, sep=';')
 
+                    real_park = pd.read_csv(uploaded_file, sep=';')
+                    st.info("Please ensure that PV file is uploaded.", icon="ℹ️")
+
+                    #pattern = re.compile(r'(wind_speed|power)_t\d+', re.IGNORECASE)
+                    #matched_columns = []
+
+                    #for col in real_park.columns:
+                    #    if pattern.search(col):
+                    #        matched_columns.append(col)
+                    
+                    #if matched_columns:
+                    #    st.error("The format of file is incorrect", icon="🚨")    
+                    
                 colsd1,colsd2 = st.columns([0.5,0.5])
 
                 with colsd1:
 
-                    config['pv_params']['dc_rating_watts'] = st.number_input("Installed Power", value=10000)
+                    config['pv_params']['dc_rating_watts'] = st.number_input("Installed Capacity", value=10000)
                     config['pv_params']['surface_tilt'] = st.number_input("Surface Tilt", value=35)
                     config['pv_params']['surface_azimuth'] = st.number_input("Surface Azimuth", value=180)
                     latitude = st.number_input("Park latitude", value=51.4)
 
                 with colsd2:
 
-                    config['pv_params']['gamma_pdc'] = st.number_input("Gamma PDC", value=-0.0035,format='%0.5f')
+                    config['pv_params']['gamma_pdc'] = st.number_input("Temperature Coefficient", value=-0.0035,format='%0.5f')
                     config['pv_params']['albedo'] = st.number_input("Albedo", value=0.25)
-                    config['pv_params']['eta_inv_nom'] = st.number_input("Eta Inverted Nom", value=0.96)
+                    config['pv_params']['eta_inv_nom'] = st.number_input("Inverter Efficiency", value=0.96)
                     longitude = st.number_input("Park longitude", value=10.4515)
                 
                 write_config(config,config_path)
@@ -372,10 +454,10 @@ elif st.session_state["current_view"] == "compare your plant":
             nearest_station = {result['park_id']: result}
 
             #For centering the content in the dashboard canvas
-            col1, col2, col3 = st.columns([0.1,0.8,0.1])
+            col1, col2, col3 = st.columns([0.01,0.99,0.01])
 
             with col2:
-                st.info("Click on the station marked in green!!", icon="ℹ️")
+                st.info("Station marked in green is the nearest station to your location, use of this station is suggested.", icon="ℹ️")
                 with st.container(border=True):
 
                     map_data = create_map(markers,my_location,nearest_station)
@@ -429,17 +511,41 @@ elif st.session_state["current_view"] == "compare your plant":
                 # Use st.expander to create a collapsible section that looks like a pop-up
                 with st.expander(info_icon):
                     st.write(
-                        "Wiki for data schema is located in the `docs` subfolder "
+                        "Wiki for data schema is located in the `docs` subfolder. "
                     )
                 
                 uploaded_file = st.file_uploader("Upload you park data", type="csv", accept_multiple_files=False)
+                #st.info("Upload the correct file", icon="ℹ️")
                 if uploaded_file is not None:
+                        
                     real_park = pd.read_csv(uploaded_file, sep=';')
-                
+
+                    st.info("Please ensure that Wind file is uploaded.", icon="ℹ️")
+
+                    #column_names = set(real_park.columns.tolist())
+
+                    # Check if the column names match the expected list
+                    #matched_columns = column_names.intersection(pv_columns)
+            
+                    #if matched_columns:
+                    #    st.error("The format of file is incorrect", icon="🚨")
+                    #else:
                     power_t_columns = [col for col in real_park.columns if col.startswith('power_t')]
                     speed_t_columns = [col for col in real_park.columns if col.startswith('wind_speed_t')]
-                    real_park['power'] = real_park[power_t_columns].sum(axis=1)
-                    real_park['wind_speed_mean'] = real_park[speed_t_columns].mean(axis=1)
+
+                    if power_t_columns and speed_t_columns:
+
+                        real_park['power'] = real_park[power_t_columns].sum(axis=1)
+                        real_park['wind_speed_mean'] = real_park[speed_t_columns].mean(axis=1)
+
+                    else:
+                        
+                        if 'wind_speed' in real_park.columns:
+                            print("No 't' columns found. Renaming 'wind_speed' to 'wind_speed_mean'...")
+                            real_park.rename(columns={'wind_speed': 'wind_speed_mean'}, inplace=True)
+                        else:
+                            print("No suitable columns found for processing. Returning original DataFrame.")
+
 
                 col1, col2 = st.columns([0.5,0.5])
 
@@ -469,7 +575,7 @@ elif st.session_state["current_view"] == "compare your plant":
 
                 with col2:
 
-                    hub_height = st.number_input("Hub Height", value=5, key=f'height0')
+                    hub_height = st.number_input("Hub Height", value=10, key=f'height0')
                     height_list.append(hub_height)
 
                 for number in range(turbines_number-1):
@@ -479,7 +585,7 @@ elif st.session_state["current_view"] == "compare your plant":
                         turbine_list.append(selected_turbine)
 
                     with col2:
-                        hub_height = st.number_input(label="Hub Height", label_visibility="hidden", value=5, key=f'height{number+1}')
+                        hub_height = st.number_input(label="Hub Height", label_visibility="hidden", value=10, key=f'height{number+1}')
                         height_list.append(hub_height)
 
                 config['wind_params']['turbines'] = turbine_list
@@ -498,11 +604,11 @@ elif st.session_state["current_view"] == "compare your plant":
             markers = {row['station_id']: [row['latitude'], row['longitude']] for _, row in winddata.iterrows()}
 
             #For centering the content in the dashboard canvas
-            col1, col2, col3 = st.columns([0.1,0.8,0.1])
+            col1, col2, col3 = st.columns([0.01,0.99,0.01])
 
             with col2:
 
-                st.info("Click on the station marked in green!!", icon="ℹ️")
+                st.info("Station marked in green is the nearest station to your location, use of this station is suggested.", icon="ℹ️")
                 with st.container(border=True):
 
                     map_data = create_map(markers,my_location,nearest_station)
@@ -519,6 +625,7 @@ elif st.session_state["current_view"] == "compare your plant":
                             if abs(coords[0] - lat) < 0.01 and abs(coords[1] - lon) < 0.01:
                                 st.session_state.selected_marker = marker_name
                                 break
+
                 with st.container(border=True):
 
                     # Show the plot for the selected marker

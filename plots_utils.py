@@ -12,9 +12,11 @@ import matplotlib.dates as mdates
 import matplotlib.ticker as mtick
 import seaborn as sns
 from collections import defaultdict
+import math
 from generate_pv import get_features,generate_pv_power
 from generate_wind import read_dfs, get_turbines, gen_full_dataframe, get_ageing_degradation, get_park_params
 from utils.clean_data import relevant_features
+from utils.tools import load_config_ruamel
 
 from geopy.distance import geodesic
 import requests
@@ -77,9 +79,7 @@ def get_station_list(dir):
     return validStations
 
 def process_dataframe_index(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensures the DataFrame index is a timezone-naive DatetimeIndex.
-    """
+
     # Drop any unnamed columns that may have been created during CSV export
     unnamed_cols = [col for col in df.columns if 'Unnamed:' in col]
     if unnamed_cols:
@@ -145,7 +145,7 @@ def plot_power_and_features_pv_streamlit(day: str,
 
     font_properties = {'family': 'DejaVu Sans', 'weight': 'normal', 'size': 6}  
     color = '#999999'
-    line_colors = ['#3772ff','#df2935','#fdca40']  
+    line_colors = ['#3772ff','#df2935','#d440fd','#66fd40','#6f40fd',"#bcaf21"]  
     fontsize = 8
     lines = []
     title_suffix = ''
@@ -226,7 +226,7 @@ def plot_power_and_features_pv_streamlit(day: str,
         lines,
         labels,
         loc=10,
-        bbox_to_anchor=(0.4, -0.2),
+        bbox_to_anchor=(0.4, -0.4),
         ncol=2,
         frameon=False,  
         fontsize=8,
@@ -243,7 +243,17 @@ def plot_power_and_features_pv_streamlit(day: str,
 
     return fig
 
-def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real_data: pd.DataFrame = None):
+def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real_data: pd.DataFrame = None, project_type='solar'):
+
+    if project_type == 'solar':
+        unit_factor_real = 1
+        unit_factor_synth = 1_000
+        power_label = "Power (kW)"
+    else: 
+        unit_factor_real = 1_000
+        unit_factor_synth = 1_000_000
+        power_label = "Power (MW)"
+        
 
     def get_quarter(month):
         if month in [1, 2, 3]:
@@ -264,6 +274,9 @@ def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real
         data_for_year = data_for_year[data_for_year.index.year == selected_year].copy()
         real_data = real_data[real_data.index.year == selected_year].copy()
 
+        data_for_year['power'] = data_for_year['power'] / unit_factor_synth
+        real_data['power'] = real_data['power'] / unit_factor_real
+
         # Add a source column to differentiate the data
         data_for_year['source'] = 'Synthetic'
         real_data['source'] = 'Real'
@@ -276,7 +289,7 @@ def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real
         # Create the boxplot with a 'hue' for the source
         fig, ax = plt.subplots(figsize=(10, 6))
         sns.boxplot(data=combined_df, x='quarter', y='power', hue='source', ax=ax, palette="pastel", showfliers=False)
-        ax.set_title(f"Quaterly Power Distribution for {selected_year} (Real vs. Synthetic)", fontsize=16)
+        ax.set_title(f"Quarterly Power Distribution for {selected_year} (Real vs. Synthetic)", fontsize=16)
         #ax.legend(title="Data Series")
         if ax.get_legend():
             ax.get_legend().set_title("Data Series")
@@ -284,16 +297,17 @@ def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real
     else:
         # Fallback to the original behavior if no real data is provided
         data_for_year = data_for_year[data_for_year.index.year == selected_year].copy()
+        data_for_year['power'] = data_for_year['power'] / unit_factor_synth
         data_for_year['quarter'] = data_for_year.index.month.map(get_quarter)
         data_for_year['quarter'] = pd.Categorical(data_for_year['quarter'], categories=quarter_order, ordered=True)
 
         fig, ax = plt.subplots(figsize=(10, 6))
-        sns.boxplot(data=data_for_year, x='quarter', y='power', ax=ax, palette="viridis", showfliers=False)
-        ax.set_title(f"Quaterly Power Distribution for {selected_year}", fontsize=16)
+        sns.boxplot(data=data_for_year, x='quarter', y='power', ax=ax, palette="pastel", showfliers=False)
+        ax.set_title(f"Quarterly Power Distribution for {selected_year}", fontsize=16)
 
     # Common plot settings
     ax.set_xlabel("Quarter", fontsize=12)
-    ax.set_ylabel("Power (W)", fontsize=12)
+    ax.set_ylabel(power_label, fontsize=12)
     ax.tick_params(axis='x', rotation=45)
     ax.grid(True, axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
@@ -301,7 +315,16 @@ def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real
     return fig
 
 
-def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_data: pd.DataFrame = None):
+def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_data: pd.DataFrame = None, project_type='solar'):
+
+    if project_type == 'solar':
+        unit_factor_real = 1
+        unit_factor_synth = 1_000
+        power_label = "Power (kW)"
+    else: 
+        unit_factor_real = 1_000
+        unit_factor_synth = 1_000_000
+        power_label = "Power (MW)"
     
     fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -310,8 +333,13 @@ def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_d
         synthetic_data = data_for_year[data_for_year.index.year == selected_year].copy()
         real_data_filtered = real_data[real_data.index.year == selected_year].copy()
 
+        synthetic_data['power'] = synthetic_data['power'] / unit_factor_synth
+        real_data_filtered['power'] = real_data_filtered['power'] / unit_factor_real
+
         synthetic_data['source'] = 'Synthetic'
         real_data_filtered['source'] = 'Real'
+
+        synthetic_data
 
         # Concatenate the dataframes for plotting with Seaborn's 'hue' parameter
         combined_df = pd.concat([ real_data_filtered,synthetic_data])
@@ -334,6 +362,7 @@ def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_d
     else:
         
         data_for_year = data_for_year[data_for_year.index.year == selected_year].copy()
+        data_for_year['power'] = data_for_year['power']/unit_factor_synth
         sns.histplot(
             data=data_for_year,
             x='power',
@@ -349,7 +378,7 @@ def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_d
     new_ticks = list(range(0, int(max_power) + step, step))
     ax.set_xticks(new_ticks)
     ax.set_xticklabels([f'{tick}' for tick in new_ticks])
-    ax.set_xlabel("Power (W)", fontsize=12)
+    ax.set_xlabel(power_label, fontsize=12)
     ax.set_ylabel("Density", fontsize=12)
     ax.xaxis.set_major_locator(mtick.MaxNLocator(nbins=10))
     ax.grid(True, axis='y', linestyle='--', alpha=0.7)
@@ -359,26 +388,42 @@ def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_d
     return fig
 
 
-def plot_multi_year_power_production(data_for_all_years: pd.DataFrame, real_data: pd.DataFrame = None):
+def plot_multi_year_power_production(data_for_all_years: pd.DataFrame, real_data: pd.DataFrame = None, project_type='solar'):
+
+    if project_type == 'solar':
+        unit_factor_real = 1
+        unit_factor_synth = 1_000
+        power_label = "Power (kW)"
+    else: 
+        unit_factor_real = 1_000
+        unit_factor_synth = 1_000_000
+        power_label = "Power (MW)"
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
+    synthetic_data = data_for_all_years.copy()
+    synthetic_data['power'] = synthetic_data['power'] / unit_factor_synth
+
     if real_data is not None and not real_data.empty:
+
+        real_park = real_data.copy()
+        real_park['power'] = real_park['power'] / unit_factor_real
+
         # Calculate yearly power sum for synthetic data
-        synthetic_yearly_power_sum = data_for_all_years.resample('Y').sum(numeric_only=True)['power']
+        synthetic_yearly_power_sum = synthetic_data.resample('Y').sum(numeric_only=True)['power']
         
         # Calculate yearly power sum for real data
-        real_yearly_power_sum = real_data.resample('Y').sum(numeric_only=True)['power']
+        real_yearly_power_sum = real_park.resample('Y').sum(numeric_only=True)['power']
         
         plot_data = pd.DataFrame({
             'Year': synthetic_yearly_power_sum.index.year,
-            'Total Power (W)': synthetic_yearly_power_sum.values,
+            'Total Power': synthetic_yearly_power_sum.values,
             'Data Series': 'Synthetic'
         })
         
         real_plot_data = pd.DataFrame({
             'Year': real_yearly_power_sum.index.year,
-            'Total Power (W)': real_yearly_power_sum.values,
+            'Total Power': real_yearly_power_sum.values,
             'Data Series': 'Real'
         })
 
@@ -386,33 +431,33 @@ def plot_multi_year_power_production(data_for_all_years: pd.DataFrame, real_data
         combined_plot_data = pd.concat([real_plot_data,plot_data])
 
         # Create the bar plot using Seaborn with the 'hue' parameter
-        sns.barplot(data=combined_plot_data, x='Year', y='Total Power (W)', 
+        sns.barplot(data=combined_plot_data, x='Year', y='Total Power', 
                     hue='Data Series', ax=ax, palette="coolwarm")
         
         ax.set_title("Total Power Production per Year (Real vs. Synthetic)", fontsize=16)
         
     else:
 
-        yearly_power_sum = data_for_all_years.resample('Y').sum(numeric_only=True)['power']
+        yearly_power_sum = synthetic_data.resample('Y').sum(numeric_only=True)['power']
         plot_data = pd.DataFrame({
             'Year': yearly_power_sum.index.year,
-            'Total Power (W)': yearly_power_sum.values
+            'Total Power': yearly_power_sum.values
         })
-        sns.barplot(data=plot_data, x='Year', y='Total Power (W)', ax=ax, palette="coolwarm")
+        sns.barplot(data=plot_data, x='Year', y='Total Power', ax=ax, palette="coolwarm")
         ax.set_title("Total Power Production per Year", fontsize=16)
 
 
     ax.set_xlabel("Year", fontsize=12)
-    ax.set_ylabel("Total Power (W)", fontsize=12)
+    ax.set_ylabel(power_label, fontsize=12)
     ax.grid(True, axis='y', linestyle='-', alpha=0.7)
     
     ax.set_xticks(range(len(plot_data['Year'])))
     ax.set_xticklabels(plot_data['Year'], rotation=45)
     
-    def y_formatter(x, pos):
-        return f'{int(x):,}'
+    #def y_formatter(x, pos):
+    #    return f'{int(x):,}'
     
-    ax.yaxis.set_major_formatter(mtick.FuncFormatter(y_formatter))
+    #ax.yaxis.set_major_formatter(mtick.FuncFormatter(y_formatter))
     
     fig.tight_layout()
 
@@ -624,10 +669,7 @@ def plot_power_and_feature_wind_streamlit(data: pd.DataFrame,
     return fig
 
 def plot_hourly_real_vs_synth_boxplots(df1: pd.DataFrame, df2: pd.DataFrame, label1: str, label2: str, date_range: tuple):
-    """
-    Generates a side-by-side box plot for two dataframes for a given date range,
-    grouped by hour of the day.
-    """
+    
     start_date = pd.to_datetime(date_range[0]).tz_localize(None)
     end_date = pd.to_datetime(date_range[1]).tz_localize(None)
     
@@ -639,6 +681,9 @@ def plot_hourly_real_vs_synth_boxplots(df1: pd.DataFrame, df2: pd.DataFrame, lab
     if df1_filtered.empty or df2_filtered.empty:
         st.warning(f"No data found in the specified date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}.")
         return None
+    
+    df1_filtered['power_kw'] = df1_filtered['power'] / 1
+    df2_filtered['power_kw'] = df2_filtered['power'] / 1_000
 
     # Add a 'hour' column to both dataframes
     df1_filtered['hour'] = df1_filtered.index.hour
@@ -654,7 +699,7 @@ def plot_hourly_real_vs_synth_boxplots(df1: pd.DataFrame, df2: pd.DataFrame, lab
     sns.boxplot(
         data=combined_df,
         x='hour',
-        y='power', # Changed from 'power' to 'Power' to match existing code
+        y='power_kw',
         hue='series',
         ax=ax,
         palette="pastel"
@@ -663,7 +708,7 @@ def plot_hourly_real_vs_synth_boxplots(df1: pd.DataFrame, df2: pd.DataFrame, lab
     ax.set_title(f"Hourly Power Distribution for {label1} and {label2} from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}",
                  fontsize=14)
     ax.set_xlabel("Hour of the Day", fontsize=12)
-    ax.set_ylabel("Power (W)", fontsize=12)
+    ax.set_ylabel("Power (kW)", fontsize=12)
     ax.legend(title="Data Series")
     ax.grid(True, axis='y', linestyle='--', alpha=0.7)
     
@@ -677,8 +722,8 @@ def plot_daily_power_comparison_for_day(synthetic_data: pd.DataFrame, real_data:
         return
 
     # Filter data for the selected day
-    synthetic_for_day = synthetic_data.loc[selected_date]
-    real_for_day = real_data.loc[selected_date]
+    synthetic_for_day = synthetic_data.loc[selected_date].copy()
+    real_for_day = real_data.loc[selected_date].copy()
     
     if synthetic_for_day.empty or real_for_day.empty:
         st.warning(f"No data available for the selected date: {selected_date}.")
@@ -687,16 +732,22 @@ def plot_daily_power_comparison_for_day(synthetic_data: pd.DataFrame, real_data:
     # Combine data into a single DataFrame for plotting
     synthetic_for_day['Data Series'] = 'Synthetic'
     real_for_day['Data Series'] = 'Real'
+
+    synthetic_for_day['power_mw'] = synthetic_for_day['power'] / 1_000_000
+    real_for_day['power_mw'] = real_for_day['power'] / 1_000
+
     combined_data = pd.concat([real_for_day,synthetic_for_day])
     combined_data['Hour'] = combined_data.index.hour
+
+    #combined_data['power_mw'] = combined_data['power'] / 1_000_000
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    sns.lineplot(data=combined_data, x='Hour', y='power', hue='Data Series', ax=ax)
+    sns.lineplot(data=combined_data, x='Hour', y='power_mw', hue='Data Series', ax=ax)
     
     ax.set_title(f"Power Output on {selected_date} (Real vs. Synthetic)", fontsize=16)
     ax.set_xlabel("Hour of Day", fontsize=12)
-    ax.set_ylabel("Power (W)", fontsize=12)
+    ax.set_ylabel("Power (MW)", fontsize=12)
     ax.grid(True, axis='both', linestyle='--', alpha=0.7)
     
     plt.tight_layout()
@@ -716,6 +767,9 @@ def plot_wind_speed_vs_power_scatter( real_data: pd.DataFrame, synthetic_data: p
     # Prepare data for plotting
     synthetic_data_plot = synthetic_data[['wind_speed_mean', 'power']].copy()
     real_data_plot = real_data[['wind_speed_mean', 'power']].copy()
+
+    synthetic_data_plot['power_mw'] = synthetic_data_plot['power'] / 1_000_000
+    real_data_plot['power_mw'] = real_data_plot['power'] / 1_000
     
     synthetic_data_plot['Data Series'] = 'Synthetic'
     real_data_plot['Data Series'] = 'Real'
@@ -725,11 +779,11 @@ def plot_wind_speed_vs_power_scatter( real_data: pd.DataFrame, synthetic_data: p
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Create the scatter plot using seaborn
-    sns.scatterplot(data=combined_data, x='wind_speed_mean', y='power', hue='Data Series', ax=ax, alpha=0.5, s=20)
+    sns.scatterplot(data=combined_data, x='wind_speed_mean', y='power_mw', hue='Data Series', ax=ax, alpha=0.5, s=20)
     
     ax.set_title("Wind Speed vs. power Output", fontsize=16)
-    ax.set_xlabel("Wind Speed (m/s)", fontsize=12)
-    ax.set_ylabel("power (W)", fontsize=12)
+    ax.set_xlabel("Wind Speed at mean hub height (m/s)", fontsize=12)
+    ax.set_ylabel("power (MW)", fontsize=12)
     ax.grid(True, linestyle='--', alpha=0.6)
     
     plt.tight_layout()
@@ -742,8 +796,8 @@ def plot_monthly_power_comparison(synthetic_data: pd.DataFrame, real_data: pd.Da
         return
 
     # Filter data for the selected year
-    synthetic_data_for_year = synthetic_data[synthetic_data.index.year == selected_year]
-    real_data_for_year = real_data[real_data.index.year == selected_year]
+    synthetic_data_for_year = synthetic_data[synthetic_data.index.year == selected_year].copy()
+    real_data_for_year = real_data[real_data.index.year == selected_year].copy()
 
     if synthetic_data_for_year.empty or real_data_for_year.empty:
         st.warning(f"No data available for the selected year: {selected_year}.")
@@ -752,6 +806,9 @@ def plot_monthly_power_comparison(synthetic_data: pd.DataFrame, real_data: pd.Da
     # Resample to monthly frequency and sum the power
     synthetic_monthly = synthetic_data_for_year['power'].resample('M').sum().reset_index()
     real_monthly = real_data_for_year['power'].resample('M').sum().reset_index()
+
+    synthetic_monthly['power_kw'] = synthetic_monthly['power'] / 1_000
+    real_monthly['power_kw'] = real_monthly['power'] / 1
     
     synthetic_monthly['Data Series'] = 'Synthetic'
     real_monthly['Data Series'] = 'Real'
@@ -761,15 +818,149 @@ def plot_monthly_power_comparison(synthetic_data: pd.DataFrame, real_data: pd.Da
     
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    sns.barplot(data=combined_df, x='Month', y='power', hue='Data Series', ax=ax, palette="coolwarm")
+    sns.barplot(data=combined_df, x='Month', y='power_kw', hue='Data Series', ax=ax, palette="coolwarm")
     
     ax.set_title(f"Monthly Total Power Production Comparison ({selected_year})", fontsize=16)
     ax.set_xlabel("Month", fontsize=12)
-    ax.set_ylabel("Total Power (W)", fontsize=12)
+    ax.set_ylabel("Total Power (kW)", fontsize=12)
     ax.grid(True, axis='y', linestyle='--', alpha=0.7)
 
     plt.tight_layout()
     return fig
+
+def plot_hourly_real_vs_synth_lineplot(park_data, dataSelectedStation,label1, label2, date):
+    # Filter data for the specific date
+    df_real = park_data.loc[date].copy()
+    df_synth = dataSelectedStation.loc[date].copy()
+    
+    # Ensure indices are datetime objects and get the hour
+    df_real.index = pd.to_datetime(df_real.index)
+    df_real['hour'] = df_real.index.hour
+    
+    df_synth.index = pd.to_datetime(df_synth.index)
+    df_synth['hour'] = df_synth.index.hour
+
+    df_real['power_kw'] = df_real['power'] / 1
+    df_synth['power_kw'] = df_synth['power'] / 1_000
+    
+    # Plotting
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    sns.lineplot(x='hour', y='power_kw', data=df_real, label=label1, ax=ax, marker='o')
+    sns.lineplot(x='hour', y='power_kw', data=df_synth, label=label2, ax=ax, marker='o')
+    
+    ax.set_title(f'Hourly Power Distribution for {label1} and {label2} for {date}', fontsize=16)
+    ax.set_xlabel('Hour of Day', fontsize=12)
+    ax.set_ylabel('Power Output (kW)', fontsize=12)
+    ax.set_xticks(range(24))
+    ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+    ax.legend()
+    
+    plt.tight_layout()
+    
+    return fig
+
+def plot_error_distribution_by_power_range(real_df, synthetic_df, installed_capacity=10000):
+    
+    # Align the dataframes on their index
+    combined_df = pd.merge(real_df, synthetic_df, left_index=True, right_index=True, suffixes=('_real', '_synth'))
+    
+    if combined_df.empty:
+        st.warning("No overlapping data found between real and synthetic dataframes.")
+        return None
+
+    # Convert synthetic power from watts to kW before further calculations
+    combined_df['power_synth'] = combined_df['power_synth'] / 1000
+    
+    installed_capacity = installed_capacity / 1000
+    # The error is normalized by the installed capacity (in kW)
+    combined_df['normalized_error'] = (combined_df['power_synth'] - combined_df['power_real']) / installed_capacity
+    
+    # --- Logic for Numerical Bins based on Real Power ---
+    
+    # Find the maximum value in the real power data to use as the upper bound for binning
+    max_real_power = combined_df['power_real'].max()
+    
+    # Create 10 bins based on percentage of the max real power
+    bins = np.linspace(0, max_real_power, 11)
+    
+    # Create descriptive labels with numerical ranges (e.g., '0 - 1000 kW')
+    labels = [f'{math.floor(bins[i])} - {math.floor(bins[i+1])}' for i in range(10)]
+    
+    # Bin the data based on real power output
+    combined_df['power_range'] = pd.cut(combined_df['power_real'], bins=bins, labels=labels, right=False)
+    
+    # --- Plotting the data ---
+    
+    # Create the box plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Use seaborn to create the box plot, filtering out bins with no data
+    filtered_df = combined_df.dropna(subset=['power_range'])
+    
+    if filtered_df.empty:
+        st.warning("No data points fall within the defined power ranges.")
+        return None
+        
+    sns.boxplot(x='power_range', y='normalized_error', data=filtered_df, ax=ax, color="#4c72b0", showfliers=False)
+    
+    ax.set_title('Error Distribution by Real Power Range', fontsize=16)
+    ax.set_xlabel('Real Power Range (kW)', fontsize=12)
+    ax.set_ylabel('Normalized Error', fontsize=12)
+    ax.tick_params(axis='x', rotation=45)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.7)
+    
+    plt.tight_layout()
+
+    return fig
+
+def plot_turbine_power_vs_wind_speed(csv_path: str, turbine_name: str):
+
+    #Few turbines give TypeError: unsupported operand type(s) for /: 'str' and 'int', Check
+
+    try:
+        df = pd.read_csv(csv_path,sep=';')
+    except FileNotFoundError:
+        print(f"Error: The file '{csv_path}' was not found.")
+        return None
+    except Exception as e:
+        print(f"An error occurred while reading the CSV file: {e}")
+        return None
+
+    # Check for required columns
+    required_columns = ['wind_speed', turbine_name]
+    if not all(col in df.columns for col in required_columns):
+        print(f"Error: The CSV file must contain a 'wind_speed' column and a '{turbine_name}' column.")
+        return None
+    
+    was_na = df[turbine_name].isna()
+    df[turbine_name] = pd.to_numeric(df[turbine_name], errors='coerce')
+    df['Data Type'] = 'Original Data'
+    df.loc[was_na, 'Data Type'] = 'Interpolated Data'
+    df[turbine_name].interpolate(method='linear', inplace=True)
+    df.dropna(subset=[turbine_name], inplace=True)
+    
+    # Convert power from Kilowatts to Megawatts (MW)
+    df['power_mw'] = df[turbine_name] / 1000
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    sns.scatterplot(data=df, x='wind_speed', y='power_mw', hue='Data Type', ax=ax, alpha=0.5, s=20,
+                    palette={"Original Data": "navy", "Interpolated Data": "tomato"})
+
+    ax.xaxis.set_major_locator(mtick.MultipleLocator(base=10.0))
+    ax.tick_params(axis='x', rotation=45)
+    ax.set_title(f"Wind Speed vs. Power Output for Turbine {turbine_name}", fontsize=16)
+    ax.set_xlabel("Wind Speed (m/s)", fontsize=12)
+    ax.set_ylabel("Power Output (MW)", fontsize=12)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.6)
+    
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles=handles, labels=labels, title="Data Type")
+
+    plt.tight_layout()
+    return fig
+
 
 def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
 
@@ -781,6 +972,8 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
     params['latitude'] = latitude
     params['longitude'] = longitude
     params['altitude'] = elevation
+
+    installed_capacity = params['dc_rating_watts']
 
     fileName = f'Station_{str(marker_name)}.csv'
     new_dir = os.path.join(dir, fileName)
@@ -810,6 +1003,7 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
         dataSelectedStation['Diffuse'] = diffuse
 
         dataSelectedStation = dataSelectedStation.resample('H').mean()
+        dataSelectedStation.drop('station_id', axis=1, inplace=True)
 
         dates_arr = dataSelectedStation.index.strftime('%Y-%m-%d')
         formatted_dates = np.unique(dates_arr)
@@ -823,6 +1017,11 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
             
         dates_list = formatted_dates.tolist()
         years_list = dataSelectedStation.index.year.unique().tolist()
+
+        start_date = dates_list[0]
+        end_date = dates_list[-1]
+
+        st.info(f"The Synthetic data is generated for {start_date} - {end_date}.", icon="ℹ️")
 
         if not park_data.empty:
             if 'timestamp' in park_data.columns:
@@ -841,6 +1040,11 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
 
             years_list = sorted(list(set(years_list).intersection(years_list_real)))
             dates_list = sorted(list(set(dates_list).intersection(dates_list_real)))
+
+            start_date = dates_list[0]
+            end_date = dates_list[-1]
+
+            st.info(f"Overlapping time period between real and synthetic plant {start_date} - {end_date} time period.", icon="ℹ️")
 
             if dataSelectedStation.index.tz is not None:
                 dataSelectedStation.index = dataSelectedStation.index.tz_localize(None)
@@ -864,8 +1068,15 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
 
                 date_range = (start_date,end_date)
 
-                fig = plot_hourly_real_vs_synth_boxplots(park_data,dataSelectedStation,'Real','Synthetic',date_range)
-                st.pyplot(fig=fig,use_container_width=True)
+                if start_date == end_date:
+
+                    fig = plot_hourly_real_vs_synth_lineplot(park_data, dataSelectedStation, 'Real', 'Synthetic', start_date)
+                    st.pyplot(fig=fig, use_container_width=True)
+
+                else:
+
+                    fig = plot_hourly_real_vs_synth_boxplots(park_data,dataSelectedStation,'Real','Synthetic',date_range)
+                    st.pyplot(fig=fig,use_container_width=True)
 
             
             selected_year = st.selectbox("Select a year",years_list)
@@ -873,29 +1084,40 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
 
             with st.container(border=True):
 
-                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data)
+                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data,project_type='solar')
                 st.pyplot(fig=fig_boxplot,use_container_width=True)
 
-                fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data)
-                st.pyplot(fig=fig_hist,use_container_width=True)
+                #fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data)
+                #st.pyplot(fig=fig_hist,use_container_width=True)
 
                 fig_yearly = plot_monthly_power_comparison(synthetic_data=dataSelectedStation,real_data=park_data,selected_year=selected_year)
                 st.pyplot(fig=fig_yearly,use_container_width=True)
 
             with st.container(border=True):
 
-                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation,real_data=park_data)
+                fig_error = plot_error_distribution_by_power_range(park_data,dataSelectedStation,installed_capacity)
+                st.pyplot(fig=fig_error,use_container_width=True)
+
+                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation,real_data=park_data,project_type='solar')
                 st.pyplot(fig=fig_total,use_container_width=True)
 
             with st.container(border=True):
+                csv_content = dataSelectedStation.to_csv().encode('utf-8')
+                st.download_button(
+                    label="Download CSV File",
+                    data=csv_content,
+                    file_name=f'pv_synthetic_data_Station_{str(marker_name)}.csv',
+                    mime='csv',
+                )
+                
                 st.dataframe(dataSelectedStation)
 
         else:
 
             selected_date = st.selectbox("Select a date",dates_list)
-            selected_feature = st.multiselect(label="Select features",options=["Total","Direct","Diffuse"],default="Total")
+            selected_feature = st.multiselect(label="Select features",options=["Total","Direct","Diffuse","ghi","dhi","dni"],default="Total")
             features = []
-            ghi = dataSelectedStation["ghi"]
+            #ghi = dataSelectedStation["ghi"]
 
             with st.container(border=True):
                 for feature in selected_feature:
@@ -910,28 +1132,36 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
             
                     st.pyplot(fig=fig_feature,use_container_width=True)
 
-                fig_global = plot_daily_power_global_irradiance(power_series=dataSelectedStation['power'],
-                                                                ghi_series=ghi,
-                                                                selected_date=selected_date)
-                st.pyplot(fig=fig_global,use_container_width=True)
+                #fig_global = plot_daily_power_global_irradiance(power_series=dataSelectedStation['power'],
+                #                                                ghi_series=ghi,
+                #                                                selected_date=selected_date)
+                #st.pyplot(fig=fig_global,use_container_width=True)
             
             selected_year = st.selectbox("Select a year",years_list)
             data_for_year = dataSelectedStation[dataSelectedStation.index.year == selected_year].copy()
 
             with st.container(border=True):
 
-                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year)
+                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year,project_type='solar')
                 st.pyplot(fig=fig_boxplot,use_container_width=True)
 
-                fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year)
-                st.pyplot(fig=fig_hist,use_container_width=True)
+                #fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year)
+                #st.pyplot(fig=fig_hist,use_container_width=True)
 
             with st.container(border=True):
 
-                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation)
+                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation,project_type='solar')
                 st.pyplot(fig=fig_total,use_container_width=True)
 
             with st.container(border=True):
+
+                csv_content = dataSelectedStation.to_csv().encode('utf-8')
+                st.download_button(
+                    label="Download CSV File",
+                    data=csv_content,
+                    file_name=f'pv_synthetic_data_Station_{str(marker_name)}.csv',
+                    mime='csv',
+                )
                 st.dataframe(dataSelectedStation)
 
 def show_wind_plot(config: dict,
@@ -1021,6 +1251,10 @@ def show_wind_plot(config: dict,
         dataSelectedStation['power'] = dataSelectedStation[power_t_columns].sum(axis=1)
         dataSelectedStation['wind_speed_mean'] = dataSelectedStation[speed_t_columns].mean(axis=1)
 
+        power_t_df = dataSelectedStation[power_t_columns]
+        max_values_per_column = power_t_df.max()
+        installed_capacity = max_values_per_column.sum()
+
         dates_arr = dataSelectedStation.index.strftime('%Y-%m-%d')
         formatted_dates = np.unique(dates_arr)
 
@@ -1033,6 +1267,11 @@ def show_wind_plot(config: dict,
 
         dates_list = formatted_dates.tolist()
         years_list = dataSelectedStation.index.year.unique().tolist()
+
+        start_date = dates_list[0]
+        end_date = dates_list[-1]
+
+        st.info(f"The Synthetic data is generated for {start_date} - {end_date} time period.", icon="ℹ️")
 
         if not park_data.empty:
             if 'timestamp' in park_data.columns:
@@ -1052,6 +1291,11 @@ def show_wind_plot(config: dict,
             years_list = sorted(list(set(years_list).intersection(years_list_real)))
             dates_list = sorted(list(set(dates_list).intersection(dates_list_real)))
 
+            start_date = dates_list[0]
+            end_date = dates_list[-1]
+
+            st.info(f"Overlapping time period between real and synthetic plant {start_date} - {end_date}.", icon="ℹ️")
+
             if dataSelectedStation.index.tz is not None:
                 dataSelectedStation.index = dataSelectedStation.index.tz_localize(None)
 
@@ -1070,21 +1314,33 @@ def show_wind_plot(config: dict,
 
             with st.container(border=True):
 
-                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data)
+                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data,project_type='wind')
                 st.pyplot(fig=fig_boxplot,use_container_width=True)
 
-                fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data)
-                st.pyplot(fig=fig_hist,use_container_width=True)
+                #fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year,real_data=park_data)
+                #st.pyplot(fig=fig_hist,use_container_width=True)
 
             with st.container(border=True):
 
                 fig_wind_power = plot_wind_speed_vs_power_scatter(real_data=park_data,synthetic_data=dataSelectedStation)
-                st.pyplot(fig=fig_wind_power,use_container_width=True) ##How to use windspeed
+                st.pyplot(fig=fig_wind_power,use_container_width=True) 
 
-                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation,real_data=park_data)
+                fig_error = plot_error_distribution_by_power_range(park_data,dataSelectedStation,installed_capacity)
+                st.pyplot(fig=fig_error,use_container_width=True)
+
+                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation,real_data=park_data,project_type='wind')
                 st.pyplot(fig=fig_total,use_container_width=True)
             
             with st.container(border=True):
+
+                csv_content = dataSelectedStation.to_csv().encode('utf-8')
+                st.download_button(
+                    label="Download CSV File",
+                    data=csv_content,
+                    file_name=f'wind_synthetic_data_Station_{str(marker_name)}.csv',
+                    mime='csv',
+                )
+
                 st.dataframe(dataSelectedStation)
 
         else:
@@ -1107,16 +1363,36 @@ def show_wind_plot(config: dict,
 
             with st.container(border=True):
 
-                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year)
+                fig_boxplot = plot_quarterly_boxplot(data_for_year=data_for_year,selected_year=selected_year,project_type='wind')
                 st.pyplot(fig=fig_boxplot,use_container_width=True)
 
-                fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year)
-                st.pyplot(fig=fig_hist,use_container_width=True)
+                config_path = "./config.yaml"
+                config = load_config_ruamel(config_path)
+
+                turbines_list = config['wind_params']['turbines']
+                unique_turbine_list = list(set(turbines_list))
+
+                selected_turbine = st.selectbox("Select a turbine",unique_turbine_list)
+
+                fig_wind_power = plot_turbine_power_vs_wind_speed(csv_path='../power_curves/turbine_power.csv',turbine_name=selected_turbine)
+                st.pyplot(fig=fig_wind_power,use_container_width=True)
+
+                #fig_hist = plot_power_histogram(data_for_year=data_for_year,selected_year=selected_year)
+                #st.pyplot(fig=fig_hist,use_container_width=True)
 
             with st.container(border=True):
 
-                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation)
+                fig_total = plot_multi_year_power_production(data_for_all_years=dataSelectedStation, project_type='wind')
                 st.pyplot(fig=fig_total,use_container_width=True)
 
             with st.container(border=True):
+
+                csv_content = dataSelectedStation.to_csv().encode('utf-8')
+                st.download_button(
+                    label="Download CSV File",
+                    data=csv_content,
+                    file_name=f'wind_synthetic_data_Station_{str(marker_name)}.csv',
+                    mime='csv',
+                )
+
                 st.dataframe(dataSelectedStation)
