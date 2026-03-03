@@ -103,32 +103,14 @@ def get_windspeed_at_height(data: pd.DataFrame,
         The calculated wind speed at height h2.
     """
     v1 = data[features['wind_speed']['name']]
-    method = params['v2_method']
     h1 = params['h1']
-    if method == 'alphaI':
-        direction = data[features['d_wind']['name']]
-        sigma_u = data[features['sigma_wind_lon']['name']]
-        w = data[features['wind_speed_vertical']['name']]
-        k = params['karman']
-        theta = (270 - direction).apply(math.radians)
-        u = v1 * theta.apply(math.cos)
-        v = v1 * theta.apply(math.sin)
-        I = sigma_u / v1 # its okay to divide by v1 according to IEC 61400-1
-        u_star = ( (w*u)**2 + (w*v)**2 ) ** 0.25
-        Au = sigma_u / u_star
-        b = 1/(k*Au)
-        alpha = b * I
-    elif method == 'loglaw':
-        alpha = get_alpha(data=data,
-                          features=features,
-                          params=params,
-                          hub_height=h2,
-                          h1=h1)
-        data[f'alpha{suffix}'] = alpha
-    elif method == 'seven_power':
-        alpha = 1/7
-    else:
-        alpha = 1/7 # 'seven_power'
+    sigma_u = data[features['sigma_wind_lon']['name']]
+    k = params['karman']
+    I = sigma_u / v1 # its okay to divide by v1 according to IEC 61400-1
+    u_star = data['friction_wind']
+    Au = sigma_u / u_star
+    b = 1/(k*Au)
+    alpha = b * I
     if h2 < 0:
         h2 = h1
     v2 = v1 * (h2 / h1) ** alpha
@@ -282,7 +264,7 @@ def get_rho(data: pd.DataFrame,
 
 
 def read_dfs(path: str,
-             w_vert_dir: str,
+             era5_dir: str,
              features: list,
              features_dict: dict,
              drop_threshold: float = 1,
@@ -294,7 +276,7 @@ def read_dfs(path: str,
              wind_speed_heights: list = None) -> List[pd.DataFrame]:
     dfs = []
     station_ids = []
-    for file in tqdm(os.listdir(path), desc='Reading DataFrames'):
+    for file in tqdm(os.listdir(era5_dir), desc='Reading DataFrames'):
         station_id = file.split('.csv')[0].split('_')[1]
         skip_station = False
         if specific_id and (station_id != specific_id):
@@ -302,65 +284,16 @@ def read_dfs(path: str,
         data = pd.read_csv(os.path.join(path, file), delimiter= ",")
         data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
         data.set_index('timestamp', inplace=True)
-        # check on missing values
-        for feature in features:
-            share_of_missing_rows = data[feature].isna().sum() / len(data)
-            if share_of_missing_rows > drop_threshold:
-                skip_station = True
-                break
-        if skip_station:
-            continue
-        if data[features_dict['pressure']['name']].isnull().all():
-            height = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
-            height = units.meter * height
-            pressure_imputed = mpcalc.height_to_pressure_std(
-                height,
-            ).to(units.hPa).magnitude
-            data[features_dict['pressure']['name']] = pressure_imputed
+                # Resample DWD 10-minute data to hourly (mean of 00:00-00:50 → 00:00, etc.)
+        data = data.resample('h').mean()
+
+        era5_data = pd.read_csv(os.path.join(era5_dir, file), sep=",")
+        era5_data['timestamp'] = pd.to_datetime(era5_data['timestamp'], utc=True)
+        era5_data.set_index('timestamp', inplace=True)
+
+        # Now both have hourly resolution, merge on timestamp
+        data = data.merge(era5_data, left_index=True, right_index=True, how='inner', suffixes=('', '_era5'))
         data = tools.knn_imputer(data=data, n_neighbors=5)
-        if hourly_resolution:
-            data = data.resample('h', closed='left', label='left', origin='start').mean()
-        data = data[features]
-        # get the vertical wind_speed
-        if v2_method == 'alphaI':
-            w_vert_file = f'W_VERT_{station_id}.csv'
-            w_vert_path = os.path.join(w_vert_dir, w_vert_file)
-            if not os.path.exists(w_vert_path):
-                logging.warning(f'W_VERT_{station_id}.csv not found')
-                continue
-            w_vert = pd.read_csv(w_vert_path, delimiter=",")
-            w_vert['starttime'] = pd.to_datetime(w_vert['starttime'], utc=True)
-            w_vert['timestamp'] = w_vert['starttime'] + pd.to_timedelta(w_vert['forecasttime'], unit='h')
-            w_vert.drop(columns=['starttime', 'forecasttime'], inplace=True)
-            w_vert.set_index('timestamp', inplace=True)
-            w_vert.sort_index(inplace=True)
-            #w_vert = w_vert.resample('h', closed='left', label='left', origin='start').mean()
-            #data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
-            #data.dropna(inplace=True)
-            data = pd.merge_asof(
-                data[w_vert.index[0]:w_vert.index[-1]],
-                w_vert,
-                left_index=True,
-                right_index=True,
-                direction='backward',         # wähle den letzten bekannten Wert
-            )
-        elif v2_method == 'loglaw' and nwp_data_path:
-            wind_speed_col_list = [f"wind_speed_{h}m" for h in wind_speed_heights]
-            nwp_file = f'icon_d2_{station_id}.csv'
-            path_to_nwp_file = os.path.join(nwp_data_path, nwp_file)
-            if not os.path.exists(path_to_nwp_file):
-                continue
-            nwp = pd.read_csv(path_to_nwp_file, delimiter=',')
-            nwp['date'] = pd.to_datetime(nwp['date'], utc=True)
-            nwp.rename(columns={'date': 'timestamp'}, inplace=True)
-            nwp.set_index('timestamp', inplace=True)
-            nwp.dropna(inplace=True)
-            data = pd.merge(data[nwp.index[0]:nwp.index[-1]],
-                            nwp[wind_speed_col_list],
-                            left_index=True,
-                            right_index=True,
-                            how='left')
-        # knn impute the data
         dfs.append(data)
         station_ids.append(station_id)
         if specific_id:
@@ -607,13 +540,14 @@ def main(config_file: str = None) -> None:
     if not config_file:
         config = tools.load_config(f"configs/config{config_suffix}.yaml")
     else:
-        config = tools.load_config(f"configs/real_wind_parks_noage/{config_file}")
+        config = tools.load_config(f"configs/real_wind_parks_era5_fric/{config_file}")
     db_config = config['write']['db_conf']
     features = config['features']
     params = config['params']
     params['wind_speed_col_list'] = [10,80,120,180]
 
     raw_dir = os.path.join(config['data']['synth_dir'], 'raw', 'wind')
+    era5_dir = config['data']['era5_dir']
     ageing_flag = 'noage'
     if params['apply_ageing']:
         ageing_flag = 'age'
@@ -623,10 +557,10 @@ def main(config_file: str = None) -> None:
         resolution = '10min'
     synth_dir = os.path.join(config['data']['synth_dir'],
                              'wind',
-                             f'real_wind_{resolution}_{ageing_flag}')
+                             f'era5_fric_wind_{resolution}_{ageing_flag}')
     # delete dir
-    if os.path.exists(synth_dir) and config['write']['overwrite_synth_data']:
-        shutil.rmtree(synth_dir)
+
+    #shutil.rmtree(synth_dir)
     os.makedirs(synth_dir, exist_ok=True)
     w_vert_dir = config['data']['w_vert_dir']
     turbine_dir = config['data']['turbine_dir']
@@ -656,12 +590,15 @@ def main(config_file: str = None) -> None:
 
     masterdata = tools.get_master_data(db_config)
 
+    # load here comm_dates
+    comm_dates = pd.read_csv('data/comm_dates.csv', sep=";", decimal=".", dtype={'park_id': str})
+
     frames, station_ids = read_dfs(path=raw_dir,
-                                   w_vert_dir=w_vert_dir,
+                                   era5_dir=era5_dir,
                                    features=wind_features,
                                    masterdata=masterdata,
                                    features_dict=features,
-                                   drop_threshold=config['write']['drop_threshold'],
+                                   drop_threshold=1,
                                    v2_method=params['v2_method'],
                                    hourly_resolution=params['hourly_resolution'],
                                    specific_id=dwd_station_id,
@@ -678,10 +615,12 @@ def main(config_file: str = None) -> None:
     logging.info(f'Starting wind power generation. Ageing: {params["apply_ageing"]}, Hourly resolution: {params['hourly_resolution']}')
     turbine_master = defaultdict(dict)
     for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
+        #tqdm.write(f'Processing station {str(station_id)}')
         if not args.park_id:
             park_id = station_id
         logging.debug(f'Processing station {str(station_id)}')
         df = frame.copy()
+        commissioning_date = comm_dates[comm_dates['park_id'] == park_id]['commissioning_date'].values[0]
         degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
                                                                         real_ages=wind_ages, commissioning_date=commissioning_date,
                                                                         random_seed=params['random_seed'])
@@ -718,6 +657,11 @@ def main(config_file: str = None) -> None:
             turbine_master[f't{turbine_id}']['turbine_name'] = turbine
             turbine_master[f't{turbine_id}']['park_id'] = park_id
         params['random_seed'] += 1
+        cols_to_drop = ['u_wind_10m','v_wind_10m','u_wind_100m','v_wind_100m',
+                        'wind_gust_10m', 'temp_2m','pressure_era5','dew_point_2m']
+        cols_to_drop += [col for col in df.columns if 'alpha' in col or 'saturated_vapor_pressure_t' in col or 'temperature_t' in col or 'cp' in col]
+        df.drop(columns=cols_to_drop, inplace=True)
+        df = df['2023-07-24':]
         df.to_csv(os.path.join(synth_dir, f'synth_{park_id}.csv'), sep=";", decimal=".")
         commissioning_date = None
     # Save the park parameters
@@ -743,9 +687,9 @@ def main(config_file: str = None) -> None:
     df_turbine_master.to_csv(turbine_master_path, sep=";", decimal=".", index=False)
 
 if __name__ == "__main__":
-    config_files = os.listdir('configs/real_wind_parks_noage')
-    for config_name in config_files:
-        print(f'Config: {config_name}')
-        main(config_name)
-    #main(None)
+    # config_files = os.listdir('configs/real_wind_parks_era5_fric')
+    # for config_name in config_files:
+    #     print(f'Config: {config_name}')
+    #     main(config_name)
+    main(None)
 

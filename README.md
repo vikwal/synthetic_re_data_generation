@@ -123,8 +123,30 @@ The result is a directory called `singlelevelfields` or `multilevelfields` for t
 
 ## Generate Synthetic Wind Power Time Series
 
+There are three variants for generating synthetic wind power time series, each using a different data source and extrapolation method:
+
+| Script | Data Source | Method |
+|--------|------------|--------|
+| `generate_wind.py` | ICON-D2 (NWP) | Uses the vertical wind speed from the ICON-D2 model to extrapolate the measured wind speed to hub height |
+| `generate_wind_era5.py` | ERA5 (Reanalysis) | Uses pure ERA5 reanalysis data; determines wind shear from wind speeds at 10 m and 100 m to extrapolate to hub height |
+| `generate_wind_era5_fric.py` | ERA5 (Reanalysis) | Uses the friction velocity (`friction_velocity`) from ERA5 to extrapolate the measured wind speed to hub height (analogous to `generate_wind.py`) |
+
+**Run (standard):**
+
 ```bash
 python generate_wind.py
+```
+
+**Run (ERA5 wind shear):**
+
+```bash
+python generate_wind_era5.py
+```
+
+**Run (ERA5 friction velocity):**
+
+```bash
+python generate_wind_era5_fric.py
 ```
 
 ---

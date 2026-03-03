@@ -4,11 +4,10 @@ data:
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
   w_vert_dir: '/mnt/nas/icon-d2/csv/W_VERT'
-  era5_dir: '/mnt/nvme2/synthetic/raw/wind_era5'
+  era5_dir: '/mnt/nas/synthetic/raw/wind_era5'
   nwp_data_path: /mnt/nas/open-meteo/wind/icon_d2
-  missing_analysis: 'data/wind_missing_from_2023-07-24.csv'
-  from_date: '2022-11-13'
-  hist_date: '2024-12-31'
+  from_date: '2023-07-24'
+  hist_date: '2023-12-31'
   turbine_dir: "power_curves"
   turbine_power: 'turbine_power.csv'
   turbine_specs: "turbine_specs.csv"
@@ -39,10 +38,9 @@ write:
   write_recent: True
   write_master: False
   write: True
-  drop_threshold: 1 # 2.9 % missing values
+  threshold: 0.008 # 0.8 % missing values
   clean_pv: False
   clean_wind: True
-  overwrite_synth_data: True
   db_conf:
     host: 'localhost'
     database: 'WeatherDB'
@@ -53,24 +51,26 @@ write:
 
 
 params:
-  turbines: ['Enercon E-70 E4 2.300',
-             'Enercon E-82 E2 2.000',
-             'Enercon E-115 2.500',
-             'Vestas V90',
-             'Vestas V112-3.45',
-             'Vestas V80-1.8']
-  hub_heights: [57,138,149,95,119,78]
+  turbines: ['Nordex N131/3300 Delta',
+             'Nordex N131/3300 Delta',
+             'Nordex N131/3300 Delta',
+             'Nordex N131/3300 Delta',
+             'Nordex N131/3300 Delta',
+             'Nordex N131/3300 Delta',
+             'Nordex N131/3300 Delta']
+  hub_heights: [134,134,134,134,134,134,134]
   nwp_heights: [10,77.745,126.858,183.592]
+  #hub_heights: [204,204,204,204,204,204,204]
   h1: 10
   p_s_model: 'huang'
-  v2_method: 'alphaI' # alphaI, loglaw, alpha7
+  v2_method: 'loglaw'
   karman: 0.4
   temp_gradient: 0.00649
   noise: 0.0
   annual_degradation: 0.0063
-  apply_ageing: True
+  apply_ageing: False
+  commissioning_date: '2018-07-01' # https://www.vsb.energy/de/de/projekte/windpark-trendelburg/
   hourly_resolution: True
-  random_seed: 42
 
 logging:
   verbose: False
@@ -125,18 +125,6 @@ features:
     old_name: 'DD_10'
     name: 'wind_direction'
     unit: '°'
-  wind_speed_10:
-    name: 'wind_speed_10m'
-    unit: 'm/s'
-  wind_speed_80:
-    name: 'wind_speed_80m'
-    unit: 'm/s'
-  wind_speed_120:
-    name: 'wind_speed_120m'
-    unit: 'm/s'
-  wind_speed_180:
-    name: 'wind_speed_180m'
-    unit: 'm/s'
   prec:
     old_name: 'RWS_10'
     name: 'precipitation_rate'
@@ -149,6 +137,18 @@ features:
     old_name: 'SLA_10'
     name: 'std_u_wind'
     unit: ''
+  wind_speed_10:
+    name: 'wind_speed_10m'
+    unit: 'm/s'
+  wind_speed_80:
+    name: 'wind_speed_80m'
+    unit: 'm/s'
+  wind_speed_120:
+    name: 'wind_speed_120m'
+    unit: 'm/s'
+  wind_speed_180:
+    name: 'wind_speed_180m'
+    unit: 'm/s'
   sigma_wind_lon:
     old_name: 'SLO_10'
     name: 'std_v_wind'

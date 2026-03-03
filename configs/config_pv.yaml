@@ -1,6 +1,7 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: '/mnt/nas/synthetic'
+  synth_dir: '/mnt/nvme2/synthetic'
+  raw_dir: '/mnt/nas/synthetic/raw'
   cams_dir: '/mnt/nas/cams/sqltocsv'
   era5_dir: '/mnt/nas/era5/data'
   pkl_dir: 'data/pkl_files'
@@ -44,17 +45,17 @@ write:
 
 pv_params:
   tilt_az_list: [
-    [[15, 135], [15, 180], [15, 225], [15, 225]],
-    [[20, 135], [20, 180], [20, 225], [20, 225]],
-    [[25, 135], [25, 180], [25, 225], [25, 225]],
-    [[30, 135], [30, 180], [30, 225], [30, 225]],
-    [[35, 135], [35, 180], [35, 225], [35, 225]],
-    [[40, 135], [40, 135], [40, 135], [40, 135]]
+    [15, 135], [15, 180], [15, 225],
+    [20, 135], [20, 180], [20, 225],
+    [25, 135], [25, 180], [25, 225],
+    [30, 135], [30, 180], [30, 225],
+    [35, 135], [35, 180], [35, 225],
+    [40, 135]
   ]
   dc_rating_watts: 10000 # in Watts
   dc_ac_ratio: 1
   gamma_pdc: -0.0035
-  albedo: 0.25
+  albedo: 0.3
   mean_eta_inv_nom: 0.95
   eta_inv_ref: 0.9637
   faiman_u0: 25

@@ -165,67 +165,79 @@ def apply_soiling(power: pd.Series, # in Watts
     soiling_loss = 0.3434 * erf(0.17 * w ** 0.8473)
     return power * soiling_loss
 
-def get_features(data: pd.DataFrame,
-                 features: dict,
-                 params: dict
-                ):
-    # calculate pressure
-    #pressure = pvlib.atmosphere.alt2pres(altitude)
-    #pressure = data[features['pressure']['name']]
+def prepare_angle_independent_features(data: pd.DataFrame,
+                                       features: dict,
+                                       params: dict) -> pd.DataFrame:
+    """
+    Calculate angle-independent features that only need to be computed once per station.
+    This includes: DHI/GHI unit conversion, DNI calculation, and solar position.
+    """
     temperature = data[features['temperature']['name']]
-    wind_speed = data[features['wind_speed']['name']]
-    #albedo = data[features['albedo']['name']]
-
     latitude = params['latitude']
     longitude = params['longitude']
     altitude = params['altitude']
-    surface_tilt = params['surface_tilt']
-    surface_azimuth = params['surface_azimuth']
-    albedo = params['albedo']
 
-    faiman_u0 = params['faiman_u0']
-    faiman_u1 = params['faiman_u1']
-
-    # get solar position
+    # get solar position (angle-independent)
     solpos = pvlib.solarposition.get_solarposition(
         time=data.index,
         latitude=latitude,
         longitude=longitude,
         altitude=altitude,
         temperature=temperature,
-        #pressure=pressure,
     )
-    solar_zenith = solpos['zenith']
-    solar_azimuth = solpos['azimuth']
+    data['solar_zenith'] = solpos['zenith']
+    data['solar_azimuth'] = solpos['azimuth']
 
-    # GHI and DHI in W/m^2 --> J / cm^2 = J / 0,0001 m^2 = 10000 J / m^2 --> Dividing by 600 seconds (DWD is giving GHI as sum of 10 minutes))
+    # GHI and DHI conversion: J/cm^2 -> W/m^2
+    # DWD gives GHI as sum over 10 minutes, so divide by 600 seconds
     dhi_col = features['dhi']['name']
     ghi_col = features['ghi']['name']
-    dhi = data[dhi_col] * 1e4 / 600
-    ghi = data[ghi_col] * 1e4 / 600
-    data[dhi_col] = dhi
-    data[ghi_col] = ghi
+    data[dhi_col] = data[dhi_col] * 1e4 / 600
+    data[ghi_col] = data[ghi_col] * 1e4 / 600
 
     # set extremely low values to zero
-    data.loc[data[dhi_col]< 0.01, dhi_col] = 0
+    data.loc[data[dhi_col] < 0.01, dhi_col] = 0
     data.loc[data[ghi_col] < 0.01, ghi_col] = 0
 
-    # get dni from ghi, dni and zenith
-    dni = pvlib.irradiance.dni(ghi=ghi,
-                               dhi=dhi,
-                               zenith=solar_zenith)
+    # get dni from ghi, dhi and zenith (angle-independent)
+    dni = pvlib.irradiance.dni(ghi=data[ghi_col],
+                               dhi=data[dhi_col],
+                               zenith=data['solar_zenith'])
     dni.fillna(0, inplace=True)
     data[features['dni']['name']] = dni
 
-    # get total irradiance
+    return data
+
+
+def get_angle_dependent_features(data: pd.DataFrame,
+                                  features: dict,
+                                  params: dict) -> pd.DataFrame:
+    """
+    Calculate angle-dependent features (POA irradiance and cell temperature).
+    This must be called for each tilt/azimuth combination.
+    """
+    temperature = data[features['temperature']['name']]
+    wind_speed = data[features['wind_speed']['name']]
+
+    surface_tilt = params['surface_tilt']
+    surface_azimuth = params['surface_azimuth']
+    albedo = params['albedo']
+    faiman_u0 = params['faiman_u0']
+    faiman_u1 = params['faiman_u1']
+
+    dhi_col = features['dhi']['name']
+    ghi_col = features['ghi']['name']
+    dni_col = features['dni']['name']
+
+    # get total irradiance on the tilted plane (angle-dependent)
     total_irradiance = pvlib.irradiance.get_total_irradiance(
         surface_tilt=surface_tilt,
         surface_azimuth=surface_azimuth,
-        solar_zenith=solar_zenith,
-        solar_azimuth=solar_azimuth,
-        dni=dni,
-        ghi=ghi,
-        dhi=dhi,
+        solar_zenith=data['solar_zenith'],
+        solar_azimuth=data['solar_azimuth'],
+        dni=data[dni_col],
+        ghi=data[ghi_col],
+        dhi=data[dhi_col],
         dni_extra=pvlib.irradiance.get_extra_radiation(data.index),
         albedo=albedo,
         model='haydavies',
@@ -233,16 +245,14 @@ def get_features(data: pd.DataFrame,
     total_irradiance.fillna(0, inplace=True)
     total_irradiance[total_irradiance < 0.01] = 0
 
-    ghi_poa = total_irradiance['poa_global']
-    dhi_poa = total_irradiance['poa_diffuse']
-    dni_poa = total_irradiance['poa_direct']
-    #sky_dhi = total_irradiance['poa_sky_diffuse']
-    #ground_dhi = total_irradiance['poa_ground_diffuse']
+    # Store POA features with tilt/azimuth suffix for diffuse and direct
+    data[f"{features['dhi_poa']['name']}_tilt{surface_tilt}_az{surface_azimuth}"] = total_irradiance['poa_diffuse']
+    data[f"{features['dni_poa']['name']}_tilt{surface_tilt}_az{surface_azimuth}"] = total_irradiance['poa_direct']
 
-    data[features['dhi_poa']['name']] = dhi_poa
-    data[features['ghi_poa']['name']] = ghi_poa
-    data[features['dni_poa']['name']] = dni_poa
+    # Global POA and cell temperature without suffix (temporary, will be dropped later)
+    data[features['ghi_poa']['name']] = total_irradiance['poa_global']
 
+    # calculate cell temperature (angle-dependent due to POA irradiance)
     cell_temperature = pvlib.temperature.faiman(total_irradiance['poa_global'],
                                                 temperature,
                                                 wind_speed,
@@ -304,21 +314,29 @@ def generate_pv_power(data: pd.DataFrame,
                                       eta_inv_nom=eta_inv_nom,
                                       eta_inv_ref=eta_inv_ref)
     # drop columns
-    data.drop(columns=[features['dhi_poa']['name'],
-                       features['ghi_poa']['name'],
-                       features['dni_poa']['name'],
+    #data.drop(columns=[features['dhi_poa']['name'],
+    #                   features['ghi_poa']['name'],
+    #                   features['dni_poa']['name'],
+    #                   features['cell_temperature']['name']], inplace=True)
+    data.drop(columns=[features['ghi_poa']['name'],
                        features['cell_temperature']['name']], inplace=True)
     return power_ac
 
 
-def gen_full_dataframe(params: dict,
-                       features: dict,
-                       df: pd.DataFrame,
-                       degradation_vector: np.ndarray = None) -> pd.DataFrame:
+def gen_pv_power_for_angle(params: dict,
+                           features: dict,
+                           df: pd.DataFrame,
+                           degradation_vector: np.ndarray = None) -> pd.DataFrame:
+    """
+    Generate PV power for a specific tilt/azimuth combination.
+    Assumes angle-independent features have already been calculated.
+    """
     tilt, az = params['surface_tilt'], params['surface_azimuth']
-    df = get_features(data=df,
-                      features=features,
-                      params=params)
+    # Calculate angle-dependent features (POA, cell temperature)
+    df = get_angle_dependent_features(data=df,
+                                      features=features,
+                                      params=params)
+    # Generate power
     power = generate_pv_power(data=df,
                               features=features,
                               params=params,
@@ -330,7 +348,7 @@ def main() -> None:
     config = tools.load_config("configs/config_pv.yaml")
     db_config = config['write']['db_conf']
 
-    raw_dir = os.path.join(config['data']['synth_dir'], 'raw', 'solar')
+    raw_dir = os.path.join(config['data']['raw_dir'], 'solar')
     cams_dir = config['data']['cams_dir']
     era5_dir = config['data']['era5_dir']
     pv_ages_path = config['data']['pv_ages']
@@ -360,7 +378,7 @@ def main() -> None:
     commissioning_date = params.get('commissioning_date', None)
 
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         #datefmt=datefmt,
         handlers=[
@@ -389,10 +407,17 @@ def main() -> None:
                                               masterdata=masterdata,
                                               params=params,
                                               commissioning_date=commissioning_date)
+
+        # Calculate angle-independent features ONCE per station
+        df = prepare_angle_independent_features(data=df,
+                                                features=features,
+                                                params=specific_params)
+
+        # Loop over tilt/azimuth combinations
         for tilt, az in tilt_az_list:
             specific_params['surface_tilt'] = tilt
             specific_params['surface_azimuth'] = az
-            df = gen_full_dataframe(
+            df = gen_pv_power_for_angle(
                     params=specific_params,
                     features=features,
                     df=df,
