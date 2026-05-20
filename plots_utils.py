@@ -13,13 +13,14 @@ import matplotlib.ticker as mtick
 import seaborn as sns
 from collections import defaultdict
 import math
-from generate_pv import get_features,generate_pv_power
-from generate_wind import read_dfs, get_turbines, gen_full_dataframe, get_ageing_degradation, get_park_params
+from generate_pv import get_features as get_pv_features,generate_pv_power
+from generate_wind_era5 import read_dfs, get_features as get_wind_features, get_turbines, gen_full_dataframe, get_ageing_degradation, get_park_params, generate_wind_power, get_cp_from_power_curve, interpolate
 from utils.clean_data import relevant_features
 from utils.tools import load_config_ruamel
 
 from geopy.distance import geodesic
 import requests
+from scipy.spatial import KDTree
 
 def get_elevation(lat, lon):
     url = 'https://api.open-elevation.com/api/v1/lookup'
@@ -31,6 +32,28 @@ def get_elevation(lat, lon):
         return elevation
     except requests.exceptions.RequestException as e:
         raise RuntimeError(f"API request failed: {e}")
+    
+def get_location_name(lat, lon):
+    """Get location name using reverse geocoding from Nominatim (OpenStreetMap)"""
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
+        headers = {'User-Agent': 'SyntheticRenewables/1.0'}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            # Try to get city/town/village name
+            address = data.get('address', {})
+            location_name = (address.get('city') or 
+                           address.get('town') or 
+                           address.get('village') or 
+                           address.get('municipality') or
+                           address.get('county') or
+                           'Unknown Location')
+            return f"{location_name}, {address.get('country', 'Germany')}"
+        else:
+            return "Unknown Location"
+    except Exception as e:
+        return "Unknown Location"
 
 def find_nearest_station_for_park(park_lat, park_lon, all_wind_params):
     """
@@ -99,30 +122,492 @@ def process_dataframe_index(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def create_map(markers, my_location = None, nearest_station = {}):
+# === GRID POINT FUNCTIONALITY ===
 
+@st.cache_data
+def build_grid_index(grid_dir: str = "./data/parquet/grid_points"):
+    """
+    Build spatial index of all grid points by scanning parquet files.
+    Returns grid coordinates, KDTree for spatial lookup, and filename mapping.
+    """
+    grid_points = []
+    filenames = []
+    
+    if os.path.exists(grid_dir):
+        files = [f for f in os.listdir(grid_dir) 
+                if f.startswith('grid_') and f.endswith('.parquet') and f != 'grid_index.parquet']
+        
+        for filename in files:
+            # Parse coordinates from filename: grid_LAT_LON.parquet
+            try:
+                parts = filename.replace('.parquet', '').split('_')
+                if len(parts) == 3:
+                    lat = float(parts[1])
+                    lon = float(parts[2])
+                    grid_points.append([lat, lon])
+                    filenames.append(filename)
+            except ValueError:
+                continue
+        
+        if grid_points:
+            grid_points = np.array(grid_points)
+            kdtree = KDTree(grid_points)
+            return grid_points, kdtree, filenames
+    
+    return np.array([]), None, []
+
+def find_nearest_grid_point(click_lat: float, click_lon: float, grid_points, kdtree, filenames):
+    """Find the nearest grid point to clicked coordinates using KDTree lookup."""
+    if kdtree is None or len(grid_points) == 0:
+        return None
+    
+    distance, index = kdtree.query([click_lat, click_lon])
+    nearest_lat, nearest_lon = grid_points[index]
+    filename = filenames[index]
+    
+    return {
+        'grid_lat': nearest_lat,
+        'grid_lon': nearest_lon,
+        'filename': filename,
+        'distance_km': distance * 111.0  # Rough conversion to km (1 degree ≈ 111 km)
+    }
+
+def load_grid_point_data(filename: str, grid_dir: str = "./data/parquet/grid_points"):
+    """Load synthetic data from a specific grid point parquet file."""
+    filepath = os.path.join(grid_dir, filename)
+    
+    if not os.path.exists(filepath):
+        st.error(f"Grid point file not found: {filename}")
+        return None
+    
+    try:
+        df = pd.read_parquet(filepath)
+        
+        # Ensure datetime index
+        if not isinstance(df.index, pd.DatetimeIndex):
+            if 'time' in df.columns:
+                df.set_index('time', inplace=True)
+            elif 'timestamp' in df.columns:
+                df.set_index('timestamp', inplace=True)
+        
+        df.index = pd.to_datetime(df.index)
+        return df
+        
+    except Exception as e:
+        st.error(f"Error loading grid point data: {e}")
+        return None
+    
+
+def generate_wind_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **params):
+    """Generate synthetic wind power from grid meteorological data using ERA5 methods with multiple turbines."""
+    try:
+        
+        wind_params = config['wind_params'].copy() 
+        
+        # ERA5 expects specific hardcoded column names - no features dictionary needed
+        # Required ERA5 columns: u_wind_10m, v_wind_10m, u_wind_100m, v_wind_100m, temp_2m, pressure, dew_point_2m
+        
+        expected_era5_columns = {
+            'u_wind_10m': 'u_wind_10m',
+            'v_wind_10m': 'v_wind_10m', 
+            'u_wind_100m': 'u_wind_100m',
+            'v_wind_100m': 'v_wind_100m',
+            'temp_2m': 'temp_2m',
+            'pressure': 'pressure',
+            'dew_point_2m': 'dew_point_2m'
+        }
+        
+        # Check if we have the required ERA5 columns
+        missing_cols = [col for col in expected_era5_columns.values() if col not in df.columns]
+        if missing_cols:
+            st.error(f"Missing required ERA5 columns: {missing_cols}")
+            st.info(f"Available columns: {list(df.columns)}")
+            st.info("ERA5 version requires: u_wind_10m, v_wind_10m, u_wind_100m, v_wind_100m, temp_2m, pressure, dew_point_2m")
+            return None
+        
+        # Verify data units are correct for ERA5
+        # ERA5 expects: temp_2m in Kelvin, pressure in Pascal
+        if df['temp_2m'].mean() < 100:  # Likely in Celsius, need Kelvin
+            st.info("Converting temperature from Celsius to Kelvin for ERA5 compatibility")
+            df['temp_2m'] = df['temp_2m'] + 273.15
+            
+        if df['pressure'].mean() < 10000:  # Likely in hPa, need Pascal  
+            st.info("Converting pressure from hPa to Pascal for ERA5 compatibility")
+            df['pressure'] = df['pressure'] * 100
+            
+        if df['dew_point_2m'].mean() < 100:  # Likely in Celsius, need Kelvin
+            st.info("Converting dew point from Celsius to Kelvin for ERA5 compatibility")
+            df['dew_point_2m'] = df['dew_point_2m'] + 273.15
+        
+        # Set location parameters
+        if grid_lat is not None and grid_lon is not None:
+            wind_params['latitude'] = grid_lat
+            wind_params['longitude'] = grid_lon
+            if 'altitude' not in wind_params:
+                wind_params['altitude'] = 100
+                
+        wind_params.update(params)
+
+        # Calculate ageing degradation if enabled
+        degradation_vector = None
+        commissioning_date = params.get('commissioning_date', None)
+        
+        if wind_params.get('apply_ageing', False) and commissioning_date is not None:
+            try:
+                # Load wind ages data
+                wind_ages_path = config['data']['wind_ages']
+                wind_ages = np.load(wind_ages_path)
+                
+                # Make time_vector timezone-aware (UTC) to match generate_wind_era5.py expectations
+                time_vector = df.index
+                if time_vector.tz is None:
+                    # Convert timezone-naive to UTC (as done in generate_wind_era5.py)
+                    time_vector = time_vector.tz_localize('UTC')
+                elif time_vector.tz != 'UTC':
+                    # Convert to UTC if different timezone
+                    time_vector = time_vector.tz_convert('UTC')
+                
+                # Now call the function with timezone-aware data (matching generate_wind_era5.py)
+                degradation_vector, actual_commissioning_date = get_ageing_degradation(
+                    time_vector=time_vector,
+                    real_ages=wind_ages,
+                    commissioning_date=str(commissioning_date),
+                    random_seed=wind_params.get('random_seed', 42)
+                )
+                
+                st.info(f"🕐 **Ageing Applied**: Commissioning date: {actual_commissioning_date}")
+                
+            except Exception as e:
+                st.warning(f"⚠️ Could not apply ageing: {e}")
+                st.exception(e)  # Show full traceback for debugging
+                degradation_vector = None
+        
+        # Load turbine data  
+        turbine_dir = Path.cwd().parent / config['data']['turbine_dir'] 
+        power_curves, _, specs = get_turbines(
+            turbine_path=os.path.join(turbine_dir, config['data']['turbine_power']),
+            cp_path=os.path.join(turbine_dir, config['data']['turbine_cp']),
+            specs_path=os.path.join(turbine_dir, config['data']['turbine_specs']),
+            params=wind_params
+        )
+        
+        # Initialize result dataframe with the input data
+        result_df = df.copy()
+        
+        # Generate power for each turbine in the configuration
+        turbine_names = []
+        for turbine_id, turbine in enumerate(wind_params['turbines'], start=1):
+            hub_height = wind_params['hub_heights'][turbine_id-1]
+            
+            # Generate power for this specific turbine
+            turbine_result = gen_full_dataframe(
+                power_curves=power_curves,
+                turbine=turbine,
+                params=wind_params,
+                df=df,
+                hub_height=hub_height,
+                specs=specs,
+                rated_power=None,
+                degradation_vector=degradation_vector,
+                suffix_for_turbine_cols=f'_t{turbine_id}'
+            )
+            
+            # Add turbine-specific columns to result dataframe
+            power_col = f'power_t{turbine_id}'
+            wind_speed_col = f'wind_speed_t{turbine_id}'
+            
+            if power_col in turbine_result.columns:
+                result_df[power_col] = turbine_result[power_col]
+                
+            if f'wind_speed_t{turbine_id}' in turbine_result.columns:
+                result_df[wind_speed_col] = turbine_result[wind_speed_col]
+            elif 'wind_speed' in turbine_result.columns:
+                result_df[wind_speed_col] = turbine_result['wind_speed']
+            
+            turbine_names.append(f"{turbine} at {hub_height}m")
+        
+        # Sum power from all turbines to get total park power
+        power_t_columns = [col for col in result_df.columns if col.startswith('power_t')]
+        speed_t_columns = [col for col in result_df.columns if col.startswith('wind_speed_t')]
+        
+        if not power_t_columns:
+            st.error("No turbine power columns found - wind power generation failed")
+            return None
+            
+        # Calculate total park power and average wind speed
+        result_df['power'] = result_df[power_t_columns].sum(axis=1)
+        
+        if speed_t_columns:
+            result_df['wind_speed_mean'] = result_df[speed_t_columns].mean(axis=1)
+            result_df['wind_speed_hub'] = result_df['wind_speed_mean']  # For plotting compatibility
+        
+        # Calculate total installed capacity
+        power_t_df = result_df[power_t_columns]
+        max_values_per_column = power_t_df.max()
+        total_installed_capacity = max_values_per_column.sum()
+        
+        # Display success message with all turbines
+        turbine_count = len(wind_params['turbines'])
+        st.success(f"Generated wind power using **{turbine_count} turbines**: {', '.join(turbine_names)}")
+        st.info(f"**Total Installed Capacity:** {total_installed_capacity/1_000_000:.2f} MW")
+        
+        return result_df
+        
+    except Exception as e:
+        st.error(f"Error generating wind power from grid data with ERA5: {e}")
+        st.exception(e)  # This will show the full stack trace
+        return None
+
+def generate_pv_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **params):
+    """Generate synthetic PV power from grid weather data."""
+    try:
+        pv_params = config['pv_params'].copy()
+        features = config['features']
+        
+        # Column mapping for grid point data
+        column_mapping = {
+            # Map actual grid column names to expected names
+            't2m': 'temperature_2m',           # ERA5/GRIB common name
+            'temp_2m': 'temperature_2m',       # Alternative name
+            'temperature_k': 'temperature_2m',  # If in Kelvin
+            'ghi_w_m2': 'ghi',                 # Alternative GHI name
+            'dhi_w_m2': 'dhi',                 # Alternative DHI name  
+            'wind_speed_10m': 'wind_speed',    # Alternative wind speed name
+            'ws_10m': 'wind_speed',            # Another alternative
+        }
+        
+        # Apply column mapping
+        for old_name, new_name in column_mapping.items():
+            if old_name in df.columns and new_name not in df.columns:
+                df[new_name] = df[old_name]
+        
+        # Check for required columns and provide helpful error messages
+        required_cols = [
+            features['temperature']['name'],  # temperature_2m
+            features['ghi']['name'],          # ghi
+            features['dhi']['name'],          # dhi
+            features['wind_speed']['name']    # wind_speed
+        ]
+        
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            st.error(f"Missing required columns in grid data: {missing_cols}")
+            st.info(f"Available columns: {list(df.columns)}")
+            st.info("Check the column mapping in generate_pv_from_grid function")
+            return None
+        
+        # Rest of the function remains the same...
+        if grid_lat is not None and grid_lon is not None:
+            pv_params['latitude'] = grid_lat
+            pv_params['longitude'] = grid_lon
+            if 'altitude' not in pv_params:
+                pv_params['altitude'] = 100  # Default altitude
+        
+        pv_params.update(params)
+        
+        # Generate features and power
+        total_irradiance, cell_temperature = get_pv_features(data=df, features=features, params=pv_params)
+        total = total_irradiance['poa_global']
+        direct = total_irradiance['poa_direct']  
+        diffuse = total_irradiance['poa_diffuse']
+        
+        power = generate_pv_power(total_irradiance=total, cell_temperature=cell_temperature, params=pv_params)
+        
+        # Add generated data to dataframe
+        result_df = df.copy()
+        result_df['power'] = power
+        result_df['Total'] = total
+        result_df['Direct'] = direct
+        result_df['Diffuse'] = diffuse
+        
+        return result_df
+        
+    except Exception as e:
+        st.error(f"Error generating PV power from grid data: {e}")
+        return None
+
+def show_grid_point_plot(grid_lat: float, grid_lon: float, filename: str, energy_type: str = 'solar', commissioning_date = None):
+    """Show plots for a specific grid point's synthetic data."""
+    grid_data = load_grid_point_data(filename)
+    if grid_data is None:
+        return
+    
+    # DEBUG: Show column information
+    #st.write(f"**Grid file columns:** {list(grid_data.columns)}")
+    #st.write(f"**Data shape:** {grid_data.shape}")
+    #st.write(f"**First few rows:**")
+    #st.dataframe(grid_data.head())
+    
+    config_path = "./config.yaml"
+    config = load_config_ruamel(config_path)
+    
+    # Check what type of data is available
+    has_solar = all(col in grid_data.columns for col in ['ghi', 'dhi'])
+    has_wind = all(col in grid_data.columns for col in ['wind_speed_10m', 'temp_2m', 'pressure'])
+    
+    if energy_type.lower() == 'solar':
+        if has_solar:
+            synthetic_data = generate_pv_from_grid(grid_data, grid_lat, grid_lon, config)
+        else:
+            st.warning("⚡ **Solar data not available.** This grid point contains meteorological data perfect for wind power!")
+            st.info("💡 **Switch to Wind Power mode** - Your grid data includes comprehensive wind measurements.")
+            return
+    else:  # wind power
+        if has_wind:
+            # Pass commissioning_date to wind generation if provided
+            synthetic_data = generate_wind_from_grid(grid_data, grid_lat, grid_lon, config, commissioning_date=commissioning_date) 
+        else:
+            st.error("Wind power requires meteorological data (wind speed, temperature, pressure)")
+            return
+    
+    if synthetic_data is None:
+        return
+    
+    synthetic_data = process_dataframe_index(synthetic_data)
+
+    dates_arr = synthetic_data.index.strftime('%Y-%m-%d')
+    formatted_dates = np.unique(dates_arr)
+    dates_list = formatted_dates.tolist()
+    years_list = synthetic_data.index.year.unique().tolist()
+
+    start_date = dates_list[0]
+    end_date = dates_list[-1]
+
+    # Determine project type from energy_type
+    project_type = 'solar' if energy_type.lower() == 'solar' else 'wind'
+    energy_emoji = "☀️" if project_type == 'solar' else "🌪️"
+
+    st.info(f"{energy_emoji} Grid Point: ({grid_lat:.4f}, {grid_lon:.4f}) | **{project_type.title()} Power** | Data: {start_date} to {end_date}", icon="🗺️")
+
+    # Feature selection and daily plots - USE CORRECT FEATURES AND FUNCTIONS
+    selected_date = st.selectbox("Select a date", dates_list, key="grid_date")
+
+    if project_type == 'solar':
+        # Solar: Use existing solar features and plotting function
+        selected_features = st.multiselect(
+            "Select solar irradiance features", 
+            options=["Total", "Direct", "Diffuse"], 
+            default=["Total"],
+            key="grid_features"
+        )
+        
+        if len(selected_features) > 0:
+            with st.container(border=True):
+                features = [synthetic_data[feature] for feature in selected_features]
+                fig_feature = plot_power_and_features_pv_streamlit(
+                    day=selected_date,
+                    plot_names=selected_features,
+                    features=features,
+                    power=synthetic_data['power']
+                )
+                st.pyplot(fig=fig_feature, use_container_width=True)
+                
+    else:  # wind power
+        # Wind: Use existing wind feature selection and plotting function
+        wind_features_available = []
+        if 'wind_speed_hub' in synthetic_data.columns:
+            wind_features_available.append('wind_speed_hub')
+        if 'wind_speed_mean' in synthetic_data.columns and 'wind_speed_hub' not in synthetic_data.columns:
+            wind_features_available.append('wind_speed_mean')
+        
+        # Add other wind features if available
+        if 'density_hub' in synthetic_data.columns:
+            wind_features_available.append('density_hub')
+        if 'temperature_hub' in synthetic_data.columns:
+            wind_features_available.append('temperature_hub')
+
+        if wind_features_available:
+            selected_wind_feature = st.selectbox(
+                "Select wind feature to plot",
+                options=wind_features_available,
+                key="grid_wind_feature"
+            )
+            with st.container(border=True):
+                # Create minimal params for plotting
+                feature_params = {f: {'name': f, 'unit': 'm/s' if 'wind_speed' in f else 'kg/m³' if 'density' in f else '°C'} for f in wind_features_available}
+                fig_wind = plot_power_and_feature_wind_streamlit(
+                    data=synthetic_data,
+                    params=feature_params,
+                    day=selected_date, 
+                    feature=selected_wind_feature,
+                    power=synthetic_data['power']
+                )
+                st.pyplot(fig=fig_wind, use_container_width=True)
+        else:
+            st.warning("⚠️ No wind features available for plotting in generated data")
+
+    # Yearly analysis - use correct project_type
+    selected_year = st.selectbox("Select a year", years_list, key="grid_year")
+    data_for_year = synthetic_data[synthetic_data.index.year == selected_year].copy()
+
+    with st.container(border=True):
+        fig_boxplot = plot_quarterly_boxplot(data_for_year, selected_year, project_type=project_type)
+        st.pyplot(fig=fig_boxplot, use_container_width=True)
+
+        if project_type == 'wind':
+            turbines_list = config['wind_params']['turbines'] 
+            unique_turbine_list = list(set(turbines_list))
+            
+            selected_turbine = st.selectbox("Select a turbine", unique_turbine_list, key="grid_turbine")
+            
+            fig_wind_power = plot_turbine_power_vs_wind_speed(
+                csv_path='../power_curves/turbine_power.csv',
+                turbine_name=selected_turbine
+            )
+            st.pyplot(fig=fig_wind_power, use_container_width=True)
+
+    with st.container(border=True):
+        fig_total = plot_multi_year_power_production(synthetic_data, project_type=project_type)
+        st.pyplot(fig=fig_total, use_container_width=True)
+
+    # Download option
+    with st.container(border=True):
+        csv_content = synthetic_data.to_csv().encode('utf-8')
+        st.download_button(
+            label=f"Download {project_type.title()} Grid Point Data CSV",
+            data=csv_content,
+            file_name=f'{project_type}_synthetic_grid_{grid_lat:.4f}_{grid_lon:.4f}.csv',
+            mime='csv',
+        )
+        st.dataframe(synthetic_data)
+
+def create_map(markers, my_location = None, nearest_station = {}, clicked_location = None):
     # Create a map centered around a specific location
     m = folium.Map(location=[51.4, 10.4515], zoom_start=7)
 
     # Add markers to the map
     for name, location in markers.items():
-
-        if name in nearest_station:
+        if name == 'clicked':
+            # Blue marker for clicked location
+            folium.Marker(
+                location, 
+                popup="📍 Clicked Location", 
+                icon=folium.Icon(color='blue', icon='glyphicon-map-marker')
+            ).add_to(m)
+        elif name == 'grid_point':
+            # Orange marker for grid point
+            folium.Marker(
+                location, 
+                popup="🎯 Grid Point (Data Source)", 
+                icon=folium.Icon(color='orange', icon='glyphicon-th')
+            ).add_to(m)
+        elif name in nearest_station:
             color = "green"
             popup_text = f"{name} Distance: {nearest_station[name]['distance_km']:.2f} km"
+            folium.Marker(location, popup=popup_text, icon=folium.Icon(color=color)).add_to(m)
         else:
             color = "darkpurple"
             popup_text = name
-
-        folium.Marker(location, popup=popup_text, icon=folium.Icon(color=color)).add_to(m)
+            folium.Marker(location, popup=popup_text, icon=folium.Icon(color=color)).add_to(m)
 
     if my_location:
-
-        folium.Marker(location=my_location,popup="My Plant",icon=folium.Icon(color='red', icon='glyphicon-user')).add_to(m)
-
+        folium.Marker(
+            location=my_location,
+            popup="My Plant",
+            icon=folium.Icon(color='red', icon='glyphicon-user')
+        ).add_to(m)
 
     map_data = st_folium(m, use_container_width=True, height=1200)
-
     return map_data
 
 def plot_power_and_features_pv_streamlit(day: str, 
@@ -985,7 +1470,7 @@ def show_pv_plot(config,marker_name,dir,latitude,longitude,elevation,park_data):
         dataSelectedStation['timestamp'] = pd.to_datetime(dataSelectedStation['timestamp'])
         dataSelectedStation.set_index('timestamp', inplace=True)
 
-        total_irradiance, cell_temperature = get_features(data=dataSelectedStation,
+        total_irradiance, cell_temperature = get_pv_features(data=dataSelectedStation,
                                                           features=features,
                                                           params=params)
         
@@ -1197,10 +1682,15 @@ def show_wind_plot(config: dict,
 
         #dataSelectedStation = pd.read_pickle(new_dir)
         frames, station_ids = read_dfs(path=dir,
-                                      w_vert_dir=w_vert_dir,
-                                      features=wind_features,
-                                      hourly_resolution=params['hourly_resolution'],
-                                      specific_id=marker_name)
+                              features=wind_features,
+                              features_dict=features,
+                              drop_threshold=1,
+                              v2_method=params['v2_method'],
+                              masterdata=masterdata,
+                              hourly_resolution=params['hourly_resolution'],
+                              specific_id=marker_name,
+                              nwp_data_path=None,
+                              wind_speed_heights=params.get('wind_speed_col_list', [10, 80, 120, 180]))
         
         power_curves, cp_curves, specs = get_turbines(turbine_path=turbine_path,
                                                     cp_path=cp_path,
@@ -1230,11 +1720,10 @@ def show_wind_plot(config: dict,
                         power_curves=power_curves,
                         turbine=turbine,
                         params=params,
-                        features=features,
                         df=df,
                         hub_height=hub_height,
-                        rated_power=None, # only needed when to curtail rated power
                         specs=specs,
+                        rated_power=None,
                         degradation_vector=degradation_vector,
                         suffix_for_turbine_cols=f'_t{turbine_id}'
                 )

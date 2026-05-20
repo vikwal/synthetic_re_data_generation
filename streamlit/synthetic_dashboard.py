@@ -7,7 +7,9 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.tools import load_config_ruamel, write_config
-from plots_utils import get_station_list,create_map,show_pv_plot,show_wind_plot,find_nearest_station_for_park
+from plots_utils import (get_station_list, create_map, show_pv_plot, show_wind_plot, 
+                        find_nearest_station_for_park, build_grid_index, 
+                        find_nearest_grid_point, show_grid_point_plot, get_location_name)
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Synthetic Renewables Data Generation Dashboard")
@@ -146,6 +148,18 @@ if "action_type" not in st.session_state:
 
 if "selected_marker" not in st.session_state:
                     st.session_state.selected_marker = None
+
+if 'selected_grid_point' not in st.session_state:
+    st.session_state.selected_grid_point = None
+
+# --- Grid Point Setup ---
+# Build grid index once at startup for performance
+if 'grid_points' not in st.session_state:
+    with st.spinner("Loading grid points..."):
+        grid_points, kdtree, filenames = build_grid_index()
+        st.session_state['grid_points'] = grid_points
+        st.session_state['kdtree'] = kdtree  
+        st.session_state['filenames'] = filenames
 
 # --- Data Generation relevant tasks ---
 
@@ -290,7 +304,7 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
                         elevation = solardata.loc[solardata.station_id == st.session_state.selected_marker]['station_height'].iloc[0]
                         show_pv_plot(config,st.session_state.selected_marker,pv_dir,latitude,longitude,elevation,park_data)
                         del st.session_state.selected_marker #Clearing the session state to show no plots when switched from pv to wind
-
+                        
         if typeInput == "Wind":
 
             turbine_list = []
@@ -345,32 +359,79 @@ elif st.session_state["current_view"] == "visualize synthetic plant":
 
             #For centering the content in the dashboard canvas
             col1, col2, col3 = st.columns([0.01,0.99,0.01])
-
             with col2:
-                st.info("Click on the station marker you want to generate the data for.", icon="ℹ️")
+                st.info("Click anywhere on the map for grid-point analysis.", icon="ℹ️")
                 with st.container(border=True):
-
+                    # Create markers dict for clicked location if it exists
+                    markers = {}
+                    if st.session_state.get('clicked_location'):
+                        clicked_info = st.session_state.clicked_location
+                        markers['clicked'] = [clicked_info['lat'], clicked_info['lng']]
+                    
+                    # Add grid point marker if selected
+                    if st.session_state.get('selected_grid_point'):
+                        grid_info = st.session_state.selected_grid_point
+                        markers['grid_point'] = [grid_info['grid_lat'], grid_info['grid_lon']]
+                    
                     map_data = create_map(markers)
-                
-                    # Update session state based on the map click
-                    if map_data and "last_clicked" in map_data and map_data["last_object_clicked"] is not None:
-                        lat = map_data["last_object_clicked"]["lat"]
-                        lon = map_data["last_object_clicked"]["lng"]
-    
-                        # Determine which marker was clicked based on coordinates
-                        for marker_name, coords in markers.items():
-                            if abs(coords[0] - lat) < 0.01 and abs(coords[1] - lon) < 0.01:
-                                st.session_state.selected_marker = marker_name
-                                break
+
+                    if map_data and "last_clicked" in map_data and map_data["last_clicked"] is not None:
+                        clicked_lat = map_data["last_clicked"]["lat"]
+                        clicked_lng = map_data["last_clicked"]["lng"]
+                        
+                        # Check if this is a new click (different from current location)
+                        current_location = st.session_state.get('clicked_location')
+                        is_new_click = (not current_location or 
+                                    abs(current_location['lat'] - clicked_lat) > 0.0001 or 
+                                    abs(current_location['lng'] - clicked_lng) > 0.0001)
+                        
+                        if is_new_click:
+                            # Store clicked location info in session state
+                            location_name = get_location_name(clicked_lat, clicked_lng)
+                            st.session_state.clicked_location = {
+                                'lat': clicked_lat,
+                                'lng': clicked_lng,
+                                'name': location_name
+                            }
+                            
+                            if st.session_state.get('kdtree') is not None:
+                                nearest = find_nearest_grid_point(
+                                    clicked_lat, clicked_lng, 
+                                    st.session_state['grid_points'], 
+                                    st.session_state['kdtree'], 
+                                    st.session_state['filenames']
+                                )
+                                if nearest and isinstance(nearest, dict):
+                                    st.session_state.selected_grid_point = nearest
+                            
+                            # Force rerun to update the map with markers
+                            st.rerun()
+
+                    # Show information if we have selections (after potential rerun)
+                    if st.session_state.get('clicked_location') and st.session_state.get('selected_grid_point'):
+                        clicked_info = st.session_state.clicked_location
+                        nearest = st.session_state.selected_grid_point
+                        st.success(f"📍 **Clicked Location**: {clicked_info['name']}")
+                        #st.success(f"🎯 **Nearest Grid Point**: ({nearest['grid_lat']:.4f}, {nearest['grid_lon']:.4f}) - Distance: {nearest['distance_km']:.1f} km")
 
                 with st.container(border=True):
-
-                    # Show the plot for the selected marker
-                    if st.session_state.selected_marker:
-                        park_data = pd.DataFrame
-                        show_wind_plot(config,st.session_state.selected_marker,wind_dir,winddata,park_data,commissioning_date)
-                        del st.session_state.selected_marker #Clearing the session state to show no plots when switched from wind to pv
-
+                    if st.session_state.get('selected_grid_point'):
+                        nearest = st.session_state.selected_grid_point
+                        
+                        # Show location context at the top of the plot container
+                        if st.session_state.get('clicked_location'):
+                            clicked_info = st.session_state.clicked_location
+                            st.markdown(f"**📍 Analysis for location**: {clicked_info['name']} ({clicked_info['lat']:.4f}, {clicked_info['lng']:.4f})")
+                            st.markdown(f"**🎯 Using grid point**: ({nearest['grid_lat']:.4f}, {nearest['grid_lon']:.4f}) - {nearest['distance_km']:.1f} km away")
+                            st.markdown("---")
+                        
+                        show_grid_point_plot(
+                            nearest['grid_lat'], 
+                            nearest['grid_lon'], 
+                            nearest['filename'],
+                            energy_type='WIND',
+                            commissioning_date=commissioning_date
+                        )
 
 
 elif st.session_state["current_view"] == "compare your plant":
