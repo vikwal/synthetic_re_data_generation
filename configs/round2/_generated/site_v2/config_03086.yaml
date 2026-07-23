@@ -201,14 +201,16 @@ round2:
     lambda: 54.5
   aging_model: weibull
   apply_ageing_override: true
+  artifacts_dir: data/round2_site
   commissioning_table: data/round2/site_commissioning.csv
   correction: height_consistent
   correction_branch: auto
   density: v1_mixed
   era5_dir_v2: /mnt/nvme2/synthetic/raw/wind_era5_v2
   experiment_id: SITE_v2
+  output_naming: readable
   output_start: '2023-07-24'
-  shear: most
+  shear: power_law
   wake:
     enabled: false
 scraping:

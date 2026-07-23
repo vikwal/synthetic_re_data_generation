@@ -210,7 +210,7 @@ round2:
   experiment_id: SITE_v2
   output_naming: readable
   output_start: '2023-07-24'
-  shear: most
+  shear: power_law
   wake:
     enabled: false
 scraping:

@@ -208,8 +208,9 @@ round2:
   density: v1_mixed
   era5_dir_v2: /mnt/nvme2/synthetic/raw/wind_era5_v2
   experiment_id: SITE_v2
+  output_naming: readable
   output_start: '2023-07-24'
-  shear: most
+  shear: power_law
   wake:
     enabled: false
 scraping:

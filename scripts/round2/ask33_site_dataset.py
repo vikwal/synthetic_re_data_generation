@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Ask 33 driver: publishable v2 SITE dataset — 200 classified stations,
-ERA5-only chain (M5-equivalent free-stream, no wakes).
+"""Publishable site-level dataset driver: 200 classified stations,
+ERA5-only chain (M4-equivalent free-stream: dyn. power-law extrapolation,
+gated correction, Weibull aging, no wakes -- see configs/round2/SITE_v2.yaml).
 
 Stages (subcommands, run in order; each is independently re-runnable):
   prep         write data/round2/site_commissioning.csv (v1 continuity, or
@@ -13,7 +14,7 @@ Stages (subcommands, run in order; each is independently re-runnable):
                nwp_coverage.csv into the release dir
   verify       consistency + physics checks; prints the HANDOFF summary
 
-Chain config: configs/round2/SITE_v2.yaml. Spec: HANDOFF.md "Ask 33".
+Chain config: configs/round2/SITE_v2.yaml (see configs/round2/README.md).
 """
 
 import argparse
@@ -45,7 +46,7 @@ TOPO = os.path.join(REPO, "data", "round2", "topo_features.csv")
 # per-station correction JSONs keyed by station id, so the park/site filename
 # collision in data/round2/correction/ (park_XXXXX shadows station XXXXX for 7
 # ids) cannot leak a park's gate decision into a site. Sites anchor to their
-# own station at 0 km per Ask 33.
+# own station at 0 km (each site coincides with its own DWD station).
 SITE_ARTIFACTS = os.path.join(REPO, "data", "round2_site")
 V1_WIND_PARAMETER = "/mnt/nvme2/synthetic/wind/wind_hourly_age_20251103/wind_parameter.csv"
 MEASURED_DIR = "/mnt/lambda1/nvme1/synthetic/raw/wind"
