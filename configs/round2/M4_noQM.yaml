@@ -1,4 +1,6 @@
-# M6 (M5all_PL) OHNE QM-Korrektur (sonst wie M5all_PL) -- fuer M6-basierte Korrektur-Kontraste
+# Leave-one-out ablation: M4 (deployed) without QM correction.
+# Internal experiment_id 'M5all_PL_noQM' kept; round2/paper_style.py:PAPER_RUNG
+# translates it to 'M4-noQM' in figures/tables.
 round2:
   experiment_id: "M5all_PL_noQM"
   correction: "off"

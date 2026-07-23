@@ -1,9 +1,11 @@
-# M1 — round-1 anchor: era5 + const aging, no round-2 features active
+# Paper M1: raw dyn.-power-law ERA5, no correction, no aging, no wakes.
+# Internal experiment_id 'M1noage' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'M1' in figures/tables).
 round2:
-  experiment_id: 'M1'
+  experiment_id: 'M1noage'
   correction: 'off'
   shear: 'power_law'
-  aging_model: 'const'
+  aging_model: 'none'
   wake: {enabled: false}
   density: 'v1_mixed'
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'

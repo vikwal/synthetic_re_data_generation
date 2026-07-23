@@ -1,12 +1,15 @@
-# M5 — M4 + NOJ wake losses on the park sum (WP5, parks only)
+# Paper S2: S1 + fleet-wide Weibull aging, no wakes.
+# Internal experiment_id 'M4all' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'S2' in figures/tables).
 round2:
-  experiment_id: 'M5'
+  experiment_id: 'M4all'
   correction: 'height_consistent'
   correction_branch: 'auto'
   shear: 'most'
   aging_model: 'weibull'
   aging: {lambda: 54.5, kappa: 2.0}
-  wake: {enabled: true, model: 'noj', k: 0.075}
+  apply_ageing_override: true
+  wake: {enabled: false}
   density: 'v1_mixed'
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
   commissioning_table: 'data/round2/park_commissioning.csv'

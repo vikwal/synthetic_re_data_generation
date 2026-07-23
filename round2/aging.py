@@ -2,7 +2,7 @@
 
 DF(age) is the retained load-factor fraction (1 = new). Downstream application
 is unchanged from round 1: the power curve's wind axis is shifted by
-(1/DF)**(1/3) (see generate_wind_era5*.get_cp_from_power_curve*).
+(1/DF)**(1/3) (see the power-curve interpolation in generate_wind.py).
 """
 
 import numpy as np

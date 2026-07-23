@@ -1,4 +1,6 @@
-# M6 (M5all_PL) OHNE Aging (sonst wie M5all_PL) -- fuer M6-basierte Aging-Kontraste
+# Leave-one-out ablation: M4 (deployed) without aging.
+# Internal experiment_id 'M5all_PL_noage' kept; round2/paper_style.py:PAPER_RUNG
+# translates it to 'M4-noage' in figures/tables.
 round2:
   experiment_id: "M5all_PL_noage"
   correction: "height_consistent"

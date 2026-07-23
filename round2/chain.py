@@ -2,7 +2,7 @@
 
 run_chain(theta) reproduces the v2 power chain in pure NumPy for the
 sensitivity analysis (guide 6.1: scalar output = mean over parks of
-|energy_ratio - 1|). Validated against generate_wind_era5_v2 on corner
+|energy_ratio - 1|). Validated against generate_wind on corner
 points by scripts/round2/wp6_validate_chain.py (tolerance < 0.5 % ER).
 
 theta keys (defaults = M-ladder baseline):
@@ -58,7 +58,7 @@ def _load_park_config(park_id):
 
 
 def _power_curves(turbines, cut_outs):
-    """Interpolated curves exactly like generate_wind_era5.interpolate()."""
+    """Interpolated curves exactly like generate_wind.py:interpolate()."""
     pc = pd.read_csv(os.path.join(REPO, "power_curves", "turbine_power.csv"),
                      sep=";", decimal=",", index_col=0)
     pc = pc.loc[:, ~pc.columns.duplicated()]
@@ -97,7 +97,7 @@ class ParkCache:
         self.v10 = np.hypot(df["u_wind_10m"], df["v_wind_10m"]).values
         self.v100 = np.hypot(df["u_wind_100m"], df["v_wind_100m"]).values
 
-        # density chain at 2 m (see generate_wind_era5.get_rho + huang p_s)
+        # density chain at 2 m (see generate_wind.py:get_rho + huang p_s)
         t2 = df["temp_2m"].values
         td = df["dew_point_2m"].values
         press = df["pressure"].values

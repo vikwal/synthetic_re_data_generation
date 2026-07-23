@@ -1,12 +1,17 @@
-# M4 — M3 with Weibull wear-out aging (WP4)
+# Paper M4 (DEPLOYED): dyn. power-law extrapolation + gated QM correction +
+# Weibull aging + NOJ wake losses. This is the framework's default/reported
+# configuration (Table tab:experimental_framework, tab:ladder in the paper).
+# Internal experiment_id 'M5all_PL' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'M4' in figures/tables).
 round2:
-  experiment_id: 'M4'
+  experiment_id: 'M5all_PL'
   correction: 'height_consistent'
   correction_branch: 'auto'
-  shear: 'most'
+  shear: 'power_law'
   aging_model: 'weibull'
   aging: {lambda: 54.5, kappa: 2.0}
-  wake: {enabled: false}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
   density: 'v1_mixed'
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
   commissioning_table: 'data/round2/park_commissioning.csv'

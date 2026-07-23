@@ -1,12 +1,12 @@
-# M5all — Vollkette: M4all + NOJ-Wakes
+# Leave-one-out ablation: S3 without aging.
+# Internal experiment_id 'M5all_noage' kept; round2/paper_style.py:PAPER_RUNG
+# translates it to 'S3-noage' in figures/tables.
 round2:
-  experiment_id: 'M5all'
+  experiment_id: 'M5all_noage'
   correction: 'height_consistent'
   correction_branch: 'auto'
   shear: 'most'
-  aging_model: 'weibull'
-  aging: {lambda: 54.5, kappa: 2.0}
-  apply_ageing_override: true
+  aging_model: 'none'
   wake: {enabled: true, model: 'noj', k: 0.075}
   density: 'v1_mixed'
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'

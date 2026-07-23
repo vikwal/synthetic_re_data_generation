@@ -32,28 +32,60 @@ def test_step_only_after_20y():
         aging.DF_weibull(22.0) * 0.98 ** 2, rel=1e-12)
 
 
-def test_const_matches_v1():
-    """model='const' must reproduce the round-1 get_ageing_degradation vector."""
-    import generate_wind_era5 as v1
+def _reference_const_ageing(
+        time_vector: pd.DatetimeIndex,
+        mean_age_years: float = 15.0,
+        std_dev_age_years: float = 5.0,
+        annual_load_factor_loss_rate: float = 0.0063,
+        real_ages: np.ndarray = None,
+        commissioning_date: str = None,
+        random_seed: int = 42):
+    """Frozen reference formula for the linear ('const') degradation model.
+
+    Kept as a fixed, independent implementation (not imported from
+    round2.aging) so test_const_matches_reference below actually checks
+    round2.aging.get_degradation_vector(model="const") against an
+    unrelated computation of the same linear formula, rather than against
+    itself.
+    """
+    np.random.seed(random_seed)
+    if real_ages is None:
+        start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
+    else:
+        start_age = float(np.random.choice(real_ages, size=1, replace=False)[0])
+    start_age = max(0.0, start_age)
+    if commissioning_date is not None:
+        start_age = (time_vector[0] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
+    else:
+        commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age * 365.25)).date())
+    end_age = (time_vector[-1] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
+    base_efficiency = 1.0 - annual_load_factor_loss_rate
+    efficiency_factor_start = base_efficiency ** start_age
+    efficiency_factor_end = base_efficiency ** end_age
+    efficiency_vector = np.linspace(efficiency_factor_start, efficiency_factor_end, num=len(time_vector))
+    return efficiency_vector, commissioning_date
+
+
+def test_const_matches_reference():
+    """model='const' must reproduce the linear degradation reference formula."""
     idx = pd.date_range("2023-07-24", "2024-06-30 23:00", freq="1h", tz="UTC")
-    v1_vec, v1_date = v1.get_ageing_degradation(
+    ref_vec, ref_date = _reference_const_ageing(
         time_vector=idx, commissioning_date="2015-06-25", random_seed=42)
-    v2_vec, v2_date = aging.get_degradation_vector(
+    vec, date = aging.get_degradation_vector(
         idx, model="const", commissioning_date="2015-06-25", random_seed=42)
-    assert v1_date == v2_date
-    np.testing.assert_allclose(v1_vec, v2_vec, rtol=0, atol=1e-12)
+    assert ref_date == date
+    np.testing.assert_allclose(ref_vec, vec, rtol=0, atol=1e-12)
 
 
-def test_const_matches_v1_sampled_age():
-    import generate_wind_era5 as v1
+def test_const_matches_reference_sampled_age():
     idx = pd.date_range("2024-01-01", "2024-03-31 23:00", freq="1h", tz="UTC")
     ages = np.load("data/wind_ages.npy")
-    v1_vec, v1_date = v1.get_ageing_degradation(time_vector=idx, real_ages=ages,
+    ref_vec, ref_date = _reference_const_ageing(time_vector=idx, real_ages=ages,
                                                 random_seed=7)
-    v2_vec, v2_date = aging.get_degradation_vector(idx, model="const",
-                                                   real_ages=ages, random_seed=7)
-    assert v1_date == v2_date
-    np.testing.assert_allclose(v1_vec, v2_vec, atol=1e-12)
+    vec, date = aging.get_degradation_vector(idx, model="const",
+                                             real_ages=ages, random_seed=7)
+    assert ref_date == date
+    np.testing.assert_allclose(ref_vec, vec, atol=1e-12)
 
 
 def test_weibull_monotone_decreasing():

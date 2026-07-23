@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate round2.chain against generate_wind_era5_v2 on corner points.
+"""Validate round2.chain against generate_wind on corner points.
 
 For a set of theta corners, compare the fast chain's per-park energy ratio
 with the full script's ER (same window). Tolerance: |delta ER| < 0.005.

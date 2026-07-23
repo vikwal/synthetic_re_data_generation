@@ -1,15 +1,21 @@
-"""Round-2 chain: copy of generate_wind_era5.py extended per
-Implementation_Guide_Round2.md. The original stays untouched; with the
-round2 config block absent or all switches off this script reproduces the
-round-1 output exactly (guarded by tests/test_v2_equals_v1.py).
+"""Synthetic wind power time series generator.
 
-Hooks (see round2/ package):
-  A  gated quantile-mapping correction (WP2), height-consistent on v10+v100
-  B  MOST stability-corrected shear as alternative to the power law (WP3)
-  C  aging model const | weibull | weibull_step (WP4)
-  D  density mode v1_mixed | static_1225 | dynamic
-  E  wake loss factor w(t) applied to the park sum (WP5)
-  F  WP6 scalers: wind_level_factor, power_curve_scale, z0_scale
+Builds hourly synthetic wind power output from ERA5 reanalysis (extrapolated
+to hub height), a terrain-gated bias correction of the ERA5 input, an
+age-resolved turbine degradation model, and optional wake losses. Behaviour
+is fully controlled by the YAML config passed via --config; see
+configs/round2/M4.yaml for the default (deployed) configuration and
+configs/round2/ for validated alternatives (e.g. S1.yaml: stability-corrected
+extrapolation instead of the dynamic power law; *_noage / *_noQM / *_noWake:
+single-component ablations).
+
+Chain components (see the round2/ package):
+  correction     gated quantile-mapping bias correction, height-consistent on v10+v100
+  shear          power_law (dynamic exponent from v10/v100) | most (stability-corrected)
+  aging_model    const | weibull | weibull_step
+  density        v1_mixed | static_1225 | dynamic
+  wake           wake loss factor w(t) applied to the park sum
+  scalers        wind_level_factor, power_curve_scale, z0_scale (sensitivity analysis)
 """
 
 import os
@@ -857,17 +863,24 @@ def gen_full_dataframe(power_curves: pd.DataFrame,
     return df
 
 
+DEFAULT_CONFIG = 'round2/M4.yaml'  # framework default: dyn. power law, gated
+                                    # correction, Weibull aging, wakes on (deployed)
+
+
 def main(config_file: str = None) -> None:
 
     parser = argparse.ArgumentParser(description="Synthetic Wind Power Time Series Simulation")
     parser.add_argument('-p', '--park_id', type=str, default='', help='Select park_id (default: None)')
-    #parser.add_argument('-c', '--config', type=str, default='', help='Select config (default: None)')
+    parser.add_argument('-c', '--config', type=str, default='',
+                        help=f'Config path under configs/ (default: {DEFAULT_CONFIG})')
     args = parser.parse_args()
 
-    if config_file:
-        # supports nested paths like 'round2/M2/config_07374.yaml'
-        base = os.path.basename(config_file).split('.')[0]
-        args.park_id = base[7:] if base.startswith('config_') else ''
+    if not config_file:
+        config_file = args.config or DEFAULT_CONFIG
+
+    # supports nested paths like 'round2/M4.yaml' or 'round2/M2/config_07374.yaml'
+    base = os.path.basename(config_file).split('.')[0]
+    args.park_id = base[7:] if base.startswith('config_') else ''
 
     if args.park_id == '':
         config_suffix = '_wind'

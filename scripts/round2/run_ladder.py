@@ -4,7 +4,7 @@ evaluate with WP1.
 
 Per park: merge the park YAML (configs/real_wind_parks_era5/config_XXXXX.yaml)
 with the experiment's round2 block (configs/round2/<EXP>.yaml), write the
-merged config to configs/round2/_generated/, run generate_wind_era5_v2.main()
+merged config to configs/round2/_generated/, run generate_wind.main()
 in a subprocess, then evaluate synthetic park power vs meter data.
 
 Usage: run_ladder.py M2 [--parks 07374 04745] [--skip-generate]
@@ -51,7 +51,7 @@ def merged_config(park_id: str, experiment: str) -> str:
 def run_park(park_id: str, experiment: str) -> bool:
     rel = merged_config(park_id, experiment)
     code = (f"import sys; sys.argv=['x']; "
-            f"import generate_wind_era5_v2 as m; m.main('{rel}')")
+            f"import generate_wind as m; m.main('{rel}')")
     res = subprocess.run([PYTHON, "-c", code], cwd=REPO,
                          capture_output=True, text=True, timeout=3600)
     if res.returncode != 0:

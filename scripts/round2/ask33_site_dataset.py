@@ -5,7 +5,7 @@ ERA5-only chain (M5-equivalent free-stream, no wakes).
 Stages (subcommands, run in order; each is independently re-runnable):
   prep         write data/round2/site_commissioning.csv (v1 continuity, or
                --resample-ages for a fresh seeded fleet) + DB masterdata precheck
-  generate     run generate_wind_era5_v2 per station (subprocess, run_ladder
+  generate     run generate_wind per station (subprocess, run_ladder
                pattern) into /mnt/nvme2/synthetic/wind/round2/SITE_v2/
   postprocess  drop internal columns, merge measured DWD weather (hourly,
                NaN gaps, measured_ prefix), write release synth_{id}.parquet
@@ -205,7 +205,7 @@ def generate(ids: list = None, force: bool = False) -> None:
             continue
         rel = merged_config(sid)
         code = (f"import sys; sys.argv=['x']; "
-                f"import generate_wind_era5_v2 as m; m.main('{rel}')")
+                f"import generate_wind as m; m.main('{rel}')")
         res = subprocess.run([PYTHON, "-c", code], cwd=REPO,
                              capture_output=True, text=True, timeout=3600)
         if res.returncode != 0 or not os.path.exists(out_csv):
@@ -250,7 +250,7 @@ def postprocess(release_dir: str) -> None:
     os.makedirs(release_dir, exist_ok=True)
     expected_index = hourly_index()
     manifests = {}
-    from generate_wind_era5_v2 import readable_rename_map
+    from generate_wind import readable_rename_map
     rename = readable_rename_map(N_TURBINES)
     for n, sid in enumerate(ids, 1):
         df = pd.read_csv(os.path.join(RUN_DIR, f"synth_{sid}.csv"),
@@ -463,7 +463,7 @@ def verify(release_dir: str) -> None:
 
     # synthetic columns identical pre/post merge (one sample). Map the native
     # run CSV to readable names first so the comparison is name-aligned.
-    from generate_wind_era5_v2 import readable_rename_map
+    from generate_wind import readable_rename_map
     sid = ids[0]
     run = pd.read_csv(os.path.join(RUN_DIR, f"synth_{sid}.csv"),
                       sep=";", index_col=0, parse_dates=True) \

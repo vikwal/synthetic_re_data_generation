@@ -1,13 +1,15 @@
-# M4all — finaler Wind (M3), Weibull-Aging fuer ALLE 13 Parks erzwungen
+# Paper S3: S2 + NOJ wake losses (full stability-corrected alt. chain).
+# Internal experiment_id 'M5all' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'S3' in figures/tables).
 round2:
-  experiment_id: 'M4all'
+  experiment_id: 'M5all'
   correction: 'height_consistent'
   correction_branch: 'auto'
   shear: 'most'
   aging_model: 'weibull'
   aging: {lambda: 54.5, kappa: 2.0}
   apply_ageing_override: true
-  wake: {enabled: false}
+  wake: {enabled: true, model: 'noj', k: 0.075}
   density: 'v1_mixed'
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
   commissioning_table: 'data/round2/park_commissioning.csv'

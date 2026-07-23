@@ -1,10 +1,12 @@
-# M2 — M1 + gated height-consistent quantile-mapping correction (WP2)
+# Paper M2: M1 + gated height-consistent quantile-mapping correction (WP2).
+# Internal experiment_id 'M2noage' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'M2' in figures/tables).
 round2:
-  experiment_id: 'M2'
+  experiment_id: 'M2noage'
   correction: 'height_consistent'
   correction_branch: 'auto'
   shear: 'power_law'
-  aging_model: 'const'
+  aging_model: 'none'
   wake: {enabled: false}
   density: 'v1_mixed'
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'

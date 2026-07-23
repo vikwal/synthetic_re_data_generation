@@ -1,4 +1,6 @@
-# LOO: Vollkette OHNE QM-Korrektur (sonst wie M5all)
+# Leave-one-out ablation: S3 without QM correction.
+# Internal experiment_id 'M5all_noQM' kept; round2/paper_style.py:PAPER_RUNG
+# translates it to 'S3-noQM' in figures/tables.
 round2:
   experiment_id: 'M5all_noQM'
   correction: 'off'

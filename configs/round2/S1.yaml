@@ -1,0 +1,14 @@
+# Paper S1: M2 + MOST stability-corrected extrapolation (WP3), no aging, no wakes.
+# Validated alternative extrapolation law, not the deployed path (see paper Sec. 3.2/5.5).
+# Internal experiment_id 'M3noage' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'S1' in figures/tables).
+round2:
+  experiment_id: 'M3noage'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'none'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

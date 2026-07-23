@@ -2,7 +2,7 @@
 
 Publishes w(t) = P_waked / P_free in (0,1] per park, precomputed by
 scripts/round2/wp5_precompute_wakes.py and applied to the park sum in
-generate_wind_era5_v2 (Hook E). py_wake version is pinned in
+generate_wind (Hook E). py_wake version is pinned in
 requirements_round2.txt and recorded in the run manifests.
 """
 
