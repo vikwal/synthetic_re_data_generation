@@ -46,7 +46,7 @@ def main():
     print(f"chain runs: {len(X)}")
 
     chain = Chain()
-    # ask 29 (b): all-aging SA baseline (paper-M5), see wp6_tornado.py
+    # all-aging SA baseline (paper: S3), see wp6_tornado.py
     for pc in chain.parks:
         pc.force_all_aging()
 

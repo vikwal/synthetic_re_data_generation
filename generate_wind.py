@@ -50,8 +50,6 @@ R2_DEFAULTS = {
     'wake': {'enabled': False, 'model': 'noj', 'k': 0.075},
     'apply_ageing_override': None,    # None = Park-Config; True/False = für ALLE Parks erzwingen
     'commissioning_table': None,      # CSV mit autoritativen Park-Inbetriebnahmedaten (Ask 12)
-    'wind_source': 'era5',            # era5 | kriging (RK-interpolierter Messwind, dwd+era5-Pfad)
-    'kriging_path': '/mnt/nvme2/synthetic/raw/round2/kriging/park_wind10m.parquet',
     'density': 'v1_mixed',            # v1_mixed | static_1225 | dynamic
     'wind_level_factor': 1.0,
     'power_curve_scale': 1.0,
@@ -621,20 +619,6 @@ def get_features(data: pd.DataFrame,
         data['u_wind_100m'], data['v_wind_100m']
     )
 
-    # Hook A' (dwd+era5-Pfad): kriged measured wind anchors the 10 m level;
-    # both levels are scaled by c(t)=v_krig/v10_era5 so the ERA5 shear
-    # exponent alpha is preserved (same algebra as the height-consistent QM).
-    if r2 is not None and r2.get('wind_source') == 'kriging' and station_ctx \
-            and station_ctx.get('krig_v10') is not None:
-        krig = station_ctx['krig_v10'].reindex(data.index)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            c = (krig / data['wind_speed_10m']).clip(0.2, 5.0)
-        c = c.fillna(1.0)
-        c[data['wind_speed_10m'] <= 0] = 1.0
-        data['krig_factor'] = c
-        data['wind_speed_10m'] = data['wind_speed_10m'] * c
-        data['wind_speed_100m'] = data['wind_speed_100m'] * c
-
     # Hook A'' (era5_bc): hourly TR-BC scaling factor instead of the gated QM.
     # tr_bc = height-consistent; tr_bc10 = 10 m level only (profile re-anchor,
     # correction fades with height). Same insertion point as Hook A.
@@ -1032,11 +1016,6 @@ def main(config_file: str = None) -> None:
         if r2['correction'] in ('tr_bc', 'tr_bc10'):
             station_ctx['bc_sf'] = load_bc_factors(r2, park_id)
             station_ctx['branch'] = 'BC'
-        if r2.get('wind_source') == 'kriging':
-            krig_df = pd.read_parquet(r2['kriging_path'])
-            assert park_id in krig_df.columns, \
-                f"park {park_id} missing in {r2['kriging_path']}"
-            station_ctx['krig_v10'] = krig_df[park_id]
         specific_params = get_park_params(station_id=station_id,
                                           masterdata=masterdata,
                                           params=params,

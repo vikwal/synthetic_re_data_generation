@@ -44,7 +44,7 @@ SWEEPS = {
     "correction_mode": [("off", {"correction": "off"}),
                         ("10 m only", {"correction": "wind10_only"})],
     # ask 29: the missing component lever — aging fully off (DF = 1,
-    # everything else at the M5 baseline == the M5all_noage state)
+    # everything else at the S3 baseline == the S3-noage state)
     "aging_model": [("off", {"aging_model": "off"})],
     "shear_method": [("power law", {"shear": "power_law"})],
     "z0_scale": [(f"x{v:g}", {"z0_scale": v}) for v in (0.5, 0.71, 1.41, 2.0)],
@@ -74,7 +74,7 @@ def fleet_stats(chain, theta):
 def main():
     apply_print_style()
     chain = Chain()
-    # ask 29 (b): SA baseline = paper-M5 (M5all) — ALL parks aged. Without
+    # SA baseline = paper-S3 (server-internal id M5all) -- ALL parks aged. Without
     # this the chain honours the round-1 apply_ageing flags (5/13 parks) and
     # every aging lever in the tornado is understated vs the headline rungs.
     for pc in chain.parks:
@@ -82,7 +82,7 @@ def main():
     n_aged = sum(pc.ages is not None for pc in chain.parks)
     print(f"parks cached: {len(chain.parks)} ({n_aged} aged — all-aging baseline)")
     e0, aed0, ers0 = fleet_stats(chain, BASELINE)
-    rows = [{"parameter": "baseline", "level": "M5 baseline",
+    rows = [{"parameter": "baseline", "level": "S3 baseline",
              "d_energy_pct": 0.0, "d_energy_pct_parkmean": 0.0,
              "pooled_abs_er_dev": aed0}]
 
@@ -173,7 +173,7 @@ def main():
                 fontweight="bold", va="bottom", ha="left")
     ax.set_yticks(ys, [NAME.get(p, p) for p in params], fontsize=16)
     ax.axvline(0, color="k", lw=1.2)
-    ax.set_xlabel("Fleet energy change vs. M5 baseline [%]")
+    ax.set_xlabel("Fleet energy change vs. S3 baseline [%]")
     ax.grid(alpha=0.3, axis="x")
     ax.set_xlim(-xmax, xmax)
     fig.tight_layout()

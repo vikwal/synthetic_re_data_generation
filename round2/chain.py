@@ -180,7 +180,7 @@ class ParkCache:
         self.meas = both.iloc[:, 1].values  # W, NaN where missing
 
     def force_all_aging(self):
-        """Ask 29 (b): SA baseline = paper-M5 (server M5all) — age ALL parks
+        """SA baseline = paper-S3 (server-internal id M5all) -- age ALL parks
         from the authoritative parkinfo dates, ignoring the round-1
         apply_ageing flags. Call once on the Chain-cached parks before an SA
         sweep; the ladder itself achieves the same via apply_ageing_override."""
