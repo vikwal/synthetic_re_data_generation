@@ -1,10 +1,10 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: '/mnt/nas/synthetic'
+  synth_dir: '/mnt/lambda1/nvme1/synthetic'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
   w_vert_dir: '/mnt/nas/icon-d2/csv/W_VERT'
-  era5_dir: '/mnt/nvme2/synthetic/raw/wind_era5'
+  era5_dir: '/mnt/nas/synthetic/raw/wind_era5'
   nwp_data_path: /mnt/nas/open-meteo/wind/icon_d2
   missing_analysis: 'data/wind_missing_from_2023-07-24.csv'
   from_date: '2022-11-13'

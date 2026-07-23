@@ -141,7 +141,7 @@ def main():
             station_id = df.station_id.iloc[0]
             file_name = f'Station_{station_id}.csv'
             if not station_id in drop_pv_stations:
-                df[pv_features].to_csv(os.path.join(solar_dir, file_name))
+                df[pv_features].to_parquet(os.path.join(solar_dir, file_name))
     if config['write']['clean_wind']:
         if config['write']['delete_before_clean']:
             delete_files(wind_dir)
@@ -153,8 +153,8 @@ def main():
         wind_features.insert(0, 'station_id')
         for df in frames:
             station_id = df.station_id.iloc[0]
-            file_name = f'Station_{station_id}.csv'
+            file_name = f'Station_{station_id}.parquet'
             if not station_id in drop_wind_stations:
-                df[wind_features].to_csv(os.path.join(wind_dir, file_name))
+                df[wind_features].to_parquet(os.path.join(wind_dir, file_name))
 if __name__ == '__main__':
     main()

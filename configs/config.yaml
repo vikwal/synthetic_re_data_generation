@@ -1,6 +1,6 @@
 data:
   dir: '/mnt/nas/observed_weather'
-  synth_dir: '/mnt/nas/synthetic'
+  synth_dir: '/mnt/lambda1/nvme1/synthetic'
   pkl_dir: 'data/pkl_files'
   re_ninja_dir: 'data/renewables.ninja'
   from_date: '2023-07-24'
