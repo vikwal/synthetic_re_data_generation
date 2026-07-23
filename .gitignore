@@ -19,5 +19,17 @@ archiv
 # at repo root instead
 figs
 
+# development log (internal process, not for the public repo)
+HANDOFF.md
+
+# real, identifiable park data — never push: real PV/wind farm configs
+# (owner-confidential), the rendered PV-park location map, and the
+# scraped turbine power-curve database (redistribution rights unclear)
+configs/real_pv_parks/
+configs/round2/_generated/config_*.yaml
+pv_parks.html
+power_curves/*.csv
+power_curves/Archiv/
+
 test.ipynb
 test.py
