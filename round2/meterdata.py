@@ -1,4 +1,4 @@
-"""WP1 — Trianel benchmark meter data access.
+"""Real wind farm meter data access.
 
 Meter data: 15-min park power in kW per Malo-ID (UTC). The Malo-ID <->
 config-park_id mapping is data/round2/park_mapping.csv (wp0_park_layouts.py).
@@ -10,7 +10,7 @@ import os
 import pandas as pd
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-METER_PATH = os.path.join(REPO, "data", "Trianel_Benchmark", "meterdata_wind_20240601.csv")
+METER_PATH = os.path.join(REPO, "data", "wind_farm_meterdata", "meterdata_wind_20240601.csv")
 MAPPING_PATH = os.path.join(REPO, "data", "round2", "park_mapping.csv")
 LAYOUTS_PATH = os.path.join(REPO, "data", "round2", "park_layouts.csv")
 

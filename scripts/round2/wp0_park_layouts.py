@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """WP0.6 — park layouts and Malo-ID <-> park_id mapping.
 
-Reads data/Trianel_Benchmark/masterdata_wind_20240601.csv (per-turbine WGS84
+Reads data/wind_farm_meterdata/masterdata_wind_20240601.csv (per-turbine WGS84
 coordinates, model, hub height, rotor, installed kW, night curtailment) and
-reconstructs the round-1 mapping between the benchmark Malo-IDs and the
+reconstructs the mapping between the benchmark Malo-IDs and the
 config park_ids (nearest DWD station logic from evaluation_real.ipynb).
 
 Outputs (data/round2/):
@@ -19,8 +19,8 @@ import pandas as pd
 from pyproj import Transformer
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MASTER = os.path.join(REPO, "data", "Trianel_Benchmark", "masterdata_wind_20240601.csv")
-METER = os.path.join(REPO, "data", "Trianel_Benchmark", "meterdata_wind_20240601.csv")
+MASTER = os.path.join(REPO, "data", "wind_farm_meterdata", "masterdata_wind_20240601.csv")
+METER = os.path.join(REPO, "data", "wind_farm_meterdata", "meterdata_wind_20240601.csv")
 COMM = os.path.join(REPO, "data", "comm_dates.csv")
 CONFIG_DIR = os.path.join(REPO, "configs", "real_wind_parks_era5")
 OUT_DIR = os.path.join(REPO, "data", "round2")
@@ -112,7 +112,7 @@ def main():
     tf = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
     x, y = tf.transform(master[LON].values, master[LAT].values)
     layouts = master.rename(columns={
-        "Parkname": "park_name", "ParkID": "trianel_park_id", "Typ": "model",
+        "Parkname": "park_name", "ParkID": "operator_park_id", "Typ": "model",
         "Hersteller": "manufacturer", "Nabenhöhe (m)": "hub_height",
         "Rotordurchmesser (m)": "rotor_diameter",
         "Installierte Leistung (kW)": "rated_kw", "Malo-ID": "malo_id",
