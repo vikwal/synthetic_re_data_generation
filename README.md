@@ -169,13 +169,21 @@ instead. Kept for reproducibility of that finding, not part of the main chain.
 
 ### Superseded / round-1 scripts
 
-`generate_wind.py`, `generate_wind_era5.py`, `generate_wind_era5_fric.py`,
-`generate_wind_nwp.py` and their legacy config directories
-(`configs/real_wind_parks_era5*`, `_alphaI`, `_loglaw`, `_noage`) were the
-round-1 (initial submission) variants and are no longer used; they are kept
-locally under `archiv/` (not part of this repository) for reference.
+`generate_wind.py`, `generate_wind_era5_fric.py`, `generate_wind_nwp.py` and
+most legacy config directories (`_alphaI`, `_loglaw`, `_noage`, the plain
+`real_wind_parks_era5_fric`) were round-1 (initial submission) variants and
+are no longer used; they are kept locally under `archiv/` (not part of this
+repository) for reference.
+
+`generate_wind_era5.py` and `configs/real_wind_parks_era5/config_07374.yaml`
+are the one round-1 file/config kept in the repository on purpose: they are
+the v1 reference that `tests/test_v2_equals_v1.py` runs against to prove
+`generate_wind_era5_v2.py` reduces to it bit-for-bit when the round-2
+extensions are switched off. Do not delete them without updating that test.
+
 `generate_wind_reninja.py` remains active — it produces the Renewables.ninja
 comparison baseline used throughout the validation section.
+
 
 ---
 
