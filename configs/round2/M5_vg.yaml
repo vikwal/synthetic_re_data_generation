@@ -1,0 +1,13 @@
+# M5_vg (ask 31, exploratory) — M5all mit validity-gated Profil
+round2:
+  experiment_id: 'M5_vg'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'validity_gated'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

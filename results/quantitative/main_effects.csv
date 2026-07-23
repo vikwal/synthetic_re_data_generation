@@ -1,0 +1,30 @@
+parameter,level,d_energy_pct,d_energy_pct_parkmean,pooled_abs_er_dev
+baseline,M5 baseline,0.0,0.0,0.1537
+wind_level_factor,0.95,-9.0033,-9.8778,0.1461
+wind_level_factor,0.97,-4.4797,-4.9371,0.1423
+wind_level_factor,1.02,4.4364,4.9388,0.1871
+wind_level_factor,1.05,8.8089,9.8574,0.2248
+correction_mode,off,5.4729,5.4565,0.2089
+correction_mode,10 m only,5.4729,5.4565,0.2089
+aging_model,off,2.6469,4.7734,0.1974
+shear_method,power law,1.9994,1.8776,0.1519
+z0_scale,x0.5,-0.2652,0.066,0.1579
+z0_scale,x0.71,-0.1362,0.0319,0.1554
+z0_scale,x1.41,0.1481,-0.0296,0.1527
+z0_scale,x2,0.3119,-0.0557,0.1517
+aging_lambda,45,-1.1993,-2.1255,0.1511
+aging_lambda,50,-0.486,-0.8642,0.1498
+aging_lambda,60,0.4559,0.8147,0.1603
+aging_lambda,70,1.0315,1.849,0.17
+aging_kappa,1.5,-2.6165,-3.6417,0.1495
+aging_kappa,2,0.0,0.0,0.1537
+aging_kappa,2.5,1.2525,1.9951,0.1704
+power_curve_scale,0.97,-3.0,-3.0,0.1428
+power_curve_scale,1.03,3.0,3.0,0.17
+density_mode,static 1.225,2.1158,1.7973,0.1521
+density_mode,dynamic,0.0,0.0,0.1537
+wake_k,0.05,-0.8922,-0.7195,0.1526
+wake_k,0.1,0.7563,0.5978,0.1547
+age_scaling,x1.1,-0.5422,-0.9638,0.1498
+age_scaling,x1.2,-1.131,-2.0053,0.1505
+age_scaling,x1.3,-1.7621,-3.1139,0.156

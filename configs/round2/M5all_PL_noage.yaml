@@ -1,0 +1,11 @@
+# M6 (M5all_PL) OHNE Aging (sonst wie M5all_PL) -- fuer M6-basierte Aging-Kontraste
+round2:
+  experiment_id: "M5all_PL_noage"
+  correction: "height_consistent"
+  correction_branch: "auto"
+  shear: "power_law"
+  aging_model: "none"
+  wake: {enabled: true, model: "noj", k: 0.075}
+  density: "v1_mixed"
+  era5_dir_v2: "/mnt/nvme2/synthetic/raw/wind_era5_v2"
+  commissioning_table: "data/round2/park_commissioning.csv"

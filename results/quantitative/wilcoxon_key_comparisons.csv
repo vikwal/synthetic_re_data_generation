@@ -1,0 +1,187 @@
+comparison,a,b,metric,variant,n_parks,median_diff_a_minus_b,wilcoxon_p_exact,rank_biserial,boot_ci_lo,boot_ci_hi,sign_test_p
+M1 vs M2,M2,M1,r2,clean,13,0.0,0.5,1.0,0.0,0.0,0.5
+M1 vs M2,M2,M1,abs_er_dev,clean,13,0.0,0.5,-1.0,0.0,0.0,0.5
+M1 vs M2,M2,M1,wasserstein,clean,13,0.0,0.5,-1.0,0.0,0.0,0.5
+M1 vs M3,M3,M1,r2,clean,13,0.007456,0.635498,0.164835,-0.02354,0.05873,0.581055
+M1 vs M3,M3,M1,abs_er_dev,clean,13,-0.002709,0.273438,-0.362637,-0.044021,0.000375,0.581055
+M1 vs M3,M3,M1,wasserstein,clean,13,-0.001518,0.587891,-0.186813,-0.007911,0.006771,0.581055
+M1 vs M4,M4,M1,r2,clean,13,0.007456,0.735352,0.120879,-0.018418,0.037487,1.0
+M1 vs M4,M4,M1,abs_er_dev,clean,13,-0.002709,0.30542,-0.340659,-0.044021,0.006578,0.581055
+M1 vs M4,M4,M1,wasserstein,clean,13,-0.001518,0.587891,-0.186813,-0.007388,0.007311,0.581055
+M1 vs M5,M5,M1,r2,clean,13,0.031176,0.243896,0.384615,-0.029661,0.149089,1.0
+M1 vs M5,M5,M1,abs_er_dev,clean,13,-0.039382,0.167725,-0.450549,-0.130403,0.020935,0.581055
+M1 vs M5,M5,M1,wasserstein,clean,13,-0.009126,0.454834,-0.252747,-0.027378,0.015643,1.0
+M1 vs M5all,M5all,M1,r2,clean,13,0.031176,0.190918,0.428571,-0.029661,0.19538,1.0
+M1 vs M5all,M5all,M1,abs_er_dev,clean,13,-0.039382,0.146484,-0.472527,-0.170874,0.020935,1.0
+M1 vs M5all,M5all,M1,wasserstein,clean,13,-0.009126,0.414307,-0.274725,-0.047176,0.015265,1.0
+M2 vs M3 (MOST),M3,M2,r2,clean,13,9.9e-05,0.839355,-0.076923,-0.02354,0.017821,1.0
+M2 vs M3 (MOST),M3,M2,abs_er_dev,clean,13,-0.002709,0.414307,-0.274725,-0.033384,0.000375,0.581055
+M2 vs M3 (MOST),M3,M2,wasserstein,clean,13,-0.000874,0.735352,0.120879,-0.004489,0.008133,1.0
+"M3 vs M4 (aging, 5 parks)",M4,M3,r2,clean,13,0.0,0.8125,-0.2,0.0,0.0,1.0
+"M3 vs M4 (aging, 5 parks)",M4,M3,abs_er_dev,clean,13,0.0,0.8125,0.2,0.0,0.0,1.0
+"M3 vs M4 (aging, 5 parks)",M4,M3,wasserstein,clean,13,0.0,1.0,-0.066667,0.0,0.0,1.0
+M4 vs M5 (wakes),M5,M4,r2,clean,13,0.018845,0.101562,0.575758,0.0,0.052065,0.226562
+"M4 vs M5 (wakes, n_turb>=3)",M5,M4,r2,clean,11,0.046208,0.101562,0.575758,-0.011243,0.074754,0.226562
+M4 vs M5 (wakes),M5,M4,abs_er_dev,clean,13,-0.024015,0.206055,-0.454545,-0.073955,0.0,0.226562
+"M4 vs M5 (wakes, n_turb>=3)",M5,M4,abs_er_dev,clean,11,-0.027319,0.206055,-0.454545,-0.102439,0.024408,0.226562
+M4 vs M5 (wakes),M5,M4,wasserstein,clean,13,-0.003333,0.519531,-0.242424,-0.007075,0.001336,0.548828
+"M4 vs M5 (wakes, n_turb>=3)",M5,M4,wasserstein,clean,11,-0.004942,0.519531,-0.242424,-0.018257,0.011019,0.548828
+weibull vs const (all parks),M4all,M3allconst,r2,clean,13,-0.00814,0.216309,-0.406593,-0.017956,0.005122,1.0
+weibull vs const (all parks),M4all,M3allconst,abs_er_dev,clean,13,0.015727,0.273438,0.362637,-0.013769,0.020703,1.0
+weibull vs const (all parks),M4all,M3allconst,wasserstein,clean,13,-0.000572,0.892578,0.054945,-0.003575,0.004318,1.0
+weibull+step vs weibull,M4ball,M4all,r2,clean,13,0.0,0.25,1.0,0.0,0.0,0.25
+weibull+step vs weibull,M4ball,M4all,abs_er_dev,clean,13,0.0,0.25,-1.0,0.0,0.0,0.25
+weibull+step vs weibull,M4ball,M4all,wasserstein,clean,13,0.0,0.25,-1.0,0.0,0.0,0.25
+no aging vs weibull (all parks),M4all,M3noage,r2,clean,13,0.011657,0.004639,0.846154,0.003734,0.083016,0.092285
+no aging vs weibull (all parks),M4all,M3noage,abs_er_dev,clean,13,-0.025101,0.006104,-0.824176,-0.083823,-0.00652,0.092285
+no aging vs weibull (all parks),M4all,M3noage,wasserstein,clean,13,-0.004389,0.047852,-0.626374,-0.014778,0.00029,0.266846
+K5 vs M5all (measured vs ERA5),K5,M5all,r2,clean,13,0.01307,0.839355,-0.076923,-0.051496,0.061554,1.0
+K5 vs M5all (measured vs ERA5),K5,M5all,abs_er_dev,clean,13,-0.054711,0.786865,-0.098901,-0.136107,0.068686,0.581055
+K5 vs M5all (measured vs ERA5),K5,M5all,wasserstein,clean,13,-0.007675,0.839355,-0.076923,-0.0323,0.027559,0.581055
+MK vs M5all (paper M5 vs MK),MK,M5all,r2,clean,13,0.01307,0.839355,-0.076923,-0.051496,0.061554,1.0
+MK vs M5all (paper M5 vs MK),MK,M5all,abs_er_dev,clean,13,-0.054711,0.786865,-0.098901,-0.136107,0.068686,0.581055
+MK vs M5all (paper M5 vs MK),MK,M5all,wasserstein,clean,13,-0.007675,0.839355,-0.076923,-0.0323,0.027559,0.581055
+MK vs K5 (identity check),MK,K5,r2,clean,13,0.0,,0.0,,,
+MK vs K5 (identity check),MK,K5,abs_er_dev,clean,13,0.0,,0.0,,,
+MK vs K5 (identity check),MK,K5,wasserstein,clean,13,0.0,,0.0,,,
+"M0 vs M1 (ninja baseline, N=9)",M1,M0,r2,clean,9,0.065446,0.300781,0.422222,-0.028453,0.218983,0.507812
+"M0 vs M1 (ninja baseline, N=9)",M1,M0,abs_er_dev,clean,9,0.044886,0.570312,-0.244444,-0.219159,0.090749,1.0
+"M0 vs M1 (ninja baseline, N=9)",M1,M0,wasserstein,clean,9,-0.048872,0.019531,-0.866667,-0.05928,-0.016652,0.039062
+"M0 vs M5all (ninja vs full chain, N=9)",M5all,M0,r2,clean,9,0.041884,0.128906,0.6,-0.060825,0.705743,0.179688
+"M0 vs M5all (ninja vs full chain, N=9)",M5all,M0,abs_er_dev,clean,9,-0.08168,0.300781,-0.422222,-0.576481,0.091145,1.0
+"M0 vs M5all (ninja vs full chain, N=9)",M5all,M0,wasserstein,clean,9,-0.044016,0.003906,-1.0,-0.094044,-0.017592,0.003906
+"M0 vs MK (ninja vs measured path, N=9)",MK,M0,r2,clean,9,0.055798,0.425781,0.333333,-0.083668,0.6766,1.0
+"M0 vs MK (ninja vs measured path, N=9)",MK,M0,abs_er_dev,clean,9,-0.000963,0.820312,-0.111111,-0.353641,0.160932,1.0
+"M0 vs MK (ninja vs measured path, N=9)",MK,M0,wasserstein,clean,9,-0.026283,0.054688,-0.733333,-0.066308,-0.008213,0.039062
+aging per rung: M2 (5 parks),M2,M2noage,r2,clean,13,0.0,0.3125,0.6,0.0,0.0,1.0
+aging per rung: M2 (5 parks),M2,M2noage,abs_er_dev,clean,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M2 (5 parks),M2,M2noage,wasserstein,clean,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M3 (5 parks),M3,M3noage,r2,clean,13,0.0,0.3125,0.6,0.0,0.0,1.0
+aging per rung: M3 (5 parks),M3,M3noage,abs_er_dev,clean,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M3 (5 parks),M3,M3noage,wasserstein,clean,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M4 (all parks),M4all,M4all_noage,r2,clean,13,0.011657,0.004639,0.846154,0.003734,0.083016,0.092285
+aging per rung: M4 (all parks),M4all,M4all_noage,abs_er_dev,clean,13,-0.025101,0.006104,-0.824176,-0.083823,-0.00652,0.092285
+aging per rung: M4 (all parks),M4all,M4all_noage,wasserstein,clean,13,-0.004389,0.047852,-0.626374,-0.014778,0.00029,0.266846
+aging per rung: M5 (all parks),M5all,M5all_noage,r2,clean,13,0.011657,0.01709,0.736264,0.00097,0.061175,0.092285
+aging per rung: M5 (all parks),M5all,M5all_noage,abs_er_dev,clean,13,-0.012603,0.047852,-0.626374,-0.08176,0.005484,0.581055
+aging per rung: M5 (all parks),M5all,M5all_noage,wasserstein,clean,13,-0.004389,0.080322,-0.56044,-0.011919,0.001296,0.581055
+aging per rung: K5 (all parks),K5,K5_noage,r2,clean,13,0.008446,0.032715,0.67033,-0.000126,0.024682,0.266846
+aging per rung: K5 (all parks),K5,K5_noage,abs_er_dev,clean,13,-0.010487,0.414307,-0.274725,-0.028602,0.008462,0.581055
+aging per rung: K5 (all parks),K5,K5_noage,wasserstein,clean,13,-0.002112,0.541748,-0.208791,-0.004579,0.0026,1.0
+aging per rung: M2all (all parks),M2all,M2noage,r2,clean,13,0.011652,0.002441,0.89011,0.00358,0.097076,0.022461
+aging per rung: M2all (all parks),M2all,M2noage,abs_er_dev,clean,13,-0.027857,0.004639,-0.846154,-0.082058,-0.006994,0.022461
+aging per rung: M2all (all parks),M2all,M2noage,wasserstein,clean,13,-0.004388,0.008057,-0.802198,-0.01527,-0.000789,0.022461
+clean-ladder M1: aged vs no aging,M1,M1noage,r2,clean,13,0.0,0.3125,0.6,0.0,0.0,1.0
+clean-ladder M1: aged vs no aging,M1,M1noage,abs_er_dev,clean,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+clean-ladder M1: aged vs no aging,M1,M1noage,wasserstein,clean,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+M5_gate5 vs M5 (restrictive gate),M5_gate5,M5all,r2,clean,13,0.0,0.0625,-1.0,-0.109907,0.0,0.0625
+M5_gate5 vs M5 (restrictive gate),M5_gate5,M5all,abs_er_dev,clean,13,0.0,0.8125,0.2,0.0,0.0,1.0
+M5_gate5 vs M5 (restrictive gate),M5_gate5,M5all,wasserstein,clean,13,0.0,0.8125,0.2,0.0,0.0,1.0
+M5_gate5 vs M5-noQM (gate5 net QM effect),M5_gate5,M5all_noQM,r2,clean,13,0.0,0.15625,-0.714286,-0.109907,0.0,0.21875
+M5_gate5 vs M5-noQM (gate5 net QM effect),M5_gate5,M5all_noQM,abs_er_dev,clean,13,0.0,1.0,-0.047619,-0.048757,0.0,0.6875
+M5_gate5 vs M5-noQM (gate5 net QM effect),M5_gate5,M5all_noQM,wasserstein,clean,13,0.0,1.0,-0.047619,-0.004214,0.0,0.6875
+M2_simgate vs M1 (simgate QM step),M2_simgate,M1noage,r2,clean,13,0.0,1.0,0.047619,0.0,0.0,1.0
+M2_simgate vs M1 (simgate QM step),M2_simgate,M1noage,abs_er_dev,clean,13,0.0,1.0,-0.047619,0.0,0.0,1.0
+M2_simgate vs M1 (simgate QM step),M2_simgate,M1noage,wasserstein,clean,13,0.0,0.84375,0.142857,0.0,0.0,1.0
+M2_simgate vs M2 (simgate vs distance gate),M2_simgate,M2noage,r2,clean,13,0.0,0.375,-0.6,0.0,0.0,0.625
+M2_simgate vs M2 (simgate vs distance gate),M2_simgate,M2noage,abs_er_dev,clean,13,0.0,0.375,0.6,0.0,0.0,0.625
+M2_simgate vs M2 (simgate vs distance gate),M2_simgate,M2noage,wasserstein,clean,13,0.0,0.375,0.6,0.0,0.0,0.625
+M5_simgate vs M5 (simgate full chain),M5_simgate,M5all,r2,clean,13,0.0,0.25,-0.8,0.0,0.0,0.625
+M5_simgate vs M5 (simgate full chain),M5_simgate,M5all,abs_er_dev,clean,13,0.0,0.25,0.8,0.0,0.0,0.625
+M5_simgate vs M5 (simgate full chain),M5_simgate,M5all,wasserstein,clean,13,0.0,0.25,0.8,0.0,0.0,0.625
+M5_simgate vs M5-noQM (simgate net QM effect),M5_simgate,M5all_noQM,r2,clean,13,0.0,0.6875,-0.238095,0.0,0.0,1.0
+M5_simgate vs M5-noQM (simgate net QM effect),M5_simgate,M5all_noQM,abs_er_dev,clean,13,0.0,1.0,0.047619,0.0,0.0,1.0
+M5_simgate vs M5-noQM (simgate net QM effect),M5_simgate,M5all_noQM,wasserstein,clean,13,0.0,0.5625,0.333333,0.0,0.0,1.0
+M1 vs M2,M2,M1,r2,raw,13,0.0,0.5,1.0,0.0,0.0,0.5
+M1 vs M2,M2,M1,abs_er_dev,raw,13,0.0,0.5,-1.0,0.0,0.0,0.5
+M1 vs M2,M2,M1,wasserstein,raw,13,0.0,0.5,-1.0,0.0,0.0,0.5
+M1 vs M3,M3,M1,r2,raw,13,0.005388,0.839355,0.076923,-0.049874,0.043399,0.581055
+M1 vs M3,M3,M1,abs_er_dev,raw,13,-0.006234,0.109863,-0.516484,-0.03248,0.000148,0.266846
+M1 vs M3,M3,M1,wasserstein,raw,13,-0.000604,0.684814,-0.142857,-0.00596,0.001908,1.0
+M1 vs M4,M4,M1,r2,raw,13,0.005388,1.0,0.010989,-0.047123,0.025815,1.0
+M1 vs M4,M4,M1,abs_er_dev,raw,13,-0.00732,0.127197,-0.494505,-0.035519,-0.002198,0.092285
+M1 vs M4,M4,M1,wasserstein,raw,13,-0.001662,0.684814,-0.142857,-0.006828,0.006986,0.581055
+M1 vs M5,M5,M1,r2,raw,13,0.035601,0.243896,0.384615,-0.039989,0.128425,1.0
+M1 vs M5,M5,M1,abs_er_dev,raw,13,-0.060561,0.057373,-0.604396,-0.125736,0.015021,0.266846
+M1 vs M5,M5,M1,wasserstein,raw,13,-0.007173,0.273438,-0.362637,-0.026155,0.006986,1.0
+M1 vs M5all,M5all,M1,r2,raw,13,0.035601,0.273438,0.362637,-0.041605,0.167003,1.0
+M1 vs M5all,M5all,M1,abs_er_dev,raw,13,-0.060561,0.057373,-0.604396,-0.164019,0.015021,0.266846
+M1 vs M5all,M5all,M1,wasserstein,raw,13,-0.007173,0.216309,-0.406593,-0.045087,0.006986,1.0
+M2 vs M3 (MOST),M3,M2,r2,raw,13,4e-05,0.635498,-0.164835,-0.049874,0.019306,1.0
+M2 vs M3 (MOST),M3,M2,abs_er_dev,raw,13,-0.006234,0.146484,-0.472527,-0.027059,0.000148,0.266846
+M2 vs M3 (MOST),M3,M2,wasserstein,raw,13,-0.000604,1.0,-0.010989,-0.002947,0.001908,1.0
+"M3 vs M4 (aging, 5 parks)",M4,M3,r2,raw,13,0.0,0.8125,-0.2,0.0,0.0,1.0
+"M3 vs M4 (aging, 5 parks)",M4,M3,abs_er_dev,raw,13,0.0,1.0,-0.066667,0.0,0.0,1.0
+"M3 vs M4 (aging, 5 parks)",M4,M3,wasserstein,raw,13,0.0,1.0,-0.066667,0.0,0.0,1.0
+M4 vs M5 (wakes),M5,M4,r2,raw,13,0.016088,0.024414,0.757576,0.0,0.061962,0.226562
+"M4 vs M5 (wakes, n_turb>=3)",M5,M4,r2,raw,11,0.052331,0.024414,0.757576,-0.005087,0.070163,0.226562
+M4 vs M5 (wakes),M5,M4,abs_er_dev,raw,13,-0.025305,0.053711,-0.666667,-0.085371,0.0,0.226562
+"M4 vs M5 (wakes, n_turb>=3)",M5,M4,abs_er_dev,raw,11,-0.073698,0.053711,-0.666667,-0.09346,0.024443,0.226562
+M4 vs M5 (wakes),M5,M4,wasserstein,raw,13,-0.004486,0.320312,-0.363636,-0.015428,0.0,0.226562
+"M4 vs M5 (wakes, n_turb>=3)",M5,M4,wasserstein,raw,11,-0.00551,0.320312,-0.363636,-0.018206,0.01133,0.226562
+weibull vs const (all parks),M4all,M3allconst,r2,raw,13,-0.00874,0.146484,-0.472527,-0.017941,0.004952,1.0
+weibull vs const (all parks),M4all,M3allconst,abs_er_dev,raw,13,0.01575,0.3396,0.318681,-0.013538,0.019739,1.0
+weibull vs const (all parks),M4all,M3allconst,wasserstein,raw,13,5.7e-05,0.635498,0.164835,-0.003881,0.004298,1.0
+weibull+step vs weibull,M4ball,M4all,r2,raw,13,0.0,0.25,1.0,0.0,0.0,0.25
+weibull+step vs weibull,M4ball,M4all,abs_er_dev,raw,13,0.0,0.25,-1.0,0.0,0.0,0.25
+weibull+step vs weibull,M4ball,M4all,wasserstein,raw,13,0.0,0.25,-1.0,0.0,0.0,0.25
+no aging vs weibull (all parks),M4all,M3noage,r2,raw,13,0.012602,0.002441,0.89011,0.004559,0.080016,0.022461
+no aging vs weibull (all parks),M4all,M3noage,abs_er_dev,raw,13,-0.025183,0.004639,-0.846154,-0.077358,-0.006524,0.022461
+no aging vs weibull (all parks),M4all,M3noage,wasserstein,raw,13,-0.00422,0.021484,-0.714286,-0.015209,-0.000614,0.092285
+K5 vs M5all (measured vs ERA5),K5,M5all,r2,raw,13,-0.030269,0.454834,-0.252747,-0.038721,0.019557,0.581055
+K5 vs M5all (measured vs ERA5),K5,M5all,abs_er_dev,raw,13,-0.001826,1.0,-0.010989,-0.099416,0.088982,1.0
+K5 vs M5all (measured vs ERA5),K5,M5all,wasserstein,raw,13,-0.002021,1.0,-0.010989,-0.028404,0.035111,0.581055
+MK vs M5all (paper M5 vs MK),MK,M5all,r2,raw,13,-0.030269,0.454834,-0.252747,-0.038721,0.019557,0.581055
+MK vs M5all (paper M5 vs MK),MK,M5all,abs_er_dev,raw,13,-0.001826,1.0,-0.010989,-0.099416,0.088982,1.0
+MK vs M5all (paper M5 vs MK),MK,M5all,wasserstein,raw,13,-0.002021,1.0,-0.010989,-0.028404,0.035111,0.581055
+MK vs K5 (identity check),MK,K5,r2,raw,13,0.0,,0.0,,,
+MK vs K5 (identity check),MK,K5,abs_er_dev,raw,13,0.0,,0.0,,,
+MK vs K5 (identity check),MK,K5,wasserstein,raw,13,0.0,,0.0,,,
+"M0 vs M1 (ninja baseline, N=9)",M1,M0,r2,raw,9,0.026161,0.734375,0.155556,-0.120127,0.14594,1.0
+"M0 vs M1 (ninja baseline, N=9)",M1,M0,abs_er_dev,raw,9,-0.051901,0.425781,-0.333333,-0.214238,0.087352,1.0
+"M0 vs M1 (ninja baseline, N=9)",M1,M0,wasserstein,raw,9,-0.050261,0.027344,-0.822222,-0.063379,-0.012578,0.039062
+"M0 vs M5all (ninja vs full chain, N=9)",M5all,M0,r2,raw,9,-0.011007,0.496094,0.288889,-0.075553,0.657416,1.0
+"M0 vs M5all (ninja vs full chain, N=9)",M5all,M0,abs_er_dev,raw,9,-0.126156,0.128906,-0.6,-0.571658,0.060604,0.507812
+"M0 vs M5all (ninja vs full chain, N=9)",M5all,M0,wasserstein,raw,9,-0.051896,0.003906,-1.0,-0.106602,-0.02113,0.003906
+"M0 vs MK (ninja vs measured path, N=9)",MK,M0,r2,raw,9,-0.04601,1.0,-0.022222,-0.168967,0.617466,1.0
+"M0 vs MK (ninja vs measured path, N=9)",MK,M0,abs_er_dev,raw,9,-0.010984,0.300781,-0.422222,-0.407506,0.030559,0.507812
+"M0 vs MK (ninja vs measured path, N=9)",MK,M0,wasserstein,raw,9,-0.038811,0.074219,-0.688889,-0.07513,-0.014746,0.039062
+aging per rung: M2 (5 parks),M2,M2noage,r2,raw,13,0.0,0.3125,0.6,0.0,0.0,1.0
+aging per rung: M2 (5 parks),M2,M2noage,abs_er_dev,raw,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M2 (5 parks),M2,M2noage,wasserstein,raw,13,0.0,0.4375,-0.466667,0.0,0.0,1.0
+aging per rung: M3 (5 parks),M3,M3noage,r2,raw,13,0.0,0.3125,0.6,0.0,0.0,1.0
+aging per rung: M3 (5 parks),M3,M3noage,abs_er_dev,raw,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M3 (5 parks),M3,M3noage,wasserstein,raw,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+aging per rung: M4 (all parks),M4all,M4all_noage,r2,raw,13,0.012602,0.002441,0.89011,0.004559,0.080016,0.022461
+aging per rung: M4 (all parks),M4all,M4all_noage,abs_er_dev,raw,13,-0.025183,0.004639,-0.846154,-0.077358,-0.006524,0.022461
+aging per rung: M4 (all parks),M4all,M4all_noage,wasserstein,raw,13,-0.00422,0.021484,-0.714286,-0.015209,-0.000614,0.092285
+aging per rung: M5 (all parks),M5all,M5all_noage,r2,raw,13,0.011467,0.008057,0.802198,0.001929,0.069464,0.092285
+aging per rung: M5 (all parks),M5all,M5all_noage,abs_er_dev,raw,13,-0.011972,0.032715,-0.67033,-0.075469,0.004489,0.266846
+aging per rung: M5 (all parks),M5all,M5all_noage,wasserstein,raw,13,-0.00422,0.039795,-0.648352,-0.013162,0.001242,0.266846
+aging per rung: K5 (all parks),K5,K5_noage,r2,raw,13,0.008591,0.006104,0.824176,0.001105,0.021763,0.092285
+aging per rung: K5 (all parks),K5,K5_noage,abs_er_dev,raw,13,-0.010137,0.057373,-0.604396,-0.025008,-0.001297,0.092285
+aging per rung: K5 (all parks),K5,K5_noage,wasserstein,raw,13,-0.002043,0.216309,-0.406593,-0.004453,0.001029,0.581055
+aging per rung: M2all (all parks),M2all,M2noage,r2,raw,13,0.012793,0.001221,0.934066,0.004745,0.089605,0.022461
+aging per rung: M2all (all parks),M2all,M2noage,abs_er_dev,raw,13,-0.027725,0.004639,-0.846154,-0.076632,-0.006966,0.022461
+aging per rung: M2all (all parks),M2all,M2noage,wasserstein,raw,13,-0.006382,0.004639,-0.846154,-0.015628,-0.002151,0.022461
+clean-ladder M1: aged vs no aging,M1,M1noage,r2,raw,13,0.0,0.3125,0.6,0.0,0.0,1.0
+clean-ladder M1: aged vs no aging,M1,M1noage,abs_er_dev,raw,13,0.0,0.3125,-0.6,0.0,0.0,1.0
+clean-ladder M1: aged vs no aging,M1,M1noage,wasserstein,raw,13,0.0,0.4375,-0.466667,0.0,0.0,1.0
+M5_gate5 vs M5 (restrictive gate),M5_gate5,M5all,r2,raw,13,0.0,0.0625,-1.0,-0.161807,0.0,0.0625
+M5_gate5 vs M5 (restrictive gate),M5_gate5,M5all,abs_er_dev,raw,13,0.0,0.8125,0.2,0.0,0.0,1.0
+M5_gate5 vs M5 (restrictive gate),M5_gate5,M5all,wasserstein,raw,13,0.0,0.625,0.333333,0.0,0.0,1.0
+M5_gate5 vs M5-noQM (gate5 net QM effect),M5_gate5,M5all_noQM,r2,raw,13,0.0,0.15625,-0.714286,-0.161807,0.0,0.21875
+M5_gate5 vs M5-noQM (gate5 net QM effect),M5_gate5,M5all_noQM,abs_er_dev,raw,13,0.0,0.6875,-0.238095,-0.023085,0.0,0.6875
+M5_gate5 vs M5-noQM (gate5 net QM effect),M5_gate5,M5all_noQM,wasserstein,raw,13,0.0,1.0,-0.047619,0.0,0.0,1.0
+M2_simgate vs M1 (simgate QM step),M2_simgate,M1noage,r2,raw,13,0.0,1.0,0.047619,0.0,0.0,1.0
+M2_simgate vs M1 (simgate QM step),M2_simgate,M1noage,abs_er_dev,raw,13,0.0,1.0,-0.047619,0.0,0.0,1.0
+M2_simgate vs M1 (simgate QM step),M2_simgate,M1noage,wasserstein,raw,13,0.0,1.0,0.047619,0.0,0.0,1.0
+M2_simgate vs M2 (simgate vs distance gate),M2_simgate,M2noage,r2,raw,13,0.0,0.375,-0.6,0.0,0.0,0.625
+M2_simgate vs M2 (simgate vs distance gate),M2_simgate,M2noage,abs_er_dev,raw,13,0.0,0.375,0.6,0.0,0.0,0.625
+M2_simgate vs M2 (simgate vs distance gate),M2_simgate,M2noage,wasserstein,raw,13,0.0,0.375,0.6,0.0,0.0,0.625
+M5_simgate vs M5 (simgate full chain),M5_simgate,M5all,r2,raw,13,0.0,0.125,-1.0,-0.019064,0.0,0.125
+M5_simgate vs M5 (simgate full chain),M5_simgate,M5all,abs_er_dev,raw,13,0.0,0.25,0.8,0.0,0.0,0.625
+M5_simgate vs M5 (simgate full chain),M5_simgate,M5all,wasserstein,raw,13,0.0,0.25,0.8,0.0,0.0,0.625
+M5_simgate vs M5-noQM (simgate net QM effect),M5_simgate,M5all_noQM,r2,raw,13,0.0,0.5625,-0.333333,-0.019064,0.0,0.6875
+M5_simgate vs M5-noQM (simgate net QM effect),M5_simgate,M5all_noQM,abs_er_dev,raw,13,0.0,0.84375,-0.142857,0.0,0.0,1.0
+M5_simgate vs M5-noQM (simgate net QM effect),M5_simgate,M5all_noQM,wasserstein,raw,13,0.0,0.6875,0.238095,0.0,0.0,1.0

@@ -1,0 +1,17 @@
+# SITE_v2 — Ask 33: publishable per-station dataset, M5-equivalent
+# free-stream (no wakes), ERA5-only chain over the 200 classified stations.
+round2:
+  experiment_id: 'SITE_v2'
+  correction: 'height_consistent'
+  correction_branch: 'auto'          # JSON branch per station: A=171, C=29 (coastal), B=0
+  shear: 'most'                      # whole-profile MOST anchored 100 m -> blh_flag_t{i}
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: false}             # single-turbine site dataset
+  density: 'v1_mixed'                # M5all parity (user decision 2026-07-14); inputs are ERA5-only either way
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/site_commissioning.csv'
+  artifacts_dir: 'data/round2_site'  # site-only correction/ + topo_features.csv (avoids park/site JSON collision)
+  output_naming: 'readable'          # Ask 35: human-readable published column names
+  output_start: '2023-07-24'

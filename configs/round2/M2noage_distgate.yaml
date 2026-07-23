@@ -1,0 +1,13 @@
+# M2noage_distgate — Ask 27: Paper-M2 (M2noage) unter dem Original-Distanz-Gate
+# (wake-frei) — M2-Level-Komparator fuer die Gate-History-Kontraste.
+round2:
+  experiment_id: 'M2noage_distgate'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'power_law'
+  aging_model: 'none'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  artifacts_dir: 'data/round2_distgate'
+  commissioning_table: 'data/round2/park_commissioning.csv'

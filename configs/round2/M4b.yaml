@@ -1,0 +1,12 @@
+# M4b — M4 with the EEG year-20 step variant
+round2:
+  experiment_id: 'M4b'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'weibull_step'
+  aging: {lambda: 54.5, kappa: 2.0, step_delta: 0.02}
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

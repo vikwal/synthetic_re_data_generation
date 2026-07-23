@@ -1,11 +1,23 @@
 .DS_Store
 .vscode
 __pycache__
+*.log
+*.pyc
+
+# raw/bulk data — never push data, see CLAUDE-facing note in README
 data
-results
 synthre
-figs
+literature
+logs
+
+# legacy code, superseded results/figures, and closed development logs —
+# kept on disk for reference, never tracked
 archiv
+
+# working/raw outputs of scripts/round2 (regenerated on demand); the curated
+# subset that matches the manuscript lives in the tracked results/ directory
+# at repo root instead
+figs
 
 test.ipynb
 test.py

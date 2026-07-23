@@ -1,0 +1,14 @@
+# M5_gate5 — wie M5(all), aber restriktives Korrektur-Gate: Branch A nur <=5 km (Ask 18a)
+round2:
+  experiment_id: 'M5_gate5'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  artifacts_dir: 'data/round2_gate5'
+  commissioning_table: 'data/round2/park_commissioning.csv'

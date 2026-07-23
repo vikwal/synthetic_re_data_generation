@@ -1,0 +1,10 @@
+# M1noage — Paper-M1 des bereinigten Ladders (Ask 19): rohes ERA5, KEIN Aging
+round2:
+  experiment_id: 'M1noage'
+  correction: 'off'
+  shear: 'power_law'
+  aging_model: 'none'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

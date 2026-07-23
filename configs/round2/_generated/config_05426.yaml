@@ -1,0 +1,229 @@
+data:
+  dir: /mnt/nas/observed_weather
+  era5_dir: /mnt/nas/synthetic/raw/wind_era5
+  from_date: '2023-07-24'
+  hist_date: '2023-12-31'
+  hor_vars:
+  - aswdifd_s
+  - aswdir_s
+  - alb_rad
+  - clct
+  - t_2m
+  - relhum_2m
+  - td_2m
+  - h_snow
+  - rho_snow
+  - prr_gsp
+  - prs_gsp
+  - prg_gsp
+  - t_g
+  - u_10m
+  - v_10m
+  nwp_data_path: /mnt/nas/open-meteo/wind/icon_d2
+  pkl_dir: data/pkl_files
+  pv_ages: data/pv_ages.npy
+  re_ninja_dir: data/renewables.ninja
+  sleep: 0.25
+  synth_dir: /mnt/nvme2/synthetic
+  turbine_cp: turbine_cp.csv
+  turbine_ct: turbine_ct.csv
+  turbine_dir: power_curves
+  turbine_names: turbine_names.csv
+  turbine_power: turbine_power.csv
+  turbine_specs: turbine_specs.csv
+  vert_vars:
+  - u_wind
+  - v_wind
+  - temperature
+  - pressure
+  - relhum
+  w_vert_dir: /mnt/nas/icon-d2/csv/W_VERT
+  wind_ages: data/wind_ages.npy
+features:
+  cp_curve:
+    name: cp
+    unit: '-'
+  d_wind:
+    name: wind_direction
+    old_name: DD_10
+    unit: "\xB0"
+  density:
+    name: density
+    unit: kg/m$^3$
+  density_hub:
+    name: density
+    unit: kg/m$^3$
+  dewpoint:
+    name: dew_point
+    old_name: TD_10
+    unit: "\xB0C"
+  dhi:
+    name: dhi
+    old_name: DS_10
+    unit: W/m$^2$
+  dni:
+    name: dni
+    unit: W/m$^2$
+  elevation:
+    name: station_height
+    old_name: Stationshoehe
+    unit: m
+  ghi:
+    name: ghi
+    old_name: GS_10
+    unit: W/m$^2$
+  latitude:
+    name: latitude
+    old_name: geoBreite
+    unit: "\xB0"
+  longitude:
+    name: longitude
+    old_name: geoLaenge
+    unit: "\xB0"
+  longwave_rad:
+    name: longwave_rad
+    old_name: LS_10
+    unit: J/m$^2
+  power:
+    name: power
+    unit: Watt
+  power_curve:
+    name: power_curve
+    unit: Watt
+  prec:
+    name: precipitation_rate
+    old_name: RWS_10
+    unit: mm
+  prec_dau:
+    name: precipitation_duration
+    old_name: RWS_DAU_10
+    unit: min
+  pressure:
+    name: pressure
+    old_name: PP_10
+    unit: Pa
+  pressure_hub:
+    name: pressure
+    unit: Pa
+  relhum:
+    name: relative_humidity
+    old_name: RF_10
+    unit: '%'
+  sat_vap_pressure:
+    name: saturated_vapor_pressure
+    unit: Pa
+  sat_vap_pressure_hub:
+    name: saturated_vapor_pressure
+    unit: Pa
+  sigma_wind_lat:
+    name: std_u_wind
+    old_name: SLA_10
+    unit: ''
+  sigma_wind_lon:
+    name: std_v_wind
+    old_name: SLO_10
+    unit: ''
+  sun_duration:
+    name: sun_duration
+    old_name: SD_10
+    unit: h
+  temperature:
+    name: temperature_2m
+    old_name: TT_10
+    unit: "\xB0C"
+  temperature_5cm:
+    name: temperature_5cm
+    old_name: TM5_10
+    unit: "\xB0C"
+  temperature_hub:
+    name: temperature
+    unit: "\xB0C"
+  wind_speed:
+    name: wind_speed
+    old_name: FF_10
+    unit: m/s
+  wind_speed_10:
+    name: wind_speed_10m
+    unit: m/s
+  wind_speed_120:
+    name: wind_speed_120m
+    unit: m/s
+  wind_speed_180:
+    name: wind_speed_180m
+    unit: m/s
+  wind_speed_80:
+    name: wind_speed_80m
+    unit: m/s
+  wind_speed_hub:
+    name: wind_speed
+    unit: m/s
+  wind_speed_vertical:
+    name: w_vert
+    unit: m/s
+logging:
+  datefmt: '%Y-%m-%d %H:%M:%S'
+  log_file_write: write_db.log
+  verbose: false
+params:
+  annual_degradation: 0.0063
+  apply_ageing: false
+  commissioning_date: '2016-09-26'
+  h1: 10
+  hourly_resolution: true
+  hub_heights:
+  - 140
+  karman: 0.4
+  noise: 0.0
+  nwp_heights:
+  - 10
+  - 77.745
+  - 126.858
+  - 183.592
+  p_s_model: huang
+  temp_gradient: 0.00649
+  turbines:
+  - Vestas V112-3.3
+  v2_method: loglaw
+round2:
+  aging_model: none
+  commissioning_table: data/round2/park_commissioning.csv
+  correction: height_consistent
+  correction_branch: auto
+  density: v1_mixed
+  era5_dir_v2: /mnt/nvme2/synthetic/raw/wind_era5_v2
+  experiment_id: M5all_PL_noage
+  shear: power_law
+  wake:
+    enabled: true
+    k: 0.075
+    model: noj
+scraping:
+  download_url: https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/
+  get_historical: true
+  get_recent: true
+  overwrite: true
+  sleep: 1
+  vars:
+  - air_temperature
+  - wind_test
+  - solar
+  - precipitation
+write:
+  clean_pv: false
+  clean_wind: true
+  create_table: false
+  db_conf:
+    database: WeatherDB
+    do_update: true
+    host: localhost
+    passw: ''
+    port: 5432
+    user: postgres
+  historical_pkl: historical_dfs.pkl
+  master_pkl: master_data.pkl
+  recent_pkl: recent_dfs.pkl
+  threshold: 0.008
+  write: true
+  write_historical: true
+  write_master: false
+  write_recent: true

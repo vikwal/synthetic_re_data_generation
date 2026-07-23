@@ -1,0 +1,12 @@
+# M5 — M4 + NOJ wake losses on the park sum (WP5, parks only)
+round2:
+  experiment_id: 'M5'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

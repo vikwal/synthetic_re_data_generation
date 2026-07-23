@@ -1,0 +1,13 @@
+# M4all — finaler Wind (M3), Weibull-Aging fuer ALLE 13 Parks erzwungen
+round2:
+  experiment_id: 'M4all'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

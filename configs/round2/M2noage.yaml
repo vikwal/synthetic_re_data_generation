@@ -1,0 +1,11 @@
+# M2noage — M1 + gated height-consistent quantile-mapping correction (WP2)
+round2:
+  experiment_id: 'M2noage'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'power_law'
+  aging_model: 'none'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

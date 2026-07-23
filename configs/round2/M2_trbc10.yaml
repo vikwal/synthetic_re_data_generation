@@ -1,0 +1,11 @@
+# M2_trbc10 — wie M2, aber era5_bc-Faktor NUR auf v10; Profil re-ankert (Korrektur klingt mit Höhe ab)
+round2:
+  experiment_id: 'M2_trbc10'
+  correction: 'tr_bc10'
+  correction_branch: 'auto'
+  shear: 'power_law'
+  aging_model: 'const'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

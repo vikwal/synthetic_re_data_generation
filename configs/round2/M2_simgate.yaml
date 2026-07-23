@@ -1,0 +1,12 @@
+# M2_simgate — Paper-M2 (M2noage), aber Similarity-Gate statt Distanz-Gate (Ask 21a)
+round2:
+  experiment_id: 'M2_simgate'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'power_law'
+  aging_model: 'none'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  artifacts_dir: 'data/round2_simgate'
+  commissioning_table: 'data/round2/park_commissioning.csv'

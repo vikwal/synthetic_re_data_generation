@@ -1,0 +1,11 @@
+# M3_vg (ask 31, exploratory) — M2 + validity-gated Profil (stündl. BLH-Regel: MOST nur wo hub <= 0.1*blh)
+round2:
+  experiment_id: 'M3_vg'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'validity_gated'
+  aging_model: 'const'
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'

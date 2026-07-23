@@ -1,0 +1,16 @@
+# M5all_distgate — Ask 27: Vollkette (M5all) unter dem ORIGINAL-Distanz-Gate
+# (data/round2_distgate: Küste 01200_1/2 = Branch A, 00282/02483/05347 = B),
+# auf den GEFIXTEN Wake-Faktoren — frischer Gate-History-Komparator.
+round2:
+  experiment_id: 'M5all_distgate'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  artifacts_dir: 'data/round2_distgate'
+  commissioning_table: 'data/round2/park_commissioning.csv'

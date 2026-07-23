@@ -1,0 +1,12 @@
+# M4_trbc — wie M4, aber era5_bc-Transformer-Faktoren statt gated QM
+round2:
+  experiment_id: 'M4_trbc'
+  correction: 'tr_bc'
+  correction_branch: 'auto'
+  shear: 'most'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  wake: {enabled: false}
+  density: 'v1_mixed'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'
