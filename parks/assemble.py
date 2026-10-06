@@ -40,9 +40,13 @@ def frame_sha256(df: pd.DataFrame) -> str:
 
 def git_state(repo: str = paths.REPO) -> dict:
     def run(*args):
-        return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True).stdout.strip()
-    return {"commit": run("rev-parse", "HEAD"), "branch": run("rev-parse", "--abbrev-ref", "HEAD"),
-            "dirty_files": [l[3:] for l in run("status", "--porcelain").splitlines()]}
+        return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True).stdout
+    # porcelain lines are 'XY path'; no strip() on the whole output, it would eat the
+    # leading status blank of the first line and cut its path
+    dirty = [l[3:] for l in run("status", "--porcelain", "--untracked-files=no").splitlines() if l]
+    return {"commit": run("rev-parse", "HEAD").strip(),
+            "branch": run("rev-parse", "--abbrev-ref", "HEAD").strip(),
+            "dirty_files": dirty}
 
 
 def manifest(cfg: dict, era5_meta: dict, wake_meta: dict, release: pd.DataFrame,

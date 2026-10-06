@@ -286,3 +286,18 @@ def test_group_driver_reproduces_round2_chain(station_id):
     for i in range(1, 7):
         np.testing.assert_allclose(out.loc[idx, f"power_t{i}"], ref.loc[idx, f"power_t{i}"], rtol=1e-9, atol=1e-6)
         np.testing.assert_allclose(out.loc[idx, f"wind_speed_hub_t{i}"], ref.loc[idx, f"wind_speed_t{i}"], atol=1e-9)
+
+
+def test_git_state_keeps_full_paths(tmp_path):
+    import subprocess
+    from parks import assemble
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text("x")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "init"], check=True)
+    (tmp_path / "a.txt").write_text("changed")
+    (tmp_path / "untracked.txt").write_text("u")
+    st = assemble.git_state(str(tmp_path))
+    assert st["dirty_files"] == ["a.txt"] and len(st["commit"]) == 40
