@@ -36,7 +36,7 @@ def parks_table(selection: pd.DataFrame, layout: pd.DataFrame, groups: pd.DataFr
             "primary_era5_cell": int(cap_by_cell[cap_by_cell == cap_by_cell.max()].index.min()),
             "n_era5_cells": int(grp.era5_cell_id.nunique()),
             "correction_branch": "C",
-            "osm_corrected_units": int((lay.osm_status == "corrected").sum()),
+            "osm_corrected_units": int(lay.osm_status.astype(str).str.startswith("corrected").sum()),
             "osm_unresolved_units": int((lay.osm_status == "unresolved").sum()),
             "replaced_v1_park": s.get("replaced") if isinstance(s.get("replaced"), str) else "",
         })
