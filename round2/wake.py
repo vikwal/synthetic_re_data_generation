@@ -4,6 +4,13 @@ Publishes w(t) = P_waked / P_free in (0,1] per park, precomputed by
 scripts/round2/wp5_precompute_wakes.py and applied to the park sum in
 generate_wind (Hook E). py_wake version is pinned in
 requirements_round2.txt and recorded in the run manifests.
+
+Type -> library column resolution is automatic (resolve_columns): a layout
+model that IS a library name (power_curves/turbine_power.csv column, i.e. the
+lib_name of the MaStR parks) maps to itself, with its own Ct curve where
+turbine_ct.csv has one. The hand-maintained MODEL_MAP is only the fallback for
+the 13 round-2 layouts, whose model field holds manufacturer labels
+("E-82 E2 2300") rather than library names; their results are unchanged.
 """
 
 import os
@@ -13,7 +20,8 @@ import pandas as pd
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# layout model name -> (power-curve column, CT column or None)
+# legacy (13 round-2 layouts only): layout model label -> (power-curve column,
+# CT column or None); see resolve_columns for the automatic lib_name path
 MODEL_MAP = {
     "E-82 E2 2300": ("Enercon E-82 E2 2.300", None),
     "V126 3300": ("Vestas V126-3.3", "Vestas V126-3.3"),
@@ -42,15 +50,36 @@ def load_curves():
     return pc, ct
 
 
+MIN_CT_POINTS = 3
+
+
+def resolve_columns(model: str, pc: pd.DataFrame, ct: pd.DataFrame) -> tuple:
+    """(power-curve column, CT column or None) for a layout model.
+
+    Automatic match first: a library name maps to its own power column and,
+    if turbine_ct.csv holds at least MIN_CT_POINTS values for it, its own CT
+    column (no proxies). Otherwise the legacy MODEL_MAP entry."""
+    if model in pc.columns:
+        has_ct = model in ct.columns and ct[model].notna().sum() >= MIN_CT_POINTS
+        return model, (model if has_ct else None)
+    if model in MODEL_MAP:
+        return MODEL_MAP[model]
+    raise KeyError(f"turbine model {model!r} is neither a library column nor in MODEL_MAP")
+
+
 def build_windturbine(model: str, hub_height: float, rotor_diameter: float,
-                      rated_kw: float, pc: pd.DataFrame, ct: pd.DataFrame):
+                      rated_kw: float, pc: pd.DataFrame, ct: pd.DataFrame,
+                      name: str = None):
     """PyWake WindTurbine for one layout model. Missing CT curves fall back to
-    the GenericWindTurbine CT (guide-sanctioned; logged by the caller)."""
+    the GenericWindTurbine CT (guide-sanctioned; logged by the caller).
+    name: PyWake type name (default: model); real parks pass one name per
+    (type, hub height, rotor) so equal types at different hubs stay apart."""
     from py_wake.wind_turbines import WindTurbine
     from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
     from py_wake.wind_turbines.generic_wind_turbines import GenericWindTurbine
 
-    pcol, ctcol = MODEL_MAP[model]
+    pcol, ctcol = resolve_columns(model, pc, ct)
+    name = name or model
     curve = (pc[pcol] * 1000.0).dropna()  # kW -> W
     ws = curve.index.values.astype(float)
     power_w = curve.values.astype(float)
@@ -61,13 +90,13 @@ def build_windturbine(model: str, hub_height: float, rotor_diameter: float,
                             ct_curve.values.astype(float))
     else:
         # power_norm from the actual curve max (layout kW fields are noisy)
-        gen = GenericWindTurbine(name=model, diameter=rotor_diameter,
+        gen = GenericWindTurbine(name=name, diameter=rotor_diameter,
                                  hub_height=hub_height,
                                  power_norm=float(power_w.max()) / 1000.0)
         ct_vals = gen.ct(ws)
         generic_ct_used = True
     ct_vals = np.clip(ct_vals, 1e-3, 1.0)
-    wt = WindTurbine(name=model, diameter=rotor_diameter, hub_height=hub_height,
+    wt = WindTurbine(name=name, diameter=rotor_diameter, hub_height=hub_height,
                      powerCtFunction=PowerCtTabular(ws, power_w, "w", ct_vals))
     return wt, generic_ct_used
 

@@ -28,6 +28,7 @@ HANDOFF.md
 # scraped turbine power-curve database (redistribution rights unclear)
 configs/real_pv_parks/
 configs/round2/_generated/config_*.yaml
+configs/round2/_generated/parks_v1/
 pv_parks.html
 power_curves/*.csv
 power_curves/Archiv/

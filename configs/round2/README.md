@@ -26,3 +26,8 @@ variants explored during development; their results feed the full CSVs in
 
 `_generated/` holds per-station merged configs produced by
 `scripts/round2/run_ladder.py` (not hand-edited).
+
+`PARKS_v1.yaml` is the chain of the 90 real MaStR parks for the FL benchmark
+(M4 without QM, Weibull aging per turbine group, NOJ wakes on the real layouts,
+ERA5 from Postgres). It is driven by `scripts/parks/run_parks_v1.py`, which
+writes one config per park to `_generated/parks_v1/` (gitignored: real-park data).

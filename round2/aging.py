@@ -93,3 +93,27 @@ def get_degradation_vector(time_vector: pd.DatetimeIndex,
         else:
             vector = DF_weibull_step(ages, lam, kappa, step_delta)
     return vector, commissioning_date
+
+
+def degradation_by_group(time_vector: pd.DatetimeIndex,
+                         commissioning_dates: dict,
+                         model: str = "weibull",
+                         adr: float = ADR_DEFAULT,
+                         lam: float = LAMBDA_DEFAULT,
+                         kappa: float = KAPPA_DEFAULT,
+                         step_delta: float = 0.02) -> dict:
+    """Per-group degradation vectors (round2.commissioning_mode = 'group').
+
+    Real parks mix turbine generations, so every turbine group ages from its
+    own commissioning date instead of one date per park. Each vector is
+    exactly get_degradation_vector() with that group's date (Weibull: DF on
+    the per-timestamp age; ages before commissioning clip to 0, i.e. a group
+    commissioned inside the period is treated as new, not as absent).
+    commissioning_dates: {group_id: 'YYYY-MM-DD'} -> {group_id: ndarray}.
+    """
+    if model not in MODELS:
+        raise ValueError(f"unknown aging model: {model}")
+    return {gid: get_degradation_vector(time_vector, model=model, commissioning_date=cd,
+                                        adr=adr, lam=lam, kappa=kappa,
+                                        step_delta=step_delta)[0]
+            for gid, cd in commissioning_dates.items()}
