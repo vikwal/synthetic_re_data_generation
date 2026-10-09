@@ -152,6 +152,7 @@ python generate_wind.py --config round2/S3.yaml
 | Wake losses | `wake.enabled` | `true`/`false`, model `noj` (PyWake, Jensen) with decay constant `wake.k` |
 | Air density | `density` | `v1_mixed`, `static_1225`, `dynamic` |
 | Sensitivity-analysis scalers | `wind_level_factor`, `power_curve_scale`, `z0_scale` | multiplicative overrides for global sensitivity analysis |
+| Curtailment (after `power_park`) | `curtailment.enabled` (top-level block) | off by default (output unchanged); on: bat permits -> negative-price market response -> redispatch setpoints, `power_park` = curtailed, `power_park_avail` = available; see `curtailment/` and `parks/README_curt_release.md` |
 
 `configs/round2/` ships a range of pre-built configurations covering these combinations
 (single-component ablations, the stability-corrected alternative, sensitivity-analysis
@@ -196,4 +197,5 @@ pytest -m slow            # + end-to-end generation smoke test (needs real ERA5 
 ```
 
 Covers the chain modules (`round2/aging.py`, `correction.py`, `stability.py`,
-`evaluation.py`) and an end-to-end run of `generate_wind.py`.
+`evaluation.py`), the parks driver (`parks/`), the curtailment layers (`curtailment/`)
+and an end-to-end run of `generate_wind.py`.

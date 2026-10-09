@@ -31,3 +31,7 @@ variants explored during development; their results feed the full CSVs in
 (M4 without QM, Weibull aging per turbine group, NOJ wakes on the real layouts,
 ERA5 from Postgres). It is driven by `scripts/parks/run_parks_v1.py`, which
 writes one config per park to `_generated/parks_v1/` (gitignored: real-park data).
+
+`PARKS_v1_curt.yaml` / `PARKS_v1_curt_x4.yaml` add a `curtailment` block (realistic / grid x 4) to the
+PARKS_v1 chain; they drive the `curt_*` stages of `scripts/parks/run_parks_v1.py`, which read the
+parks_v1 release and write the releases parks_v1_curt and parks_v1_curt_x4.
