@@ -22,16 +22,18 @@ LAYERS = ("environment", "market", "grid")
 BANDS = ("-10..0", "-20..-10", "-50..-20", "-100..-50", "<-100")
 
 
-def _area(p0, a=None, b=None, beta=None, dur=None, rel=None, target=None) -> dict:
+def _area(p0, a=None, b=None, beta=None, dur=None, rel=None, target=None, end_cf=None) -> dict:
     if a is None:
         return {"p0": p0}
     return {"p0": p0, "a": a, "b": b, "beta": list(beta), "dur": list(dur),
-            "release": {"p": rel[0], "p30": rel[1], "dur": list(rel[2])}, "target_pct": dict(target)}
+            "release": {"p": rel[0], "p30": rel[1], "dur": list(rel[2])}, "target_pct": dict(target),
+            "end_cf": end_cf}
 
 
 CURTAILMENT_DEFAULTS = {
     "enabled": False,
     "dataset": "parks_v1_curt",            # release sub-directory
+    "version": "v1",                       # model version label (report/figure directory)
     "seed": 20261009,
     "step_minutes": 15,                    # internal grid; output hourly (mean of 4 quarter-hours)
     "layers": {"environment": True, "market": True, "grid": True},
@@ -48,19 +50,26 @@ CURTAILMENT_DEFAULTS = {
         "disturbance": {"phi": 0.4, "sigma_z": 1.0, "rho_z": 0.4},
         "setpoint_first": {0.0: 0.78, 0.3: 0.12, 0.6: 0.10},
         "max_duration_h": 168.0,           # cap of one segment (lognormal tail; documented deviation)
+        # v1.1 switches (off = v1): shared area episodes and end of an event at low wind (events.py)
+        "events": {"mode": "node",         # node: independent node processes | area: shared area episodes
+                   "concentration": 100.0, # kappa: episode rate / kappa, participation min(1, kappa B_n);
+                                           # 100 reproduces the KIT simultaneity in SH [C9d] (v1.1 report)
+                   "shared_duration": True},
+        "termination": {"enabled": False},  # end at the first quarter-hour with CF_DA < areas.<A>.end_cf
         "areas": {
             # a, b: start rate log lambda = a + b * CF_DA [1/h, unit]; beta: participation;
-            # dur: LogNormal(mu, sigma) in ln h; release: appended 30/60 % segment after s0 = 0
+            # dur: LogNormal(mu, sigma) in ln h; release: appended 30/60 % segment after s0 = 0;
+            # end_cf: CF_DA below which an event ends (only with termination.enabled; c0 of [C20])
             "A1_SH": _area(0.1, -0.38, 3.43, (1.22, 270), (1.63, 1.48), (0.087, 0.65, (-1.15, 1.26)),
-                           {2023: 5.5, 2024: 4.3, 2025: 4.2, 2026: 4.2}),
+                           {2023: 5.5, 2024: 4.3, 2025: 4.2, 2026: 4.2}, 0.05),
             "A2_NI_NW": _area(0.2, -1.63, 4.28, (0.71, 143), (1.20, 1.46), (0.104, 0.50, (-1.26, 0.90)),
-                              {2023: 4.1, 2024: 3.7, 2025: 3.3, 2026: 3.3}),
+                              {2023: 4.1, 2024: 3.7, 2025: 3.3, 2026: 3.3}, 0.18),
             "A3_NI_O_ST": _area(0.2, -2.30, 5.19, (0.53, 86), (1.43, 1.11), (0.110, 0.39, (-1.07, 1.60)),
-                                {2023: 4.1, 2024: 3.7, 2025: 3.3, 2026: 3.3}),
+                                {2023: 4.1, 2024: 3.7, 2025: 3.3, 2026: 3.3}, 0.17),
             "A4_NO": _area(0.2, -2.30, 5.19, (0.53, 86), (1.43, 1.11), (0.110, 0.39, (-1.07, 1.60)),
-                           {2023: 4.8, 2024: 4.4, 2025: 4.2, 2026: 4.2}),
+                           {2023: 4.8, 2024: 4.4, 2025: 4.2, 2026: 4.2}, 0.17),
             "A5_MITTE_W": _area(0.5, -5.06, 6.65, (0.32, 28), (0.99, 1.43), (0.048, 0.58, (-1.03, 1.28)),
-                                {2023: 1.3, 2024: 1.2, 2025: 1.1, 2026: 1.1}),
+                                {2023: 1.3, 2024: 1.2, 2025: 1.1, 2026: 1.1}, 0.30),
             "A6_SUED": _area(1.0),         # no grid layer
         },
         "calibration": {"n_virtual_nodes": 2000, "rel_tol": 0.02, "max_iter": 40},
@@ -164,6 +173,15 @@ def validate(c: dict) -> None:
             rel = a["release"]
             need(0 <= rel["p"] <= 1 and 0 <= rel["p30"] <= 1 and rel["dur"][1] > 0, f"{name}: release out of range")
             need(all(v >= 0 for v in a["target_pct"].values()), f"{name}: target_pct >= 0")
+    ev = g["events"]
+    need(ev["mode"] in ("node", "area"), "grid.events.mode: node | area")
+    need(float(ev["concentration"]) >= 1, "grid.events.concentration (kappa) must be >= 1")
+    need(isinstance(ev["shared_duration"], bool), "grid.events.shared_duration: true/false")
+    need(isinstance(g["termination"]["enabled"], bool), "grid.termination.enabled: true/false")
+    if g["termination"]["enabled"]:
+        for name, a in g["areas"].items():
+            need(a["p0"] >= 1 or (a.get("end_cf") is not None and 0 <= a["end_cf"] < 1),
+                 f"{name}: end_cf in [0, 1) needed with grid.termination.enabled")
     cal = g["calibration"]
     need(cal["n_virtual_nodes"] > 0 and cal["rel_tol"] > 0 and cal["max_iter"] > 0, "grid.calibration out of range")
     m = c["market"]

@@ -56,6 +56,7 @@ def _fleet_job(args):
     cfg, area, qidx, cf, u, prof, c_by_year = args
     prob = calibrate.AreaGridProblem(cfg, area, qidx, cf, u, prof)
     d = calibrate.fleet_detail(prob, c_by_year, cf, V.COUPLING_BINS, V.START_BINS)
+    d["simultaneity_2024"] = calibrate.simultaneity(prob, 2024, c_by_year[2024])
     return area, d
 
 
@@ -257,7 +258,7 @@ def consistency(rel, cfg) -> dict:
         d = (f["loss_env"] + f["loss_mkt"] + f["loss_grid"]) - (f["power_park_avail"] - f["power_park"])
         worst_sum = max(worst_sum, float(d.abs().max()))
     out = {"max_power_minus_avail_W": worst_excess, "max_abs_loss_sum_error_W": worst_sum}
-    other = "parks_v1_curt" if cfg["dataset"].endswith("_x4") else None
+    other = cfg["dataset"][:-3] if cfg["dataset"].endswith("_x4") else None
     if other:
         p = os.path.join(paths.DATA_ROOT, "synthetic", "wind", other, "grid_events.csv")
         if os.path.exists(p) and len(rel["events"]):
@@ -444,6 +445,8 @@ def _clean(d):
 
 
 def run(chain, cfg, workers: int = 8) -> dict:
+    global FIG_DIR
+    FIG_DIR = os.path.join(paths.FL_DIR, "reports", f"figs_curtailment_synthesis_{cfg['version']}")
     os.makedirs(FIG_DIR, exist_ok=True)
     ds = cfg["dataset"]
     calib = json.load(open(curtail.calibration_path(cfg)))

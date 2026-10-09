@@ -119,15 +119,22 @@ def _open(u):
     return np.clip(u, 1e-16, 1 - 1e-16)
 
 
-def node_events(seed: int, node: str, qidx: pd.DatetimeIndex, rate0: np.ndarray, c_slot: np.ndarray,
-                area_cfg: dict, grid_cfg: dict) -> pd.DataFrame:
-    """Accepted events of a real node on the period qidx: one row per event with
-    start index, n_main, s0, n_rel, s_rel, event_id."""
+def node_events(seed: int, node: str, qidx: pd.DatetimeIndex, shape0: np.ndarray, B: float, c_slot: np.ndarray,
+                area: str, area_cfg: dict, grid_cfg: dict, cf: np.ndarray = None) -> pd.DataFrame:
+    """Accepted events of a real node on the period qidx (shape0 = exp(a + b CF_DA) u):
+    one row per event with start index, n_main, s0, n_rel, s_rel, event_id (and the
+    area episode in mode 'area')."""
+    from curtailment import events
     slots = timegrid.slot_numbers(qidx)
-    U = draw_u(seed, ("grid", node, "U"), slots)
-    start = np.flatnonzero(c_slot > critical_c(U, rate0))
-    ev = pd.DataFrame({"start": start, **event_shapes(seed, ("grid", node), slots[start], area_cfg, grid_cfg)})
-    ev["event_id"] = [f"{node}:{t:%Y%m%dT%H%M}" for t in qidx[start]]
+    c_store = float(np.max(c_slot)) if len(c_slot) else 0.0
+    eps = (events.area_episodes(seed, area, slots, shape0, area_cfg, grid_cfg, c_store)
+           if grid_cfg["events"]["mode"] == "area" else None)
+    cd = events.candidates(seed, ("grid", node), B, slots, shape0, area_cfg, grid_cfg, c_store, eps, cf)
+    on = c_slot[cd["pos"]] > cd["cstar"]
+    ev = pd.DataFrame({"start": cd["pos"][on], **{k: cd[k][on] for k in ("n_main", "s0", "n_rel", "s_rel")}})
+    ev["event_id"] = [f"{node}:{t:%Y%m%dT%H%M}" for t in qidx[ev["start"]]]
+    if "episode" in cd:
+        ev["episode_id"] = [f"{area}:{t:%Y%m%dT%H%M}" for t in qidx[cd["episode"][on]]]
     return ev
 
 

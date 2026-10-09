@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import least_squares
 
-from curtailment import grid, market, streams, timegrid
+from curtailment import events, grid, market, streams, timegrid
 
 C_FLOOR, C_CEIL = 1e-6, 1e5
 
@@ -59,6 +59,7 @@ class AreaGridProblem:
         self.fleet = virtual_fleet(cfg["seed"], area, self.acfg, n_nodes, profiles.shape[0])
         self.active = self.fleet[~self.fleet["free"]].reset_index(drop=True)
         self.shape0 = np.exp(self.acfg["a"] + self.acfg["b"] * cf_da) * u        # rate0 / B
+        self.cf_da = np.asarray(cf_da)
         spill_h = 2 * cfg["grid"]["max_duration_h"]
         self.spill = int(np.ceil(spill_h / timegrid.STEP_H))
         self.c = {}                                                              # fixed c per year
@@ -73,16 +74,16 @@ class AreaGridProblem:
         their (c-independent) shapes, and the availability profiles of the year."""
         ws, ys, ye = self.window(y)
         sl = self.slots[ws:ye]
+        sh0 = self.shape0[ws:ye]
+        cf = self.cf_da[ws:ye]
+        eps = (events.area_episodes(self.cfg["seed"], self.area, sl, sh0, self.acfg, self.gcfg, c_store)
+               if self.gcfg["events"]["mode"] == "area" else None)
         parts = {k: [] for k in ("row", "pos", "cstar", "n_main", "s0", "n_rel", "s_rel")}
         for i, r in enumerate(self.active.itertuples(index=False)):
-            U = grid.draw_u(self.cfg["seed"], ("vgrid", self.area, r.j, "U"), sl)
-            cs = grid.critical_c(U, r.B * self.shape0[ws:ye])
-            k = np.flatnonzero(cs < c_store)
-            e = grid.event_shapes(self.cfg["seed"], ("vgrid", self.area, r.j), sl[k], self.acfg, self.gcfg)
-            parts["row"].append(np.full(len(k), i, np.int64))
-            parts["pos"].append(k)
-            parts["cstar"].append(cs[k])
-            for key in ("n_main", "s0", "n_rel", "s_rel"):
+            e = events.candidates(self.cfg["seed"], ("vgrid", self.area, r.j), r.B, sl, sh0, self.acfg, self.gcfg,
+                                  c_store, eps, cf)
+            parts["row"].append(np.full(len(e["pos"]), i, np.int64))
+            for key in ("pos", "cstar", "n_main", "s0", "n_rel", "s_rel"):
                 parts[key].append(e[key])
         cand = {k: np.concatenate(v) for k, v in parts.items()}
         cand["slot_year"] = self.years[ws + cand["pos"]]
@@ -364,3 +365,29 @@ def fleet_detail(prob: AreaGridProblem, c_by_year: dict, cf_da: np.ndarray, cf_b
                 "setpoint_shares_pct": list(100 * sp / sp.sum()) if sp.sum() else [np.nan] * 3,
                 "monthly_depth_pct": {m: float(100 * mon[m] / mon_n[m]) for m in range(1, 13) if mon_n[m]},
                 "B_mean_theory": prob.acfg["beta"][0] / sum(prob.acfg["beta"])}
+
+
+def simultaneity(prob: AreaGridProblem, y: int, c_y: float, qs=(0.9, 0.99)) -> dict:
+    """Hourly share of the ever-affected virtual nodes under curtailment (any quarter-hour
+    of the hour) in year y at c_y; quantiles over the hours ([C9d]: SH 2015-17 p90-p99 40-54 %)."""
+    ws, ys, ye = prob.window(y)
+    prob.c[y] = c_y
+    cd = prob.candidates(y, max(64.0, 8 * c_y))
+    c_slot = np.full(len(cd["pos"]), c_y)
+    for yy, cv in prob.c.items():
+        if yy != y:
+            c_slot[cd["slot_year"] == yy] = cv
+    on = cd["cstar"] < c_slot
+    s = grid.segments_covering(ye - ws, cd["pos"][on], cd["n_main"][on], cd["s0"][on], cd["n_rel"][on],
+                               cd["s_rel"][on], row=cd["row"][on], n_rows=len(prob.active))[:, ys - ws:]
+    cur = s < 1
+    n = cur.shape[1] // timegrid.PER_HOUR * timegrid.PER_HOUR
+    hour = cur[:, :n].reshape(cur.shape[0], -1, timegrid.PER_HOUR).any(axis=2)
+    ever = hour.any(axis=1)
+    share = hour[ever].mean(axis=0) if ever.any() else np.zeros(hour.shape[1])
+    pair = hour[ever][:200].astype(float)
+    cc = np.corrcoef(pair) if len(pair) > 1 else np.array([[np.nan]])
+    with np.errstate(invalid="ignore"):
+        phi = float(np.nanmean(cc[np.triu_indices(len(pair), 1)])) if len(pair) > 1 else np.nan
+    return {**{f"p{int(100 * q)}": float(np.quantile(share, q)) for q in qs}, "phi_nodes": phi,
+            "n_ever": int(ever.sum())}

@@ -51,11 +51,14 @@ def test_defaults_merge_and_validation():
 
 
 def test_chain_configs_resolve():
-    for name, scale in (("PARKS_v1_curt.yaml", 1.0), ("PARKS_v1_curt_x4.yaml", 4.0)):
+    for name, scale in (("PARKS_v1_curt.yaml", 1.0), ("PARKS_v1_curt_x4.yaml", 4.0),
+                        ("PARKS_v1_curt_v11.yaml", 1.0), ("PARKS_v1_curt_v11_x4.yaml", 4.0)):
         with open(os.path.join(REPO, "configs", "round2", name)) as f:
             chain = yaml.safe_load(f)
         c = config.get_curtailment_params(chain)
         assert c["enabled"] and c["grid"]["target_scale"] == scale
+        v11 = "v11" in name
+        assert (c["grid"]["events"]["mode"] == "area") == v11 and c["grid"]["termination"]["enabled"] == v11
         with open(os.path.join(REPO, "configs", "round2", "PARKS_v1.yaml")) as f:
             assert chain["round2"] == yaml.safe_load(f)["round2"]
 
@@ -97,14 +100,19 @@ def _toy_drivers(days=60, seed=0):
     return h, q, pd.DataFrame({"cf_da": cf, "price": price, "r_m": 70.0}, index=q)
 
 
-def test_thinning_superset_and_monotone():
-    c = _cfg()
+def _node_events(c, q, drv, cval, B=0.01, area="A1_SH"):
+    acfg = c["grid"]["areas"][area]
+    u = grid.u_on_slots(q, [area], c["grid"]["disturbance"], c["seed"])[area]
+    cf = drv["cf_da"].to_numpy()
+    shape0 = grid.base_rate(cf, u, acfg, 1.0)
+    return grid.node_events(c["seed"], "N", q, shape0, B, np.full(len(q), cval), area, acfg, c["grid"], cf)
+
+
+@pytest.mark.parametrize("mode,term", [("node", False), ("area", False), ("node", True), ("area", True)])
+def test_thinning_superset_and_monotone(mode, term):
+    c = _cfg(grid={"events": {"mode": mode, "concentration": 30.0}, "termination": {"enabled": term}})
     h, q, drv = _toy_drivers()
-    acfg = c["grid"]["areas"]["A1_SH"]
-    u = grid.u_on_slots(q, ["A1_SH"], c["grid"]["disturbance"], c["seed"])["A1_SH"]
-    rate0 = grid.base_rate(drv["cf_da"].to_numpy(), u, acfg, 0.01)
-    ev1 = grid.node_events(c["seed"], "N", q, rate0, np.full(len(q), 1.0), acfg, c["grid"])
-    ev4 = grid.node_events(c["seed"], "N", q, rate0, np.full(len(q), 4.0), acfg, c["grid"])
+    ev1, ev4 = _node_events(c, q, drv, 1.0), _node_events(c, q, drv, 4.0)
     assert len(ev1) > 0 and set(ev1.event_id) <= set(ev4.event_id) and len(ev4) > len(ev1)
     s1, _ = grid.setpoint_series(len(q), ev1)
     s4, _ = grid.setpoint_series(len(q), ev4)
@@ -439,3 +447,71 @@ def test_main_output_identical_with_curtailment_disabled(tmp_path):
             os.remove(path)
         shas.append(_sha(os.path.join(scratch, str(k), "wind", "round2", "curt_off", f"synth_07374_curt{k}.csv")))
     assert shas[0] == shas[1]
+
+
+# ---------------------------------------------------------------- v1.1: termination and area episodes
+
+def test_low_cf_next_and_truncate():
+    from curtailment import events
+    cf = np.array([0.5, 0.4, 0.1, 0.6, 0.6, 0.02, 0.7])
+    np.testing.assert_array_equal(events.low_cf_next(cf, 0.2), [2, 2, 2, 5, 5, 5, 7])
+    # starts at 0, 3, 5 (start itself low, next slot not), 6 (period end)
+    n = events.truncate(np.array([0, 3, 5, 6]), np.array([10, 1, 4, 3]), events.low_cf_next(cf, 0.2))
+    np.testing.assert_array_equal(n, [2, 1, 2, 1])
+
+
+def test_termination_ends_events_at_low_wind():
+    c = _cfg(grid={"termination": {"enabled": True}})
+    h, q, drv = _toy_drivers()
+    acfg = c["grid"]["areas"]["A1_SH"]
+    ev = _node_events(c, q, drv, 20.0)
+    cf = drv["cf_da"].to_numpy()
+    off = _node_events(_cfg(), q, drv, 20.0).set_index("event_id")
+    for r in ev.itertuples():
+        assert np.all(cf[r.start + 1:r.start + r.n_main] >= acfg["end_cf"])     # no low slot inside the event
+        end = r.start + r.n_main
+        if r.n_main < off.loc[r.event_id, "n_main"] and end < len(cf):
+            assert cf[end] < acfg["end_cf"]                                    # cut exactly at the first low slot
+    on = ev.set_index("event_id")
+    assert set(on.index) == set(off.index)                                      # same starts, shorter events
+    assert np.all(on["n_main"] <= off.loc[on.index, "n_main"]) and (on["n_main"] < off.loc[on.index, "n_main"]).any()
+
+
+def test_area_episodes_keep_node_rate_and_couple_nodes():
+    h, q, drv = _toy_drivers(days=240)
+    area = "A1_SH"
+
+    def flags_and_starts(kappa, mode):
+        c = _cfg(grid={"events": {"mode": mode, "concentration": kappa}})
+        acfg = c["grid"]["areas"][area]
+        u = grid.u_on_slots(q, [area], c["grid"]["disturbance"], c["seed"])[area]
+        cf = drv["cf_da"].to_numpy()
+        shape0 = grid.base_rate(cf, u, acfg, 1.0)
+        fl, n = [], 0
+        for k in range(40):
+            ev = grid.node_events(c["seed"], f"N{k}", q, shape0, 0.01, np.full(len(q), 2.0), area, acfg,
+                                  c["grid"], cf)
+            n += len(ev)
+            fl.append(grid.setpoint_series(len(q), ev)[0] < 1)
+        f = np.array(fl, float)
+        cc = np.corrcoef(f)
+        return n, np.nanmean(cc[np.triu_indices(len(f), 1)])
+
+    n_node, phi_node = flags_and_starts(1.0, "node")
+    n_k1, phi_k1 = flags_and_starts(1.0, "area")
+    n_k50, phi_k50 = flags_and_starts(50.0, "area")
+    assert n_k1 == pytest.approx(n_node, rel=0.15) and n_k50 == pytest.approx(n_node, rel=0.25)
+    assert phi_k50 > phi_k1 + 0.1 and phi_k50 > 0.15
+
+
+def test_shared_duration_within_episode():
+    c = _cfg(grid={"events": {"mode": "area", "concentration": 80.0, "shared_duration": True}})
+    h, q, drv = _toy_drivers(days=120)
+    acfg = c["grid"]["areas"]["A1_SH"]
+    u = grid.u_on_slots(q, ["A1_SH"], c["grid"]["disturbance"], c["seed"])["A1_SH"]
+    cf = drv["cf_da"].to_numpy()
+    shape0 = grid.base_rate(cf, u, acfg, 1.0)
+    evs = pd.concat([grid.node_events(c["seed"], f"N{k}", q, shape0, 0.01, np.full(len(q), 3.0), "A1_SH", acfg,
+                                      c["grid"], cf) for k in range(10)])
+    g = evs.groupby("episode_id")["n_main"].nunique()
+    assert len(g) > 0 and (g == 1).all() and (evs.groupby("episode_id").size() > 1).any()

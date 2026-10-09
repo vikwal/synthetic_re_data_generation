@@ -1,0 +1,29 @@
+# PARKS_v1_curt_v11 -- parks_v1 plus the curtailment layers, model version v1.1:
+# realistic grid curtailment (area targets [C53] x 1).
+# v1.1 = v1 + shared area episodes (grid.events.mode: area, kappa 100) + end of a grid event
+# at low wind (grid.termination, CF_DA < areas.<A>.end_cf). Both switches are independent.
+# Read by scripts/parks/run_parks_v1.py curt_* --chain configs/round2/PARKS_v1_curt_v11.yaml.
+# Every curtailment parameter not set here comes from curtailment/config.py:CURTAILMENT_DEFAULTS.
+round2:
+  experiment_id: 'PARKS_v1'
+  correction: 'off'
+  correction_branch: 'C'
+  shear: 'power_law'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_source: 'db'                  # public.era5_wind_grid, nearest cell per turbine group
+  commissioning_mode: 'group'        # per-group commissioning dates (params.commissioning_dates)
+  output_start: '2023-07-24'
+  output_end: '2026-08-31 23:00'     # end of the ERA5 table
+  output_naming: 'native'
+curtailment:
+  enabled: true
+  dataset: parks_v1_curt_v11
+  version: v1_1
+  grid:
+    target_scale: 1.0
+    events: {mode: area, concentration: 100.0, shared_duration: true}
+    termination: {enabled: true}

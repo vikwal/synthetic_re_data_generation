@@ -68,8 +68,10 @@ class Plan:
         if st["free"] or not self.cfg["layers"].get("grid", True):
             res = {"s": np.ones(n), "ids": np.full(n, "", dtype=object), "events": pd.DataFrame(), **st}
         else:
-            rate0 = grid.base_rate(self.drv["cf_da"].to_numpy(), self.u[area], acfg, st["B"])
-            ev = grid.node_events(self.cfg["seed"], node, self.qidx, rate0, self.c_slot(area), acfg, self.cfg["grid"])
+            cf = self.drv["cf_da"].to_numpy()
+            shape0 = grid.base_rate(cf, self.u[area], acfg, 1.0)
+            ev = grid.node_events(self.cfg["seed"], node, self.qidx, shape0, st["B"], self.c_slot(area), area, acfg,
+                                  self.cfg["grid"], cf)
             s, ids = grid.setpoint_series(n, ev)
             res = {"s": s, "ids": ids, "events": ev, **st}
         res["area"] = area
