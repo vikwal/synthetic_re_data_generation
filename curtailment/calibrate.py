@@ -301,3 +301,66 @@ def _jsonable(d):
     if isinstance(d, (np.floating, np.integer)):
         return d.item()
     return d
+
+
+# ---------------------------------------------------------------- validation of the virtual grid fleet
+
+def fleet_detail(prob: AreaGridProblem, c_by_year: dict, cf_da: np.ndarray, cf_bins, start_bins) -> dict:
+    """Statistics of the calibrated virtual fleet of one area (quarter-hour resolution):
+    curtailed hours per affected node and year, depth-weighted share of the ever-affected
+    nodes by CF_DA bin, node start rate by CF_DA bin, setpoint shares by curtailed time,
+    monthly depth-weighted share."""
+    prob.c = {int(y): float(v) for y, v in c_by_year.items()}
+    cf_da = np.asarray(cf_da)
+    months = prob.qidx.month.to_numpy()
+    hours, depth_sum, ever = [], {}, np.zeros(len(prob.active), bool)
+    dep_bin = np.zeros(len(cf_bins))
+    n_bin = np.zeros(len(cf_bins))
+    st_bin = np.zeros(len(start_bins))
+    ns_bin = np.zeros(len(start_bins))
+    sp = np.zeros(3)
+    mon = np.zeros(13)
+    mon_n = np.zeros(13)
+    dep_parts = []
+    for y in sorted(prob.c):
+        ws, ys, ye = prob.window(y)
+        cd = prob.candidates(y, max(64.0, 8 * prob.c[y]))
+        c_slot = np.full(len(cd["pos"]), prob.c[y])
+        for yy, cv in prob.c.items():
+            c_slot[cd["slot_year"] == yy] = cv
+        on = cd["cstar"] < c_slot
+        s = grid.segments_covering(ye - ws, cd["pos"][on], cd["n_main"][on], cd["s0"][on], cd["n_rel"][on],
+                                   cd["s_rel"][on], row=cd["row"][on], n_rows=len(prob.active))[:, ys - ws:]
+        cur = s < 1
+        h = cur.sum(axis=1) * timegrid.STEP_H
+        hours.append(pd.DataFrame({"year": y, "node": np.arange(len(prob.active)), "hours": h}))
+        ever |= cur.any(axis=1)
+        d = (1 - s)
+        dep_parts.append(d)
+        for k, v in enumerate((0.0, 0.3, 0.6)):
+            sp[k] += np.isclose(s[cur], v).sum()
+        # starts inside the year
+        own = on & (cd["slot_year"] == y)
+        cf_s = cf_da[ws + cd["pos"][own]]
+        cf_y = cf_da[ys:ye]
+        for k, (lo, hi) in enumerate(start_bins):
+            st_bin[k] += ((cf_s >= lo) & (cf_s < hi)).sum()
+            ns_bin[k] += ((cf_y >= lo) & (cf_y < hi)).sum() * timegrid.STEP_H * len(prob.active)
+    dep = np.concatenate(dep_parts, axis=1)[ever]
+    cf_all = np.concatenate([cf_da[prob.window(y)[1]:prob.window(y)[2]] for y in sorted(prob.c)])
+    mo_all = np.concatenate([months[prob.window(y)[1]:prob.window(y)[2]] for y in sorted(prob.c)])
+    col = dep.mean(axis=0) if len(dep) else np.zeros(len(cf_all))
+    for k, (lo, hi) in enumerate(cf_bins):
+        m = (cf_all >= lo) & (cf_all < hi)
+        dep_bin[k], n_bin[k] = col[m].sum(), m.sum()
+    for mth in range(1, 13):
+        m = mo_all == mth
+        mon[mth], mon_n[mth] = col[m].sum(), m.sum()
+    hrs = pd.concat(hours, ignore_index=True)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return {"hours": hrs, "n_active": len(prob.active), "n_ever": int(ever.sum()),
+                "coupling_pct": list(100 * dep_bin / n_bin),
+                "node_start_rate": list(st_bin / ns_bin),
+                "setpoint_shares_pct": list(100 * sp / sp.sum()) if sp.sum() else [np.nan] * 3,
+                "monthly_depth_pct": {m: float(100 * mon[m] / mon_n[m]) for m in range(1, 13) if mon_n[m]},
+                "B_mean_theory": prob.acfg["beta"][0] / sum(prob.acfg["beta"])}

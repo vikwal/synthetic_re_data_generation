@@ -78,7 +78,7 @@ def fetch_drivers(chain: dict, cfg: dict, local_dir: str, log=print) -> dict:
     drv, gaps = drivers.load(cache, timegrid.quarter_index(idx))
     cmp = drivers.compare_local(drv, os.path.join(local_dir, "prices_delu_2023_2025.csv"),
                                 os.path.join(local_dir, "wind_onshore_de_actual_vs_da_forecast.csv"))
-    rm = drivers.market_value(drv["price"], drv["actual_mw"])
+    rm = drivers.monthly_market_value(cache)
     check = {"gaps": gaps, "compare_local": cmp, "r_m": {str(k): float(v) for k, v in rm.items()},
              "neg_slots": int((drv["price"] < 0).sum()), "cf_da_mean": float(drv["cf_da"].mean()),
              "installed_mw_first_last": [float(drv["installed_mw"].iloc[0]), float(drv["installed_mw"].iloc[-1])]}

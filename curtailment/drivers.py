@@ -203,9 +203,22 @@ def load(cache: str, qidx: pd.DatetimeIndex) -> tuple:
                              f"filling (longest gap {report[series]['longest_gap_h']} h) - see the gap report")
     out["installed_mw"] = installed_mw(cache, qidx).values
     out["cf_da"] = out["forecast_mw"] / out["installed_mw"]
-    rm = market_value(out["price"], out["actual_mw"])
-    out["r_m"] = rm.reindex(_months(qidx)).values
+    out["r_m"] = monthly_market_value(cache).reindex(_months(qidx)).values
+    if out["r_m"].isna().any():
+        raise ValueError("market value r_m missing for some months - extend the driver cache")
     return out, report
+
+
+def monthly_market_value(cache: str) -> pd.Series:
+    """r_m from the whole cached span (full calendar months, also those only
+    partly inside the synthesis period)."""
+    pr = pd.read_parquet(os.path.join(cache, "price.parquet"))["price"]
+    ac = pd.read_parquet(os.path.join(cache, "actual_mw.parquet"))["actual_mw"]
+    lo, hi = max(pr.index.min(), ac.index.min()), min(pr.index.max(), ac.index.max())
+    q = pd.date_range(lo.ceil("h"), hi.floor("h") - timegrid.STEP, freq=timegrid.STEP, tz="UTC")
+    p, _ = _on_grid(pr, q, hold=True)
+    a, _ = _on_grid(ac, q, hold=False)
+    return market_value(pd.Series(p, index=q), pd.Series(a, index=q))
 
 
 def _months(qidx: pd.DatetimeIndex) -> pd.PeriodIndex:
