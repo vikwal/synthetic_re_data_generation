@@ -16,6 +16,11 @@ Chain components (see the round2/ package):
   density        v1_mixed | static_1225 | dynamic
   wake           wake loss factor w(t) applied to the park sum
   scalers        wind_level_factor, power_curve_scale, z0_scale (sensitivity analysis)
+  curtailment    switchable curtailment layers after power_park (curtailment/ package):
+                 environment (bat permits) -> market (negative prices) -> grid
+                 (redispatch setpoints); config block 'curtailment', off by default.
+                 When on, power_park is the curtailed power and power_park_avail
+                 the available power.
 """
 
 import os
@@ -37,6 +42,7 @@ from utils import clean_data, tools
 from round2 import aging as r2_aging
 from round2 import correction as r2_correction
 from round2 import stability as r2_stability
+from curtailment.config import get_curtailment_params  # noqa: F401 - re-exported
 
 R2_DEFAULTS = {
     'experiment_id': 'M1',
@@ -95,6 +101,22 @@ def get_round2_params(config: dict) -> dict:
         else:
             r2[k] = v
     return r2
+
+
+def apply_curtailment(df: pd.DataFrame, config: dict, park_meta: dict, plan=None) -> pd.DataFrame:
+    """Curtailment layers on a frame with power_park (see curtailment/apply.py).
+    Disabled (config default): returns df itself, unchanged. Enabled: power_park
+    becomes the curtailed power, power_park_avail keeps the available power.
+    plan: shared curtailment.apply.Plan of a multi-park run; None builds a
+    single-node plan (DWD station run: node = park, area by coordinate)."""
+    curt = get_curtailment_params(config)
+    if not curt['enabled']:
+        return df
+    from curtailment import apply as curt_apply
+    repo = os.path.dirname(os.path.abspath(__file__))
+    if plan is None:
+        plan = curt_apply.station_plan(curt, df, park_meta, repo)
+    return curt_apply.curtail_park(df, park_meta, plan, curt, params=config.get('params'))
 
 
 def load_correction_tables(r2: dict, station_id: str, park_id: str = None):
@@ -1006,6 +1028,7 @@ def main(config_file: str = None) -> None:
             lam=r2['aging']['lambda'],
             kappa=r2['aging']['kappa'],
             step_delta=r2['aging']['step_delta'])
+        commissioning_for_curtailment = commissioning_date
         if not params['apply_ageing'] or r2['aging_model'] == 'none':
             degradation_vector = None
             commissioning_date = '-'
@@ -1059,6 +1082,15 @@ def main(config_file: str = None) -> None:
         cols_to_drop = [col for col in df.columns if 'alpha' in col or 'sat_vap_pressure_t' in col or 'temp_2m_t' in col or 'Cp' in col or 'wind_speed_10m' in col]
         df.drop(columns=cols_to_drop, inplace=True)
         df = df[r2['output_start']:]
+        # curtailment layers (off by default; then df is passed through untouched)
+        if get_curtailment_params(config)['enabled']:
+            from curtailment import apply as curt_apply
+            unit_kw = [params['rated'][i] if 'rated' in params else float(power_curves[t].max()) / 1000.0
+                       for i, t in enumerate(params['turbines'])]
+            meta = curt_apply.park_meta_from_station(park_id, specific_params['latitude'],
+                                                     specific_params['longitude'], params,
+                                                     commissioning_for_curtailment, unit_kw)
+            df = apply_curtailment(df, config, meta)
         # Ask 35: emit human-readable column names for the published dataset
         # (opt-in; the park ladder keeps native names via output_naming='native')
         if r2.get('output_naming') == 'readable':

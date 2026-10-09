@@ -11,7 +11,15 @@ Stages (run in order; each re-runnable, later stages read earlier outputs):
   assemble  release parquet + manifest per park       -> RELEASE_DIR (l1, nasuser)
   tables    parks.csv, wind_groups.csv, clients.csv, sites.csv, park_layouts.csv
 
-Usage: run_parks_v1.py <stage> [--parks SEL... ] [--workers 12]
+Curtailment stages (not part of 'all'; need --chain <yaml> with a curtailment block,
+e.g. configs/round2/PARKS_v1_curt.yaml; read the parks_v1 release, no database):
+  curt_drivers    energy-charts driver series -> data/curtailment/drivers (cache, gap check)
+  curt_calibrate  grid c_{g,y} and market theta -> data/curtailment/calibration_<dataset>.json
+  curt_apply      curtailed frames + manifests -> ${DATA_ROOT}/synthetic/wind/<dataset>/
+  curt_tables     copied/extended tables, curtailment_summary.csv, README
+  curt_validate   validation metrics and figures (FL_Contribution/reports/figs_curtailment_synthesis_v1)
+
+Usage: run_parks_v1.py <stage> [--parks SEL... ] [--workers 12] [--chain configs/round2/PARKS_v1_curt.yaml]
 Needs WEATHER_DB_URL and DATA_ROOT (from ~/.bashrc).
 """
 
@@ -281,21 +289,93 @@ def stage_tables(_args) -> None:
     print(f"parks {len(parks)}, groups {len(wg)}, capacity {parks.capacity_kw.sum() / 1e3:.0f} MW")
 
 
+# ---------------------------------------------------------------- curtailment
+
+def _chain(args):
+    from parks import curtail
+    if not args.chain:
+        raise SystemExit("curtailment stages need --chain <yaml> (e.g. configs/round2/PARKS_v1_curt.yaml)")
+    return curtail.load_chain(args.chain)
+
+
+def stage_curt_drivers(args) -> None:
+    from parks import curtail
+    chain, cfg = _chain(args)
+    res = curtail.fetch_drivers(chain, cfg, os.path.join(paths.FL_DIR, "data", "prices"))
+    print(json.dumps({"gaps": {k: {kk: vv for kk, vv in v.items() if kk != "gaps"}
+                               for k, v in res["check"]["gaps"].items()},
+                      "compare_local": res["check"]["compare_local"]}, indent=1))
+
+
+def stage_curt_calibrate(args) -> None:
+    from parks import curtail
+    chain, cfg = _chain(args)
+    curtail.run_calibration(chain, cfg, args.workers)
+
+
+def _curt_apply_one(lk: str) -> dict:
+    from parks import curtail
+    return curtail.apply_one(lk)
+
+
+def stage_curt_apply(args) -> None:
+    from parks import curtail
+    chain, cfg = _chain(args)
+    plan = curtail.build_plan(chain, cfg)
+    curtail.set_plan(plan, chain, cfg)            # inherited by the forked workers
+    parks, _ = curtail.source_tables()
+    ids = [p for p in parks.park_id if not args.parks or p in args.parks]
+    rows = []
+    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+        futs = {ex.submit(_curt_apply_one, lk): lk for lk in ids}
+        for i, fu in enumerate(as_completed(futs), 1):
+            r = fu.result()
+            rows.append(r)
+            print(f"[{i}/{len(ids)}] {r['park_id']}: node {r['node']}, {r['n_events']} grid events, loss env "
+                  f"{100 * r['share_env']:.2f} % mkt {100 * r['share_mkt']:.2f} % grid {100 * r['share_grid']:.2f} %",
+                  flush=True)
+    ev = curtail.write_events(plan, cfg)
+    print(f"{len(ev)} grid events on {plan.nodes.node.nunique()} nodes -> grid_events.csv")
+    fix_permissions(curtail.release_dir(cfg))
+
+
+def stage_curt_tables(args) -> None:
+    from parks import curtail
+    chain, cfg = _chain(args)
+    parks, _ = curtail.source_tables()
+    res = curtail.write_tables(cfg, curtail.node_table(cfg, parks),
+                               os.path.join(REPO, "parks", "README_curt_release.md"))
+    fix_permissions(curtail.release_dir(cfg))
+    cols = ["client_id", "curt_share_env", "curt_share_mkt", "curt_share_grid", "curt_share_total",
+            "curt_flag_hours_share_mean"]
+    print(res["clients"][cols].round(4).to_string(index=False))
+
+
+def stage_curt_validate(args) -> None:
+    from parks import curtail_validate
+    chain, cfg = _chain(args)
+    curtail_validate.run(chain, cfg, args.workers)
+
+
 STAGES = {"layouts": stage_layouts, "configs": stage_configs, "terrain": stage_terrain,
           "generate": stage_generate, "wakes": stage_wakes, "assemble": stage_assemble,
           "tables": stage_tables}
+CURT_STAGES = {"curt_drivers": stage_curt_drivers, "curt_calibrate": stage_curt_calibrate,
+               "curt_apply": stage_curt_apply, "curt_tables": stage_curt_tables,
+               "curt_validate": stage_curt_validate}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=list(STAGES) + ["all"])
+    ap.add_argument("stage", choices=list(STAGES) + list(CURT_STAGES) + ["all"])
     ap.add_argument("--parks", nargs="*", default=None)
     ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--chain", default=None, help="chain config with a curtailment block (curt_* stages)")
     args = ap.parse_args()
     for name in (STAGES if args.stage == "all" else [args.stage]):
         t0 = time.time()
         print(f"== {name}", flush=True)
-        STAGES[name](args)
+        {**STAGES, **CURT_STAGES}[name](args)
         print(f"== {name} done in {time.time() - t0:.0f} s", flush=True)
 
 
