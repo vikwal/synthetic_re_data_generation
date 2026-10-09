@@ -395,7 +395,8 @@ def test_parks_v1_assemble_unchanged():
     """The parks_v1 assemble path still reproduces the released frame bit for bit,
     and apply_curtailment (off) passes it through as the same object."""
     from parks import assemble, paths
-    lk = "SEL900568481641"
+    with open(os.path.join(paths.RELEASE_DIR, "parks.csv")) as f:
+        lk = f.readlines()[1].split(",")[0]                     # first park of the release
     free_p = os.path.join(paths.RUN_DIR, "free", f"free_{lk}.parquet")
     if not os.path.exists(free_p):
         pytest.skip("PARKS_v1 run directory not on disk")

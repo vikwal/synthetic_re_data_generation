@@ -139,7 +139,7 @@ def sh_metrics(rel, cfg) -> dict:
     pin = pin[pin["op"] == "shn"].rename(columns={pin.columns[0]: "park_id"})
     hf = pd.read_csv(os.path.join(NETZAMPEL, "hourly_flags_2023_2025.csv.gz"), index_col=0)
     hf.index = pd.to_datetime(hf.index, utc=True)
-    fix = _fix_commune(pin, hf)
+    fix = _fix_commune(pin, parks)
     rows = []
     for r in pin.itertuples(index=False):
         ags = fix.get(r.park_id, r.ags)
@@ -162,15 +162,21 @@ def sh_metrics(rel, cfg) -> dict:
             "parks_vs_netzampel": tab.round(2).to_dict(orient="records"), "_phi": phi, "_runs": run_l}
 
 
-def _fix_commune(pin, hf) -> dict:
-    """SEL913997709026: MaStR placeholder coordinate mapped it to Boostedt; the corrected
-    coordinate (53.9511, 10.8032) lies in another commune. Nearest SH-Netz commune centroid
-    with hourly flags (approximation; reported)."""
-    cen = json.load(open(os.path.join(NETZAMPEL, "centroids_all.json")))
-    lat, lon = 53.9511, 10.8032
-    best = min(((k, v) for k, v in cen.items() if v[3] == "shn"),
-               key=lambda kv: (kv[1][1] - lat) ** 2 + ((kv[1][2] - lon) * 0.59) ** 2)
-    return {"SEL913997709026": best[0]} | ({} if best[0] in hf.columns else {"_missing": best[0]})
+def _fix_commune(pin: pd.DataFrame, parks: pd.DataFrame) -> dict:
+    """Parks whose release coordinate (parks.csv, corrected) is > 1 km from the one used for
+    parks_in_netzampel.csv (MaStR placeholder coordinates) get the nearest SH-Netz commune
+    centroid instead (approximation; reported)."""
+    from curtailment.areas import haversine_km
+    cen = {k: v for k, v in json.load(open(os.path.join(NETZAMPEL, "centroids_all.json"))).items() if v[3] == "shn"}
+    pos = parks.set_index("park_id")[["latitude", "longitude"]]
+    out = {}
+    for r in pin.itertuples(index=False):
+        if r.park_id not in pos.index:
+            continue
+        lat, lon = pos.loc[r.park_id]
+        if haversine_km(lat, lon, r.lat, r.lon) > 1.0:
+            out[r.park_id] = min(cen, key=lambda k: haversine_km(lat, lon, cen[k][1], cen[k][2]))
+    return out
 
 
 def market_metrics(rel, calib, drv, cfg) -> dict:
@@ -402,8 +408,11 @@ def fig_clients(ct, ds, plt):
     plt.close(fig)
 
 
-def fig_example(rel, ds, plt, park="SEL916989124241"):
-    """One week of the park with the largest weekly grid loss: available vs actual power."""
+def fig_example(rel, ds, plt, park: str = None):
+    """One week of a park (default: largest grid loss share) with its largest weekly grid loss."""
+    if park is None:
+        park = max(rel["frames"], key=lambda p: rel["frames"][p]["loss_grid"].sum()
+                   / max(rel["frames"][p]["power_park_avail"].sum(), 1.0))
     f = rel["frames"][park]
     cap = rel["parks"].set_index("park_id").loc[park, "capacity_kw"] * 1000
     wk = f["loss_grid"].resample("7D").sum().idxmax()
