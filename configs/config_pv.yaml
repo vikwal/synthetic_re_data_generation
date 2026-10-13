@@ -8,6 +8,7 @@ data:
   re_ninja_dir: 'data/renewables.ninja'
   from_date: '2023-07-24'
   hist_date: '2024-12-31'
+  to_date: '2026-08-01'
   pv_ages: 'data/pv_ages.npy'
   hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
   vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
@@ -54,13 +55,19 @@ pv_params:
   ]
   dc_rating_watts: 10000 # in Watts
   dc_ac_ratio: 1
+  module_model: pvwatts   # pvwatts | cec (era proxy by 'year')
+  year: 2015
   gamma_pdc: -0.0035
-  albedo: 0.3
-  mean_eta_inv_nom: 0.95
+  albedo: era5            # number or 'era5' (ERA5 forecast albedo, snow-aware)
+  iam: physical
+  mean_eta_inv_nom: 0.96
+  std_eta_inv_nom: 0.01   # drawn per station
   eta_inv_ref: 0.9637
   faiman_u0: 25
   faiman_u1: 6.84
-  annual_degradation: 0.005
+  # aging (pv.aging): era in {multi_si_early, multi_si, multi_perc, mono_perc, topcon_bifacial}, null = from year
+  commissioning_date: null
+  era: null
   v_depos: 0.009 # m/s
   cleaning_thresh_day: 5 # mm
   cleaning_factor_day: 0.1

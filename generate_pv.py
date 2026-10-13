@@ -1,451 +1,104 @@
-# Generating Synthetic PV Power Time Series
+#!/usr/bin/env python
+"""Synthetic PV reference arrays at the DWD stations (the station product: one 10-kW array per
+(tilt, azimuth) pair), rebuilt on the modular pv package.
 
+Changes against the legacy script (archiv/generate_pv_legacy.py, defects verified 2026-10-13):
+  * aging is applied only when apply_ageing is set, with the PV degradation model (pv.aging) and
+    the exact age per time step instead of 5 %/a on a linear ramp;
+  * soiling reduces power (legacy returned power * loss);
+  * inverter efficiency is drawn per station (legacy seeded every station with 42);
+  * driver = imputed 30-min station series (GHI/DHI) + ERA5 met at the station, with the per-hour
+    imputed share carried into the output; raw 10-min files + KNN imputation are gone;
+  * output per station: DC power, cell temperature and POA per pair (DC so that parks can be
+    assembled with their own DC/AC clipping), plus the AC of a 10-kW inverter for compatibility.
+
+    python generate_pv.py --config configs/config_pv.yaml [--stations 00183,00232] [--out DIR]
+"""
+
+import argparse
+import json
 import os
+import sys
+import time
+
 import numpy as np
 import pandas as pd
-import pvlib
-import shutil
-import logging
-from tqdm import tqdm
-from typing import List
-from scipy.special import erf
 
-from utils import tools, clean_data
+from pv import chain, config as pvconfig, drivers, timebase
+from parks import era5_db
 
-def read_dfs(path: str,
-             cams_dir: str,
-             era5_dir: str,
-             features: list,
-             drop_threshold: float = 1,
-             hourly_resolution: bool = True) -> List[pd.DataFrame]:
-    dfs = []
-    station_ids = []
-    for file in tqdm(os.listdir(path), desc='Reading dataframes'):
-        logging.debug(f'Processing station {file}')
-        skip_station = False
-        station_id = file.split('.csv')[0].split('_')[1]
-        data = pd.read_csv(os.path.join(path, file), delimiter= ",")
-        data['timestamp'] = pd.to_datetime(data['timestamp'], utc=True)
-        data.set_index('timestamp', inplace=True)
-        # skip dfs with 100 % missing values in at least one column
-        if data.isna().all().any():
-            logging.debug(f'Station {station_id} skipped due to too many missing values in at least one column')
-            continue
-        # check on missing values
-        for feature in features:
-            share_of_missing_rows = data[feature].isna().sum() / len(data)
-            if share_of_missing_rows > drop_threshold:
-                skip_station = True
-                logging.debug(f'Station {station_id} skipped due to too many missing values in {feature}')
-                break
-        if skip_station:
-            continue
-        data = tools.knn_imputer(data=data, n_neighbors=5)
-        if hourly_resolution:
-            aggregation_rules = {
-            col: 'sum' if col in ['precipitation', 'precipitation_rate'] else 'mean'
-            for col in data.columns
-            }
-            data = data.resample('h', closed='left', label='left', origin='start').agg(aggregation_rules)
-        data = data[features]
-        # get cams data
-        cams = pd.read_csv(os.path.join(cams_dir, f'cams_{station_id}.csv'), sep=',', decimal='.')
-        cams['timestamp'] = pd.to_datetime(cams['timestamp'], utc=True)
-        cams.set_index('timestamp', inplace=True)
-        cams = cams.resample('h', closed='left', label='left', origin='start').mean()
-        # get era5 data
-        # era5 = pd.read_csv(os.path.join(era5_dir, f'era5_{station_id}.csv'), sep=',', decimal='.')
-        # era5['timestamp'] = pd.to_datetime(era5['timestamp'], utc=True)
-        # era5.set_index('timestamp', inplace=True)
-        # era5 = era5.resample('h', closed='left', label='left', origin='start').mean()
-        #data = pd.merge(data, w_vert, left_index=True, right_index=True, how='inner')
-        data = pd.merge_asof(
-            data,
-            cams,
-            left_index=True,
-            right_index=True,
-            direction='backward', # wähle den letzten bekannten Wert
-        )
-        # data = pd.merge_asof(
-        #     data,
-        #     era5,
-        #     left_index=True,
-        #     right_index=True,
-        #     direction='backward', # wähle den letzten bekannten Wert
-        # )
-        # knn impute the data
-        data = tools.knn_imputer(data=data, n_neighbors=5)
-        dfs.append(data)
-        station_ids.append(station_id)
-    return dfs, station_ids
-
-def get_location_and_elevation(station_id: str,
-                               db_config: dict):
-    masterdata = tools.get_master_data(db_config)
-    latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
-    longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
-    elevation = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
-    return latitude, longitude, elevation
-
-def get_specific_params(station_id: str,
-                        masterdata: pd.DataFrame,
-                        params: dict,
-                        commissioning_date: str,
-                        random_seed: int = 42) -> dict:
-    np.random.seed(random_seed)
-    specific_params = params.copy()
-    if 'eta_inv_nom' not in params:
-        eta_inv_nom = np.random.normal(loc=specific_params['mean_eta_inv_nom'], scale=0.01)
-        specific_params['eta_inv_nom'] = eta_inv_nom
-    longitude = masterdata.loc[masterdata.station_id == station_id]['longitude'].iloc[0]
-    latitude = masterdata.loc[masterdata.station_id == station_id]['latitude'].iloc[0]
-    altitude = masterdata.loc[masterdata.station_id == station_id]['station_height'].iloc[0]
-    specific_params['longitude'] = longitude
-    specific_params['latitude'] = latitude
-    specific_params['altitude'] = altitude
-    specific_params['commissioning_date'] = commissioning_date
-    return specific_params
-
-def get_ageing_degradation(
-        time_vector: pd.DatetimeIndex,
-        mean_age_years: float = 10.0,
-        std_dev_age_years: float = 3.33,
-        annual_load_factor_loss_rate: float = 0.05,
-        real_ages: np.ndarray = None,
-        commissioning_date: str = None,
-        random_seed: int = 42):
-    np.random.seed(random_seed)
-    if real_ages is None:
-        start_age = np.random.normal(loc=mean_age_years, scale=std_dev_age_years)
-    else:
-        start_age = float(np.random.choice(real_ages, size=1, replace=False)[0])
-    start_age = max(0.0, start_age)
-    if commissioning_date is not None:
-        start_age = (time_vector[0] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
-    else:
-        commissioning_date = str((time_vector[0] - pd.Timedelta(days=start_age*365.25)).date())
-    end_age = (time_vector[-1] - pd.to_datetime(commissioning_date, utc=True)).days / 365.25
-    base_efficiency = 1.0 - annual_load_factor_loss_rate
-    efficiency_factor_start = base_efficiency ** start_age
-    efficiency_factor_end = base_efficiency ** end_age
-    efficiency_vector = np.linspace(efficiency_factor_start, efficiency_factor_end, num=len(time_vector))
-    return efficiency_vector, commissioning_date
-
-def apply_soiling(power: pd.Series, # in Watts
-                  pm2_5: pd.Series, # in kg/m^3
-                  pm10: pd.Series, # in kg/m^3
-                  prec: pd.Series, # in mm,
-                  prec_dau: pd.Series, # in mins
-                  tilt: float, # in degrees
-                  v_depos: float = 0.009, # in m/s
-                  cleaning_thresh_day: float = 5.0, # in mm/day
-                  cleaning_factor_day: float = 0.1, # in [0,1]
-                  random_seed: int = 42): # in [0,1]
-    pm2_5 *= 1e3 # convert to g/m^3
-    pm10 *= 1e3 # convert to g/m^3
-    dt = (power.index[1] - power.index[0]).seconds
-    deposition_flux = pm10 * v_depos            # g/m²/s
-    deposition = deposition_flux * dt * np.cos(np.radians(tilt))        # g/m² per prec_dau
-
-    freq_per_hour = 3600 / dt
-    cleaning_thresh = cleaning_thresh_day / 24 / freq_per_hour
-    cleaning_factor = cleaning_factor_day / 24 / freq_per_hour
-    cleaning_events = (prec >= cleaning_thresh).astype(float)
-
-    np.random.seed(random_seed)
-    w = np.zeros(len(power))  # kumuliertes Gewicht pro Fläche (g/m²)
-    w[0] = max(0, np.random.normal(loc=4.0, scale=1.0))
-
-    for i in range(1, len(power)):
-        if cleaning_events.iloc[i] == 0:
-            w[i] = w[i-1] + deposition.iloc[i]
-        else:
-            w[i] = w[i-1] * (1 - cleaning_factor * (prec_dau.iloc[i] / (dt / 60)))
-
-    soiling_loss = 0.3434 * erf(0.17 * w ** 0.8473)
-    return power * soiling_loss
-
-def prepare_angle_independent_features(data: pd.DataFrame,
-                                       features: dict,
-                                       params: dict) -> pd.DataFrame:
-    """
-    Calculate angle-independent features that only need to be computed once per station.
-    This includes: DHI/GHI unit conversion, DNI calculation, and solar position.
-    """
-    temperature = data[features['temperature']['name']]
-    latitude = params['latitude']
-    longitude = params['longitude']
-    altitude = params['altitude']
-
-    # get solar position (angle-independent)
-    solpos = pvlib.solarposition.get_solarposition(
-        time=data.index,
-        latitude=latitude,
-        longitude=longitude,
-        altitude=altitude,
-        temperature=temperature,
-    )
-    data['solar_zenith'] = solpos['zenith']
-    data['solar_azimuth'] = solpos['azimuth']
-
-    # GHI and DHI conversion: J/cm^2 -> W/m^2
-    # DWD gives GHI as sum over 10 minutes, so divide by 600 seconds
-    dhi_col = features['dhi']['name']
-    ghi_col = features['ghi']['name']
-    data[dhi_col] = data[dhi_col] * 1e4 / 600
-    data[ghi_col] = data[ghi_col] * 1e4 / 600
-
-    # set extremely low values to zero
-    data.loc[data[dhi_col] < 0.01, dhi_col] = 0
-    data.loc[data[ghi_col] < 0.01, ghi_col] = 0
-
-    # get dni from ghi, dhi and zenith (angle-independent)
-    dni = pvlib.irradiance.dni(ghi=data[ghi_col],
-                               dhi=data[dhi_col],
-                               zenith=data['solar_zenith'])
-    dni.fillna(0, inplace=True)
-    data[features['dni']['name']] = dni
-
-    return data
+REPO = os.path.dirname(os.path.abspath(__file__))
 
 
-def get_angle_dependent_features(data: pd.DataFrame,
-                                  features: dict,
-                                  params: dict) -> pd.DataFrame:
-    """
-    Calculate angle-dependent features (POA irradiance and cell temperature).
-    This must be called for each tilt/azimuth combination.
-    """
-    temperature = data[features['temperature']['name']]
-    wind_speed = data[features['wind_speed']['name']]
-
-    surface_tilt = params['surface_tilt']
-    surface_azimuth = params['surface_azimuth']
-    albedo = params['albedo']
-    faiman_u0 = params['faiman_u0']
-    faiman_u1 = params['faiman_u1']
-
-    dhi_col = features['dhi']['name']
-    ghi_col = features['ghi']['name']
-    dni_col = features['dni']['name']
-
-    # get total irradiance on the tilted plane (angle-dependent)
-    total_irradiance = pvlib.irradiance.get_total_irradiance(
-        surface_tilt=surface_tilt,
-        surface_azimuth=surface_azimuth,
-        solar_zenith=data['solar_zenith'],
-        solar_azimuth=data['solar_azimuth'],
-        dni=data[dni_col],
-        ghi=data[ghi_col],
-        dhi=data[dhi_col],
-        dni_extra=pvlib.irradiance.get_extra_radiation(data.index),
-        albedo=albedo,
-        model='haydavies',
-    )
-    total_irradiance.fillna(0, inplace=True)
-    total_irradiance[total_irradiance < 0.01] = 0
-
-    # Store POA features with tilt/azimuth suffix for diffuse and direct
-    data[f"{features['dhi_poa']['name']}_tilt{surface_tilt}_az{surface_azimuth}"] = total_irradiance['poa_diffuse']
-    data[f"{features['dni_poa']['name']}_tilt{surface_tilt}_az{surface_azimuth}"] = total_irradiance['poa_direct']
-
-    # Global POA and cell temperature without suffix (temporary, will be dropped later)
-    data[features['ghi_poa']['name']] = total_irradiance['poa_global']
-
-    # calculate cell temperature (angle-dependent due to POA irradiance)
-    cell_temperature = pvlib.temperature.faiman(total_irradiance['poa_global'],
-                                                temperature,
-                                                wind_speed,
-                                                u0=faiman_u0,
-                                                u1=faiman_u1)
-    data[features['cell_temperature']['name']] = cell_temperature
-    return data
+def station_coordinates(master_csv: str) -> pd.DataFrame:
+    return pd.read_csv(master_csv, dtype={"station_id": str}).set_index("station_id")
 
 
-def generate_pv_power(data: pd.DataFrame,
-                      features: dict,
-                      params: dict,
-                      degradation_vector: np.ndarray = None
-                      ) -> pd.Series:
-    np.random.seed(params['random_seed'])
-    # get data
-    ghi_poa = data[features['ghi_poa']['name']]
-    cell_temperature = data[features['cell_temperature']['name']]
-    pm2_5 = data[features['pm2_5']['name']]
-    pm10 = data[features['pm10']['name']]
-    prec = data[features['prec']['name']]
-    prec_dau = data[features['prec_dau']['name']]
-
-    # get static params
-    dc_rating = params['dc_rating_watts']
-    ac_rating = dc_rating / params['dc_ac_ratio']
-    gamma_pdc = params['gamma_pdc']
-    eta_inv_nom = params['eta_inv_nom']
-    eta_inv_ref = params['eta_inv_ref']
-    tilt = params['surface_tilt']
-    v_depos = params['v_depos']
-    cleaning_tresh_day = params['cleaning_thresh_day']
-    cleaning_factor_day = params['cleaning_factor_day']
-    random_seed = params['random_seed']
-
-    power_dc = pvlib.pvsystem.pvwatts_dc(ghi_poa,
-                                         cell_temperature,
-                                         dc_rating,
-                                         gamma_pdc=gamma_pdc,
-                                         temp_ref=25.0)
-    # aging degradation
-    power_dc *= degradation_vector if degradation_vector is not None else 1.0
-
-    # applying soiling losses
-    power_dc = apply_soiling(power=power_dc,
-                             pm2_5=pm2_5,
-                             pm10=pm10,
-                             prec=prec,
-                             prec_dau=prec_dau,
-                             tilt=tilt,
-                             v_depos=v_depos,
-                             cleaning_thresh_day=cleaning_tresh_day,
-                             cleaning_factor_day=cleaning_factor_day,
-                             random_seed=random_seed
-                             ) if params['apply_soiling'] else power_dc
-
-    power_ac = pvlib.inverter.pvwatts(power_dc,
-                                      ac_rating,
-                                      eta_inv_nom=eta_inv_nom,
-                                      eta_inv_ref=eta_inv_ref)
-    # drop columns
-    #data.drop(columns=[features['dhi_poa']['name'],
-    #                   features['ghi_poa']['name'],
-    #                   features['dni_poa']['name'],
-    #                   features['cell_temperature']['name']], inplace=True)
-    data.drop(columns=[features['ghi_poa']['name'],
-                       features['cell_temperature']['name']], inplace=True)
-    return power_ac
+def run_station(sid: str, row: pd.Series, cfg_pv: dict, start: str, end: str, conn, pairs: list, rng: np.random.Generator) -> tuple:
+    idx = timebase.hourly_index(start, end)
+    irr = drivers.station_imputed(sid, start, end)
+    met, meta = drivers.era5_met(conn, row["latitude"], row["longitude"], start, end)
+    drv = drivers.merge_driver(irr, met, idx)
+    eta = float(rng.normal(cfg_pv.get("mean_eta_inv_nom", 0.96), cfg_pv.get("std_eta_inv_nom", 0.01)))
+    out = pd.DataFrame(index=idx)
+    for c in ("ghi", "dhi", "temp_air", "wind_speed", "albedo", "imputed_share", "missing_share"):
+        if c in drv:
+            out[c] = drv[c]
+    first = True
+    for tilt, az in pairs:
+        cfg = pvconfig.station_grid(sid, row["latitude"], row["longitude"], float(row["station_height"]), float(tilt), float(az),
+                                    kwp_dc=cfg_pv.get("dc_rating_watts", 10000) / 1000.0,
+                                    dc_ac=cfg_pv.get("dc_ac_ratio", 1.0),
+                                    module={"model": cfg_pv.get("module_model", "pvwatts"), "gamma_pdc": cfg_pv.get("gamma_pdc", -0.0035), "year": cfg_pv.get("year", 2015)},
+                                    inverter={"model": "pvwatts", "eta_inv_nom": eta, "eta_inv_ref": cfg_pv.get("eta_inv_ref", 0.9637)},
+                                    temperature={"model": "faiman", "u0": cfg_pv.get("faiman_u0", 25.0), "u1": cfg_pv.get("faiman_u1", 6.84)},
+                                    transposition={"albedo": cfg_pv.get("albedo", "era5"), "iam": cfg_pv.get("iam", "physical")},
+                                    aging={"enabled": bool(cfg_pv.get("apply_ageing", False)), "commissioning_date": cfg_pv.get("commissioning_date"), "era": cfg_pv.get("era")})
+        r = chain.run_park(cfg, drv)
+        if first:
+            out["dni"], out["zenith"], out["azimuth_sun"] = r["dni"], r["zenith"], r["azimuth_sun"]
+            first = False
+        suf = f"tilt{int(tilt)}_az{int(az)}"
+        out[f"poa_{suf}"] = r["poa_global"]
+        out[f"tcell_{suf}"] = r["t_cell"]
+        out[f"pdc_{suf}"] = r["p_dc_w"]
+        out[f"10kw_{suf}"] = r["p_ac_w"]
+    params = {"station_id": sid, "latitude": row["latitude"], "longitude": row["longitude"], "altitude": float(row["station_height"]),
+              "eta_inv_nom": eta, "era5_met_cell": meta["era5_met_cell"], "imputed_share": float(irr["imputed_share"].mean()),
+              "missing_share": float(irr["missing_share"].mean())}
+    return out, params
 
 
-def gen_pv_power_for_angle(params: dict,
-                           features: dict,
-                           df: pd.DataFrame,
-                           degradation_vector: np.ndarray = None) -> pd.DataFrame:
-    """
-    Generate PV power for a specific tilt/azimuth combination.
-    Assumes angle-independent features have already been calculated.
-    """
-    tilt, az = params['surface_tilt'], params['surface_azimuth']
-    # Calculate angle-dependent features (POA, cell temperature)
-    df = get_angle_dependent_features(data=df,
-                                      features=features,
-                                      params=params)
-    # Generate power
-    power = generate_pv_power(data=df,
-                              features=features,
-                              params=params,
-                              degradation_vector=degradation_vector)
-    df[f'10kw_tilt{tilt}_az{az}'] = power
-    return df
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--config", default=os.path.join(REPO, "configs", "config_pv.yaml"))
+    ap.add_argument("--stations", default=None, help="comma list; default: all imputed stations")
+    ap.add_argument("--start", default=None)
+    ap.add_argument("--end", default=None)
+    ap.add_argument("--out", default=None, help="output dir; default <synth_dir>/solar/stations_pv_v1")
+    ap.add_argument("--master", default=os.path.expanduser("~/Work/stations_master.csv"))
+    args = ap.parse_args()
+    cfg = pvconfig.load_yaml(args.config)
+    cfg_pv = cfg["pv_params"]
+    start = args.start or cfg["data"].get("from_date", "2023-07-24")
+    end = args.end or cfg["data"].get("to_date", "2026-08-01")
+    out_dir = args.out or os.path.join(cfg["data"]["synth_dir"], "solar", "stations_pv_v1")
+    os.makedirs(out_dir, exist_ok=True)
+    master = station_coordinates(args.master)
+    ids = args.stations.split(",") if args.stations else [s for s in drivers.imputed_stations() if s in master.index]
+    pairs = cfg_pv["tilt_az_list"]
+    rng = np.random.default_rng(int(cfg_pv.get("random_seed", 42)))
+    conn = era5_db.connect()
+    params = {}
+    for i, sid in enumerate(ids):
+        t0 = time.time()
+        out, par = run_station(sid, master.loc[sid], cfg_pv, start, end, conn, pairs, rng)
+        out.to_parquet(os.path.join(out_dir, f"synth_{sid}.parquet"))
+        params[sid] = par
+        print(f"[{i + 1}/{len(ids)}] {sid}: {len(out)} h, {len(pairs)} pairs, imputed {par['imputed_share']:.3f}, {time.time() - t0:.1f}s", flush=True)
+    pd.DataFrame(params).T.to_csv(os.path.join(out_dir, "pv_parameter.csv"))
+    json.dump({"config": cfg_pv, "start": start, "end": end, "pairs": pairs, "n_stations": len(ids)}, open(os.path.join(out_dir, "manifest.json"), "w"), indent=1, default=str)
 
-def main() -> None:
-    config = tools.load_config("configs/config_pv.yaml")
-    db_config = config['write']['db_conf']
 
-    raw_dir = os.path.join(config['data']['raw_dir'], 'solar')
-    cams_dir = config['data']['cams_dir']
-    era5_dir = config['data']['era5_dir']
-    pv_ages_path = config['data']['pv_ages']
-    pv_ages = np.load(pv_ages_path)
-
-    features = config['features']
-    params = config['pv_params']
-    tilt_az_list = params['tilt_az_list']
-
-    aging_flag = 'noage'
-    if params['apply_ageing']:
-        aging_flag = 'age'
-    soiling_flag = 'nosoil'
-    if params['apply_soiling']:
-        soiling_flag = 'soil'
-    if params['hourly_resolution']:
-        resolution = 'hourly'
-    else:
-        resolution = '10min'
-    synth_dir = os.path.join(config['data']['synth_dir'],
-                             'solar',
-                             f'solar_{resolution}_{aging_flag}_{soiling_flag}')
-    if os.path.exists(synth_dir) and config['write']['overwrite_synth_data']:
-        shutil.rmtree(synth_dir)
-    os.makedirs(synth_dir, exist_ok=True)
-
-    commissioning_date = params.get('commissioning_date', None)
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        #datefmt=datefmt,
-        handlers=[
-            #logging.FileHandler(log_file),
-            logging.StreamHandler()
-            ]
-    )
-    pv_features, _ = clean_data.relevant_features(features=features)
-
-    masterdata = tools.get_master_data(db_config)
-
-    frames, station_ids = read_dfs(path=raw_dir,
-                                   cams_dir=cams_dir,
-                                   era5_dir=era5_dir,
-                                   features=pv_features,
-                                   drop_threshold=config['write']['drop_threshold'],
-                                   hourly_resolution=params['hourly_resolution'])
-    logging.info(f'Starting solar power generation. Ageing: {params["apply_ageing"]}, Soiling: {params["apply_soiling"]}, Hourly resolution: {params["hourly_resolution"]}')
-    power_master = {}
-    for station_id, frame in tqdm(zip(station_ids, frames), desc="Processing stations"):
-        df = frame.copy()
-        degradation_vector, commissioning_date = get_ageing_degradation(time_vector=df.index,
-                                                                        real_ages=pv_ages,
-                                                                        random_seed=params['random_seed'])
-        specific_params = get_specific_params(station_id=station_id,
-                                              masterdata=masterdata,
-                                              params=params,
-                                              commissioning_date=commissioning_date)
-
-        # Calculate angle-independent features ONCE per station
-        df = prepare_angle_independent_features(data=df,
-                                                features=features,
-                                                params=specific_params)
-
-        # Loop over tilt/azimuth combinations
-        for tilt, az in tilt_az_list:
-            specific_params['surface_tilt'] = tilt
-            specific_params['surface_azimuth'] = az
-            df = gen_pv_power_for_angle(
-                    params=specific_params,
-                    features=features,
-                    df=df,
-                    degradation_vector=degradation_vector
-            )
-        params['random_seed'] += 1
-        del specific_params['surface_tilt']
-        del specific_params['surface_azimuth']
-        del specific_params['dc_rating_watts']
-        del specific_params['random_seed']
-        del specific_params['mean_eta_inv_nom']
-        del specific_params['apply_ageing']
-        del specific_params['apply_soiling']
-        del specific_params['hourly_resolution']
-        del specific_params['tilt_az_list']
-        df.to_csv(os.path.join(synth_dir, f'synth_{station_id}.csv'), sep=";", decimal=".")
-        power_master[station_id] = specific_params
-    # Save the park parameters
-    pv_parameter_path = os.path.join(synth_dir, 'pv_parameter.csv')
-    write_header = not os.path.exists(pv_parameter_path) #and not park_id
-    df_power_master = pd.DataFrame.from_dict(power_master, orient='index')
-    df_power_master.index.name = 'park_id'
-    # check if the entries are already in the file if it exists
-    df_power_master.to_csv(pv_parameter_path, sep=";", decimal=".", mode='a', header=write_header)
-    # drop duplicates
-    df_power_master = pd.read_csv(pv_parameter_path, sep=";", decimal=".", dtype={'park_id': str})
-    df_power_master.drop_duplicates(inplace=True)
-    df_power_master.to_csv(pv_parameter_path, sep=";", decimal=".", index=False)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
