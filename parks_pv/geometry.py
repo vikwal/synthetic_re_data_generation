@@ -21,12 +21,12 @@ from pv import arrays as arr, terrain
 AZ_CENTRE = {"Süd": 180.0, "Süd-West": 225.0, "Süd-Ost": 135.0, "Ost": 90.0, "West": 270.0, "Nord": 0.0,
              "Nord-Ost": 45.0, "Nord-West": 315.0}
 # true mount tilt (deg) by register tilt class and cohort: uniform ranges
-TILT_RANGE = {("20 - 40 Grad", "<=2012"): (25.0, 32.0), ("20 - 40 Grad", "2013-20"): (20.0, 28.0), ("20 - 40 Grad", "2021+"): (15.0, 25.0),
-              ("< 20 Grad", "<=2012"): (15.0, 20.0), ("< 20 Grad", "2013-20"): (12.0, 19.0), ("< 20 Grad", "2021+"): (10.0, 18.0),
+TILT_RANGE = {("20 - 40 Grad", "<=2012"): (25.0, 32.0), ("20 - 40 Grad", "2013-20"): (20.0, 28.0), ("20 - 40 Grad", "2021+"): (20.0, 25.0),
+              ("< 20 Grad", "<=2012"): (15.0, 19.0), ("< 20 Grad", "2013-20"): (12.0, 19.0), ("< 20 Grad", "2021+"): (10.0, 18.0),
               ("40 - 60 Grad", "<=2012"): (40.0, 45.0), ("40 - 60 Grad", "2013-20"): (40.0, 45.0), ("40 - 60 Grad", "2021+"): (40.0, 45.0)}
 EW_TILT = (10.0, 15.0)
 AZ_SIGMA = 6.0               # parcel alignment noise around the class centre
-DEVIATION_SHARE = 0.15       # parks whose true main orientation differs from the register class
+DEVIATION_SHARE = 0.15       # share of SOUTH-registered parks whose true main orientation differs from the register class
 MAX_ARRAYS = 4
 
 

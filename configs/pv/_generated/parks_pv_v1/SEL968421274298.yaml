@@ -1,0 +1,63 @@
+altitude: 556.8274536132812
+dc_ac: 1.0094949494949494
+module:
+  model: pvwatts
+  name: null
+  gamma_pdc: -0.003
+  year: 2025
+inverter:
+  model: pvwatts
+  name: null
+  eta_inv_nom: 0.97
+  eta_inv_ref: 0.9637
+  unit_kw: null
+temperature:
+  model: faiman
+  u0: 25.0
+  u1: 6.84
+losses:
+  dc: 0.05
+  ac: 0.02
+  availability: 0.98
+aging:
+  enabled: true
+  commissioning_date: '2025-07-01'
+  era: topcon_bifacial
+soiling:
+  enabled: false
+  model: hsu
+  cleaning_threshold_mm: 1.0
+  pm_station: null
+shading:
+  horizon: true
+  inter_row: true
+transposition:
+  model: haydavies
+  iam: physical
+  albedo: era5
+random_seed: 42
+park_id: SEL968421274298
+latitude: 49.03512
+longitude: 12.90533
+kwp_dc: 999.4
+arrays:
+- name: east_0
+  tilt: 13.47
+  azimuth: 89.53
+  share: 0.29781
+  gcr: 0.4648372093023256
+- name: east_1
+  tilt: 14.89
+  azimuth: 89.87
+  share: 0.21508
+  gcr: 0.4648372093023256
+- name: west_0
+  tilt: 11.86
+  azimuth: 283.4
+  share: 0.28284
+  gcr: 0.4648372093023256
+- name: west_1
+  tilt: 10.46
+  azimuth: 284.83
+  share: 0.20427
+  gcr: 0.4648372093023256
