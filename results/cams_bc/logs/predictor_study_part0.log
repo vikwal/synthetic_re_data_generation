@@ -1,0 +1,7 @@
+part 0: 6 configurations, 1,977,707 rows
+A_ladder cams+geom: objective 0.8708  rel_rmse ghi 0.9142 dhi 0.8273  46s
+A_ladder cams+geom+ring3+ring8+ring_agg+context: objective 0.7727  rel_rmse ghi 0.8186 dhi 0.7268  121s
+B_form full/kc_unweighted: objective 0.7619  rel_rmse ghi 0.8098 dhi 0.7141  162s
+C_loo full-cams: objective 0.7595  rel_rmse ghi 0.8078 dhi 0.7113  155s
+C_loo full-ring_agg: objective 0.7580  rel_rmse ghi 0.8071 dhi 0.7090  137s
+C_loo full-static: objective 0.7567  rel_rmse ghi 0.8041 dhi 0.7093  157s

@@ -37,6 +37,7 @@ centre; every driver converted in `pv.timebase.to_hourly_mean` with its own sour
 | `inverter.py` | `pick_inverter`, `ac_pvwatts`, `ac_sandia` |
 | `aging.py` | `degradation_series` by era, `inverter_availability` |
 | `soiling.py` | `hsu_ratio`, repaired `legacy_erf_loss` |
+| `snow.py` | ERA5 snow fields at a point (`era5_snow_point`), Marion coverage (`coverage`, pvlib), depth gate, `loss_factor`; validated on Trianel winter 2023/24: linear depth rule 0–5 cm recommended |
 | `angles.py` | `poa_bank`, `grid_fit`, `nnls_mixture`, `morning_evening_asymmetry` |
 | `metrics.py` | benchmark metrics, plateau detection, residual by sun position, snow candidates |
 

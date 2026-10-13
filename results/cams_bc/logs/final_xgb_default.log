@@ -1,0 +1,20 @@
+fold 0: objective 0.7413 rel ghi 0.7926 dhi 0.6901
+fold 1: objective 0.7594 rel ghi 0.8000 dhi 0.7188
+fold 2: objective 0.7703 rel ghi 0.8223 dhi 0.7184
+    var       resolution        model        n     rmse      mae     bias      r2   skill
+0   ghi            30min         cams   414749  64.5760  41.9209   4.3116  0.9276     NaN
+1   ghi            30min  xgb_default   414749  50.6700  32.3590  -0.8368  0.9554  0.2153
+2   ghi            30min          lin   414749  62.3453  41.0794  -0.9182  0.9325  0.0345
+3   ghi               1h         cams   198514  55.1677  37.3094   4.3890  0.9449     NaN
+4   ghi               1h  xgb_default   198514  42.0616  28.0969  -0.8196  0.9680  0.2376
+5   ghi               1h          lin   198514  53.0646  36.4519  -0.6993  0.9490  0.0381
+6   ghi  30min_oof_train  xgb_default  1756493  55.4794  34.8225  -1.2834  0.9461  0.1940
+7   ghi  30min_oof_train         cams  1756493  68.8314  44.1688   4.7204  0.9170     NaN
+8   dhi            30min         cams   412535  46.0511  31.5768   9.8406  0.7633     NaN
+9   dhi            30min  xgb_default   412535  29.9365  20.3032   2.0797  0.9000  0.3499
+10  dhi            30min          lin   412535  39.9789  28.1135   2.2045  0.8216  0.1319
+11  dhi               1h         cams   197441  41.9410  29.5005  10.2379  0.7897     NaN
+12  dhi               1h  xgb_default   197441  26.5831  18.5526   2.2264  0.9155  0.3662
+13  dhi               1h          lin   197441  36.2853  26.2083   2.4576  0.8426  0.1348
+14  dhi  30min_oof_train  xgb_default  1746952  34.9868  23.2178   0.5297  0.8743  0.2903
+15  dhi  30min_oof_train         cams  1746952  49.2959  33.1704   6.9780  0.7504     NaN
