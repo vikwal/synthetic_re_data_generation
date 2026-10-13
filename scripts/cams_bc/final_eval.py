@@ -88,7 +88,8 @@ def main():
             P = mdl.predict(Xte)
             for i, v in enumerate(C.VARS):
                 preds[v].append(targets.decode(form, P[:, i], te, v))
-            torch.save({"state": mdl.net.state_dict(), "mu": mdl.mu, "sd": mdl.sd, "med": mdl.med, "params": mdl.p}, os.path.join(mdir, f"fold{k}.pt"))
+            torch.save({"state": mdl.net.state_dict(), "mu": mdl.mu, "sd": mdl.sd, "med": mdl.med, "nan_cols": mdl.nan_cols, "params": mdl.p},
+                       os.path.join(mdir, f"fold{k}.pt"))
         print(f"fold {k}: objective {s['objective']:.4f} rel ghi {s['rel_rmse_ghi']:.4f} dhi {s['rel_rmse_dhi']:.4f}", flush=True)
     json.dump({"model": args.model, "params": params, "form": form, "groups": list(args.groups), "columns": cols},
               open(os.path.join(mdir, "meta.json"), "w"), indent=1)
@@ -96,6 +97,9 @@ def main():
     ens = {v: np.mean(preds[v], axis=0) for v in C.VARS}
     cols_lin = F.columns(["cams", "geom"])
     lin = linear_baseline(df, te, cols_lin, form)
+    # physical constraint dhi <= ghi, applied exactly as in apply_parks so the test metric is for the shipped product
+    ens["dhi"] = np.minimum(ens["dhi"], ens["ghi"])
+    lin["dhi"] = np.minimum(lin["dhi"], lin["ghi"])
     rows, per, hourly_rows = [], [], []
     for v in C.VARS:
         m_all = data.valid_mask(te, v, cols)

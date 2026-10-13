@@ -44,10 +44,12 @@ def per_station(df: pd.DataFrame, pred: np.ndarray, var: str, valid: np.ndarray)
 
 
 def hourly(df: pd.DataFrame, pred: np.ndarray, var: str, valid: np.ndarray) -> pd.DataFrame:
-    """Hourly means of observation, CAMS and prediction over valid 30-min rows (the PV chain is hourly)."""
+    """Hourly means of observation, CAMS and prediction over valid 30-min rows (the PV chain is hourly).
+    Rows carry interval-END labels, so hour HH = rows HH:30 and HH+1:00; the 1-minute shift before
+    flooring puts both on the START label HH:00 (same rule as apply_parks)."""
     sub = df.loc[valid, ["station_id", f"{var}_obs", f"cams_{var}"]].copy()
     sub["pred"] = np.asarray(pred)[valid]
-    sub["hour"] = sub.index.floor("h")
+    sub["hour"] = (sub.index - pd.Timedelta("1min")).floor("h")
     g = sub.groupby(["station_id", "hour"])
     h = g.mean(numeric_only=True)
     h["n"] = g.size()

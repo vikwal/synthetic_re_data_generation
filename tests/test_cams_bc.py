@@ -97,11 +97,66 @@ def test_metrics_skill():
     y = np.array([1.0, 2.0, 3.0, 4.0])
     assert metrics.basic(y, y)["rmse"] == 0.0
     assert metrics.skill(1.0, 2.0) == 0.5
-    df = pd.DataFrame({"station_id": ["a"] * 4, "ghi_obs": y, "cams_ghi": y + 1}, index=pd.date_range("2024-01-01", periods=4, freq="30min", tz="UTC"))
+    # END labels 00:30, 01:00, 01:30, 02:00 -> hours 00:00 (rows 1,2) and 01:00 (rows 3,4)
+    df = pd.DataFrame({"station_id": ["a"] * 4, "ghi_obs": y, "cams_ghi": y + 1}, index=pd.date_range("2024-01-01 00:30", periods=4, freq="30min", tz="UTC"))
     e = metrics.evaluate(df, {"m": y + 0.5}, "ghi", np.ones(4, bool))
     assert e["m"]["skill"] == pytest.approx(0.5)
     h = metrics.hourly(df, y + 0.5, "ghi", np.ones(4, bool))
     assert len(h) == 2
+    assert list(h.index.get_level_values("hour")) == list(pd.to_datetime(["2024-01-01 00:00", "2024-01-01 01:00"], utc=True))
+    assert h["ghi_obs"].to_numpy() == pytest.approx([1.5, 3.5])
+    # a lone half-hour never forms an hour
+    h1 = metrics.hourly(df, y + 0.5, "ghi", np.array([True, True, True, False]))
+    assert len(h1) == 1
+
+
+def test_to_30min_requires_both_quarters():
+    idx = pd.date_range("2024-06-01 10:15", periods=4, freq="15min", tz="UTC")  # END labels 10:15 ... 11:00
+    d = pd.DataFrame({"ghi": [100.0, 200.0, np.nan, 400.0]}, index=idx)
+    r = data.to_30min(d)
+    assert list(r.index) == list(pd.to_datetime(["2024-06-01 10:30", "2024-06-01 11:00"], utc=True))
+    assert r["ghi"].iloc[0] == pytest.approx(150.0)
+    assert np.isnan(r["ghi"].iloc[1])
+
+
+def test_mlp_missingness_indicators():
+    """Columns with gaps in training get a 0/1 indicator; gaps are median-filled from training rows only."""
+    from cams_bc.models import MLPModel
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(300, 4)).astype(np.float32)
+    X[::3, 1] = np.nan                       # column 1 has gaps, the others not
+    m = MLPModel({"n_layers": 1, "width": 8, "max_epochs": 1, "batch_size": 64}, device="cpu")
+    Z = m._prep(X, fit=True)
+    assert list(m.nan_cols) == [1]
+    assert Z.shape == (300, 5)
+    assert m.med[1] == pytest.approx(np.nanmedian(X[:, 1]))
+    Xn = X.copy()
+    Xn[0, 2] = np.nan                        # a gap in a column that had none in training -> filled, no new column
+    Zn = m._prep(Xn)
+    assert Zn.shape == (300, 5)
+    assert np.isfinite(Zn).all()
+    y = np.column_stack([X[:, 0], X[:, 2]]); y = np.where(np.isfinite(y), y, 0).astype(np.float32)
+    m.fit(X, y, np.ones(300), X[:50], y[:50], np.ones(50))
+    assert m.predict(Xn).shape == (300, 2)
+
+
+def test_load_booster_matches_early_stopping_prediction(tmp_path):
+    """A reloaded booster must predict with best_iteration+1 trees, not with all saved rounds."""
+    from cams_bc.models import XGBModel, load_booster
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(400, 3)).astype(np.float32)
+    y = X[:, 0] + 0.1 * rng.normal(size=400)
+    Xv = rng.normal(size=(100, 3)).astype(np.float32)
+    yv = Xv[:, 0] + 2.0 * rng.normal(size=100)  # noisy validation -> early stop well before n_rounds
+    w, wv = np.ones(400), np.ones(100)
+    m = XGBModel({"learning_rate": 0.3, "max_depth": 2}, n_rounds=300, early_stopping=5, device="cpu").fit(X, y, w, Xv, yv, wv)
+    assert m.booster.num_boosted_rounds() > m.best_iteration + 1
+    p = tmp_path / "b.json"
+    m.booster.save_model(str(p))
+    b = load_booster(str(p))
+    import xgboost as xgb
+    assert b.num_boosted_rounds() == m.best_iteration + 1
+    assert np.allclose(b.predict(xgb.DMatrix(Xv)), m.predict(Xv), atol=1e-6)
 
 
 def test_neighbour_features_exclude_self():

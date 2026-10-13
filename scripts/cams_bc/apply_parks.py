@@ -89,21 +89,18 @@ def load_models(models_dir: str, device: str) -> tuple:
     meta = json.load(open(os.path.join(models_dir, "meta.json")))
     models = []
     if meta["model"] == "xgb":
-        import xgboost as xgb
+        from cams_bc.models import load_booster
         for k in range(3):
-            fold = {}
-            for v in C.VARS:
-                b = xgb.Booster()
-                b.load_model(os.path.join(models_dir, f"fold{k}_{v}.json"))
-                fold[v] = b
-            models.append(fold)
+            # load_booster cuts the saved booster back to best_iteration (same trees as in final_eval)
+            models.append({v: load_booster(os.path.join(models_dir, f"fold{k}_{v}.json")) for v in C.VARS})
     else:
         import torch
         for k in range(3):
             ck = torch.load(os.path.join(models_dir, f"fold{k}.pt"), weights_only=False)
             m = MLPModel(ck["params"], device=device)
             m.mu, m.sd, m.med = ck["mu"], ck["sd"], ck["med"]
-            m.net = m._build(len(meta["columns"]), 2).to(device)
+            m.nan_cols = np.asarray(ck.get("nan_cols", []), dtype=int)   # missingness indicators fixed at training
+            m.net = m._build(len(meta["columns"]) + len(m.nan_cols), 2).to(device)
             m.net.load_state_dict(ck["state"])
             models.append(m)
     return meta, models

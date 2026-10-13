@@ -9,7 +9,7 @@ disjoint station groups (`data/cams_bc/splits.csv`, stratified over a lat/lon gr
 | Module | Content |
 |---|---|
 | `config.py` | paths (`DATA_ROOT`), ring geometry, split constants |
-| `features.py` | feature groups (`cams`, `geom`, `ring3`, `ring8`, `ring_agg`, `context`, `era5_solar`, `era5_met`, `static`) and the ladder of the predictor study |
+| `features.py` | feature groups (`cams`, `geom`, `ring3`, `ring8`, `ring_agg`, `context`, `era5_solar`, `era5_met`, `neighbours`, `static`) and the ladder of the predictor study; `neighbours` = the 4 nearest OTHER stations' measured kc/kd and CAMS error (QC-passed observation only, NaN at gaps, no distance columns; input only, never a target) |
 | `targets.py` | target forms (`kc` with clear-sky² weights = loss in W/m², `kc_unweighted`, `ratio`, `residual`, `absolute`) |
 | `data.py` | 30-min feature frames: `assemble()` is shared by the station dataset and the park application |
 | `splits.py` | test set (20 %) and station folds |

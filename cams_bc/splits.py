@@ -1,8 +1,9 @@
 """Station splits: a held-out test set and a 3-fold cross-validation over DISJOINT station groups.
 
 Stratified over a lat/lon grid so that every fold and the test set cover north/south and east/west
-alike; deterministic through a seeded permutation. The table is stored in data/cams_bc_splits.csv
-and read back by every script, so no two scripts can disagree about which station is a test station.
+alike; deterministic through a seeded permutation. The table is stored in data/cams_bc/splits.csv
+(with lat/lon/elev, so serving needs no external station list) and read back by every script, so no
+two scripts can disagree about which station is a test station.
 """
 import numpy as np
 import pandas as pd

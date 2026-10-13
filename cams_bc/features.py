@@ -10,7 +10,10 @@ ERA5_SOLAR = ["era5_ghi", "era5_bhi", "era5_ghi_clear", "era5_toa", "era5_albedo
 ERA5_MET = ["era5_temp_2m", "era5_pressure", "era5_dew_dep"]
 STATIC = ["lat", "lon", "elev"]
 N_NEIGHBOURS = 4
-NEIGHBOURS = [f"nb{i}_{v}" for i in range(N_NEIGHBOURS) for v in ("kc", "kd", "err", "dist_km")] + ["nb_err_wmean", "nb_kc_wmean", "nb_err_std"]
+# Measured kc/kd and CAMS error of the k nearest other stations plus distance-weighted means. The
+# per-neighbour distances are NOT features (decision 2026-10-13 after the review: constant per
+# station, they act as a station identifier and cost 0.35 Pp objective); they only weight the means.
+NEIGHBOURS = [f"nb{i}_{v}" for i in range(N_NEIGHBOURS) for v in ("kc", "kd", "err")] + ["nb_err_wmean", "nb_kc_wmean", "nb_err_std"]
 
 
 def ring_cols(radius: float) -> list:

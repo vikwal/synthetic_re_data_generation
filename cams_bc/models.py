@@ -32,25 +32,46 @@ class XGBModel:
         return {names[int(k[1:])]: v for k, v in g.items()}
 
 
+def load_booster(path: str) -> xgb.Booster:
+    """Reload a booster saved after early stopping and cut it back to the early-stopping optimum.
+    save_model keeps all rounds (optimum + patience) and a reloaded Booster.predict uses ALL trees, so
+    without the cut a served model would differ from the one evaluated (XGBModel.predict uses
+    iteration_range up to best_iteration)."""
+    b = xgb.Booster()
+    b.load_model(path)
+    best = b.attr("best_iteration")
+    if best is None:
+        raise ValueError(f"{path}: no best_iteration attribute - was the model trained with early stopping?")
+    return b[: int(best) + 1]
+
+
 MLP_DEFAULT = {"n_layers": 3, "width": 256, "dropout": 0.1, "lr": 1e-3, "weight_decay": 1e-5, "batch_size": 4096,
                "activation": "gelu", "lr_schedule": "plateau", "max_epochs": 60, "patience": 8}
 
 
 class MLPModel:
     """Multi-output (one column per target) MLP with weighted MSE. Features are median-filled and
-    standardised with statistics of the training rows only."""
+    standardised with statistics of the training rows only. Every column that has gaps in the training
+    rows gets a 0/1 missingness indicator appended (nan_cols), so the network can tell "no neighbour
+    measurement / no ring point" from "median value" - the counterpart of XGBoost's default direction
+    for NaN."""
 
     def __init__(self, params: dict = None, device: str = "cuda:0", seed: int = 0):
         self.p = {**MLP_DEFAULT, **(params or {})}
         self.device, self.seed = device, seed
         self.net, self.mu, self.sd, self.med, self.history = None, None, None, None, []
+        self.nan_cols = np.array([], dtype=int)
 
     def _prep(self, X, fit=False):
         X = np.asarray(X, np.float32)
+        miss = ~np.isfinite(X)
         if fit:
+            self.nan_cols = np.flatnonzero(miss.any(0))
             self.med = np.nanmedian(X, axis=0)
             self.med = np.where(np.isfinite(self.med), self.med, 0.0).astype(np.float32)
-        X = np.where(np.isfinite(X), X, self.med)
+        X = np.where(miss, self.med, X)
+        if len(self.nan_cols):
+            X = np.concatenate([X, miss[:, self.nan_cols].astype(np.float32)], axis=1)
         if fit:
             self.mu, self.sd = X.mean(0), X.std(0) + 1e-6
         return (X - self.mu) / self.sd
@@ -70,7 +91,9 @@ class MLPModel:
         torch.manual_seed(self.seed)
         y, w, y_val, w_val = (np.asarray(a, np.float32) for a in (y, w, y_val, w_val))
         if y.ndim == 1:
-            y, w, y_val, w_val = y[:, None], w[:, None], y_val[:, None], w_val[:, None]
+            y, y_val = y[:, None], y_val[:, None]
+        if w.ndim == 1:                      # one weight per row applies to every output
+            w, w_val = w[:, None], w_val[:, None]
         Xt = torch.tensor(self._prep(X, fit=True), device=self.device)
         Xv = torch.tensor(self._prep(X_val), device=self.device)
         yt, wt = torch.tensor(y, device=self.device), torch.tensor(w, device=self.device)

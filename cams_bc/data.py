@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from . import features as F
-from .config import AZIMUTHS, DATASET, IMPUTED, PROCESSED, RADII, RING_DIR, RING_POINTS, SOLAR_CONSTANT, STEP
+from .config import AZIMUTHS, DATASET, IMPUTED, PROCESSED, RADII, RING_DIR, RING_POINTS, SOLAR_CONSTANT, SPLITS, STEP
 from .splits import station_table
 
 PROCESSED_COLS = ["ghi_obs", "dhi_obs", "y_valid_ghi", "y_valid_dhi", "day_mask", "cams_ghi", "cams_bhi", "cams_dhi",
@@ -145,30 +145,66 @@ def build_station(sid: str, rp: pd.DataFrame = None, coords: pd.DataFrame = None
     return d[["station_id"] + F.TARGET_COLS + F.columns(F.FULL)].copy()
 
 
+def refresh_neighbours(sid: str, table: pd.DataFrame = None, coords: pd.DataFrame = None) -> pd.DataFrame:
+    """Rewrite only the neighbour columns of an existing station frame (after a change of the
+    neighbour source or feature list) instead of rebuilding ring and ERA5 features."""
+    table = neighbour_table() if table is None else table
+    coords = coords_all() if coords is None else coords
+    d = pd.read_parquet(dataset_path(sid))
+    lat, lon = (float(coords.loc[sid, c]) for c in ("lat", "lon"))
+    nb = neighbour_features(lat, lon, d.index, table, coords, exclude=[sid])
+    d = d.drop(columns=[c for c in d.columns if c.startswith("nb")])
+    d = d.join(nb[F.NEIGHBOURS])
+    return d[["station_id"] + F.TARGET_COLS + F.columns(F.FULL)].copy()
+
+
 # --------------------------------------------------------------- neighbour stations as INPUT
 
 def coords_all() -> pd.DataFrame:
+    """Coordinates of all stations. Served from the split table (lat/lon/elev are stored there), so
+    the park application needs no station list from another repo; the DWD list is the fallback."""
+    if os.path.exists(SPLITS):
+        sp = pd.read_csv(SPLITS, dtype={"station_id": str}).set_index("station_id")
+        if {"lat", "lon", "elev"} <= set(sp.columns):
+            return sp[["lat", "lon", "elev"]].astype(float)
     return station_table(station_ids())
 
 
-def neighbour_table(path: str = None) -> pd.DataFrame:
-    """Wide 30-min table of all stations' measured clear-sky index (observed, gaps filled with the
-    transformer imputation so that an input never has a hole), diffuse fraction and CAMS clear-sky
-    index: columns <sid>_kc, <sid>_kd, <sid>_kcc. Built once and cached next to the dataset."""
-    path = path or os.path.join(os.path.dirname(DATASET), "neighbours_30min.parquet")
+def neighbour_table(path: str = None, source: str = "raw") -> pd.DataFrame:
+    """Wide 30-min table of all stations' measured clear-sky index, diffuse fraction and CAMS clear-sky
+    index: columns <sid>_kc, <sid>_kd, <sid>_kcc. Built once and cached next to the dataset.
+    source='raw' (default, decision 2026-10-13): the pure QC-passed observation, NaN at gaps - the
+    imputer used other stations' measurements as input, so filled values could carry a test station's
+    own measurement into its neighbour features; neighbour_source_study.py showed the filled share is
+    worth nothing. source='filled': observed, gaps filled with the transformer imputation (kept for
+    that comparison; the imputation product's ghi_observed is already observed-else-imputed)."""
+    if source not in ("filled", "raw"):
+        raise ValueError(source)
+    suffix = "" if source == "filled" else "_raw"
+    path = path or os.path.join(os.path.dirname(DATASET), f"neighbours{suffix}_30min.parquet")
     if os.path.exists(path):
         return pd.read_parquet(path)
     cols = {}
     for sid in station_ids():
-        p = pd.read_parquet(os.path.join(PROCESSED, f"Station_{sid}.parquet"), columns=["cams_ghi", "cams_ghi_clear", "day_mask"])
-        imp = pd.read_parquet(os.path.join(IMPUTED, f"Station_{sid}.parquet"),
-                              columns=["timestamp", "ghi_observed", "ghi_imputed", "dhi_observed", "dhi_imputed"]).set_index("timestamp").sort_index().reindex(p.index)
-        ghi = imp["ghi_observed"].where(imp["ghi_observed"].notna(), imp["ghi_imputed"])
-        dhi = imp["dhi_observed"].where(imp["dhi_observed"].notna(), imp["dhi_imputed"])
+        p = pd.read_parquet(os.path.join(PROCESSED, f"Station_{sid}.parquet"),
+                            columns=["cams_ghi", "cams_ghi_clear", "day_mask", "y_valid_ghi", "y_valid_dhi"])
+        if source == "filled":
+            imp = pd.read_parquet(os.path.join(IMPUTED, f"Station_{sid}.parquet"),
+                                  columns=["timestamp", "ghi_observed", "ghi_imputed", "dhi_observed", "dhi_imputed"]).set_index("timestamp").sort_index().reindex(p.index)
+            ghi = imp["ghi_observed"].where(imp["ghi_observed"].notna(), imp["ghi_imputed"])
+            dhi = imp["dhi_observed"].where(imp["dhi_observed"].notna(), imp["dhi_imputed"])
+        else:
+            imp = pd.read_parquet(os.path.join(IMPUTED, f"Station_{sid}.parquet"),
+                                  columns=["timestamp", "ghi_raw", "dhi_raw"]).set_index("timestamp").sort_index().reindex(p.index)
+            # same BSRN QC as the targets, so an outlier never enters as a neighbour value
+            ghi = imp["ghi_raw"].where(p["y_valid_ghi"].astype(bool))
+            dhi = imp["dhi_raw"].where(p["y_valid_dhi"].astype(bool) & p["y_valid_ghi"].astype(bool))
         clear = np.maximum(p["cams_ghi_clear"], 1.0)
         day = p["day_mask"].astype(bool)
-        cols[f"{sid}_kc"] = (ghi / clear).where(day).astype(np.float32)
-        cols[f"{sid}_kd"] = (dhi / np.maximum(ghi, 1.0)).where(day).astype(np.float32)
+        # kc clipped at 2: beyond that only twilight ratios of two small numbers (q99.9 of the raw
+        # table is 1.8, max 4.5), which would dominate the MLP's standardisation
+        cols[f"{sid}_kc"] = (ghi / clear).clip(0.0, 2.0).where(day).astype(np.float32)
+        cols[f"{sid}_kd"] = (dhi / np.maximum(ghi, 1.0)).clip(0.0, 1.0).where(day).astype(np.float32)
         cols[f"{sid}_kcc"] = (p["cams_ghi"] / clear).where(day).astype(np.float32)
     t = pd.DataFrame(cols)
     os.makedirs(os.path.dirname(path), exist_ok=True)
