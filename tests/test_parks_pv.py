@@ -55,3 +55,20 @@ def test_park_parameters_and_config():
                                                            {"name": "b", "tilt": 25, "azimuth": 200, "share": 0.4}])
     assert cfg["losses"] == P.LOSSES and cfg["shading"]["inter_row"] and cfg["arrays"][0]["gcr"] == par["gcr"]
     assert cfg["module"]["gamma_pdc"] == P.GAMMA["multi_perc"] and cfg["aging"]["commissioning_date"] == "2016-07-01"
+
+
+def test_release_frame_and_clients_table():
+    from parks_pv import assemble as A, metadata as M
+    idx = pd.date_range("2024-01-01", periods=48, freq="h", tz="UTC")
+    drv = pd.DataFrame({c: np.linspace(0, 1, 48) for c in A.DRIVER_COLS}, index=idx)
+    res = pd.DataFrame({c: np.ones(48) for c in A.CHAIN_COLS + ["power_park_free"]}, index=idx)
+    res["power_park"] = 0.5
+    rel = A.release_frame(drv, res)
+    assert list(rel.columns) == A.DRIVER_COLS + A.CHAIN_COLS + A.POWER_COLS and rel.index.name == "timestamp"
+    assert (rel["power_park"] == 0.5).all() and (rel["availability"] == 1.0).all() and rel.dtypes.eq("float64").all()
+    parks = pd.DataFrame({"client_id": ["R0", "R0", "N0", "holdout"], "client_kind": ["regional", "regional", "nationwide", "nationwide"],
+                          "region": [1, 1, 2, 3], "capacity_kw": [1000.0, 2000.0, 500.0, 700.0], "capacity_kwp_dc": [1100.0, 2200.0, 550.0, 770.0],
+                          "n_arrays": [2, 3, 1, 4]})
+    c = M.clients_table(parks).set_index("client_id")
+    assert c.loc["R0", "n_parks"] == 2 and c.loc["R0", "capacity_kw"] == 3000.0 and c.loc["R0", "region_id"] == 1
+    assert c.loc["holdout", "archetype"] == "holdout" and c.loc["N0", "region_id"] == ""
