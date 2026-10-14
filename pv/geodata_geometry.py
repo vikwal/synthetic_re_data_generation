@@ -235,14 +235,18 @@ def row_bands(m: np.ndarray, tf, res: float, row_axis_deg: float, pitch_m: float
 
 
 def footprint_from_dom(dom_path: str, dgm_path: str, x: float, y: float, radius_m: float = 1500.0, min_height: float = 0.6,
-                       max_height: float = 4.0, min_area_ha: float = 0.3, expected_module_ha: float = None):
+                       max_height: float = 4.0, min_area_ha: float = 0.3, expected_module_ha: float = None, dop_path: str = None):
     """Footprint of the module field belonging to a registered coordinate (which may be rounded by up to ~700 m):
     height band inside a search disc, closing over the row gaps (10 m), connected components; the component is
     chosen by distance to the point and, if given, by how well its module area matches the expected one
     (kWp / typical kWp-per-ha). Returns (convex hull + 5 m, module_area_ha) or (None, 0)."""
     from shapely.geometry import Point, MultiPoint
     disc = Point(x, y).buffer(radius_m)
-    m, h, tf, res = height_mask(dom_path, dgm_path, disc, min_height, max_height)
+    if dop_path:
+        m, h, tf, res = module_mask(dop_path, dom_path, dgm_path, disc, min_height, max_height)
+    else:
+        m, h, tf, res = height_mask(dom_path, dgm_path, disc, min_height, max_height)
+    m = ndimage.binary_opening(m, iterations=1)                      # drop isolated cells
     filled = ndimage.binary_closing(m, iterations=max(int(10.0 / res), 1))
     lab, n = ndimage.label(filled)
     if n == 0:
@@ -255,11 +259,19 @@ def footprint_from_dom(dom_path: str, dgm_path: str, x: float, y: float, radius_
         comp = lab == k
         mod_ha = (comp & m).sum() * res * res / 1e4
         density = mod_ha * 1e4 / max(comp.sum() * res * res, 1.0)     # module cells / closed area: rows 0.2-0.75, hedges ~1
-        if mod_ha < min_area_ha or not (0.15 <= density <= 0.8):
+        if mod_ha < min_area_ha or density < 0.05:
             continue
         score = 1.0 / (1.0 + d[comp].min() / 500.0)
         if expected_module_ha:
             score *= np.exp(-abs(np.log(mod_ha / expected_module_ha)))
+        # stripe-ness: module fields are periodic rows (spectral share in the 4-20 m band), crops and trees are not
+        r0, r1 = np.where(comp.any(1))[0][[0, -1]]
+        c0, c1 = np.where(comp.any(0))[0][[0, -1]]
+        try:
+            _, _, share = row_axis_from_mask(np.where(comp, m, False)[r0:r1 + 1, c0:c1 + 1], res)
+        except Exception:  # noqa: BLE001
+            share = 0.0
+        score *= float(np.clip(share / 0.2, 0.3, 1.5))
         if score > best_score:
             best, best_score = comp, score
     if best is None:
@@ -268,3 +280,90 @@ def footprint_from_dom(dom_path: str, dgm_path: str, x: float, y: float, radius_
     px, py = rasterio.transform.xy(tf, r_, c_)
     hull = MultiPoint(list(zip(px, py))).convex_hull.buffer(5.0)
     return hull, float(len(r_) * res * res / 1e4)
+
+
+def colour_mask(dop_path: str, like_transform, like_shape, greenness_max: float = 0.06, brightness_max: float = 245.0) -> np.ndarray:
+    """Module-like colour on the (block) grid of the height mask: not green and not bright. Crops, hedges and
+    young trees in the 0.6-4 m height band are green; roads, gravel and roofs are bright; modules are dark
+    blue-grey. greenness = (G - R) / (G + R)."""
+    with rasterio.open(dop_path) as src:
+        win = src.window(*rasterio.transform.array_bounds(like_shape[0], like_shape[1], like_transform)[[0, 1, 2, 3]] if False else
+                         (like_transform.c, like_transform.f + like_transform.e * like_shape[0], like_transform.c + like_transform.a * like_shape[1], like_transform.f))
+        img = src.read(out_shape=(3, like_shape[0], like_shape[1]), window=win, boundless=True, fill_value=0).astype(float)
+    r, g, b = img[0], img[1], img[2]
+    green = (g - r) / (g + r + 1.0)
+    bright = img.mean(0)
+    return (green < greenness_max) & (bright < brightness_max) & (bright > 5)
+
+
+def module_mask(dop_path: str, dom_path: str, dgm_path: str, footprint, min_height: float = 0.6, max_height: float = 4.0, block: int = 5) -> tuple:
+    """Height band AND module colour: (mask, height, transform, res)."""
+    m, h, tf, res = height_mask(dom_path, dgm_path, footprint, min_height, max_height, block)
+    cm = colour_mask(dop_path, tf, m.shape)
+    return m & cm, h, tf, res
+
+
+def profile_geometry(dom_path: str, dgm_path: str, footprint, row_axis_deg: float, pitch_m: float, n_bins: int = 40) -> dict:
+    """Park-level table shape from the median height-above-ground profile across one row pitch (0.2 m DOM):
+    a symmetric hump with two tilted flanks = east-west table (two faces), a ramp with one gradual flank and
+    one sharp drop = single-face table. Tilts from linear fits on the flanks, azimuths = row normal towards the
+    descending side. More robust than per-cell planes on blurred image-matching DSMs."""
+    mk, h, tf, res = height_mask(dom_path, dgm_path, footprint, 0.0, 6.0, block=1)
+    rows, cols = np.where(np.isfinite(h))
+    if len(rows) < 1000:
+        return {"type": "none"}
+    xs, ys = rasterio.transform.xy(tf, rows, cols)
+    a = np.radians(row_axis_deg)
+    n = np.array(xs) * np.cos(a) - np.array(ys) * np.sin(a)
+    phase = (n - n.min()) % pitch_m
+    bins = np.linspace(0, pitch_m, n_bins + 1)
+    hv = h[rows, cols]
+    prof = np.array([np.nanmedian(hv[(phase >= bins[i]) & (phase < bins[i + 1])]) for i in range(n_bins)])
+    if not np.isfinite(prof).all():
+        return {"type": "none"}
+    step = pitch_m / n_bins
+    k = int(np.argmax(prof))
+    prof = np.roll(prof, n_bins // 2 - k)                 # ridge to the centre
+    lo = prof.min()
+    el = prof > lo + 0.25 * (prof.max() - lo)
+    c = n_bins // 2
+    left = np.arange(c, -1, -1)
+    left = left[el[left]] if el[c] else np.array([c])
+    right = np.arange(c, n_bins)
+    right = right[el[right]] if el[c] else np.array([c])
+    # contiguous runs from the ridge outwards
+    def run(idx):
+        out = [idx[0]]
+        for i in idx[1:]:
+            if abs(i - out[-1]) == 1:
+                out.append(i)
+            else:
+                break
+        return np.array(out)
+    left, right = run(left), run(right)
+    def slope(idx):
+        if len(idx) < 4:
+            return np.nan, 0.0
+        xg = (idx - c) * step
+        coef = np.polyfit(xg, prof[idx], 1)
+        return float(np.degrees(np.arctan(abs(coef[0])))), float(len(idx) * step)
+    t_l, w_l = slope(left)
+    t_r, w_r = slope(right)
+    normal = (row_axis_deg + 90.0) % 360.0               # compass of +n direction
+    out = {"pitch_m": pitch_m, "row_axis_deg": row_axis_deg, "height_ridge": float(prof.max()), "height_min": float(lo),
+           "flank_left_tilt": t_l, "flank_left_width": w_l, "flank_right_tilt": t_r, "flank_right_width": w_r, "profile": prof.round(2).tolist()}
+    # two faces only when both flanks are module-like: >= 2.5 m wide, 4-25 deg (a south table's north edge drops
+    # at > 25 deg over < 2 m and must not count as a face) and of similar tilt
+    two = (np.isfinite(t_l) and np.isfinite(t_r) and min(w_l, w_r) >= 2.5 and 4.0 <= min(t_l, t_r) and max(t_l, t_r) <= 25.0
+           and max(t_l, t_r) / max(min(t_l, t_r), 1e-6) <= 1.6)
+    if two:
+        out.update({"type": "two_faces", "faces": [{"tilt": t_l, "azimuth": (normal + 180.0) % 360.0, "share": w_l / (w_l + w_r)},
+                                                   {"tilt": t_r, "azimuth": normal, "share": w_r / (w_l + w_r)}]})
+    else:
+        # single face: the gradual (wider) flank is the module plane, it descends away from the ridge
+        if w_l >= w_r:
+            out.update({"type": "single_face", "faces": [{"tilt": t_l, "azimuth": (normal + 180.0) % 360.0, "share": 1.0}]})
+        else:
+            out.update({"type": "single_face", "faces": [{"tilt": t_r, "azimuth": normal, "share": 1.0}]})
+    return out
+

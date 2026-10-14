@@ -72,21 +72,28 @@ def one(r, osm, out_dir, area_fallback_ha):
     dop, dom, dgm = (mosaic(p, tiles, out_dir) for p in ("dop20", "dom20", "dgm1"))
     # footprint check against the DOM: if the mapped/registered footprint holds < 0.3 ha of module cells, or the
     # point lies outside it, take the module field nearest to the coordinate from the DOM itself
-    m0, _, _, res0 = GG.height_mask(dom, dgm, fp_utm)
+    m0, _, _, res0 = GG.module_mask(dop, dom, dgm, fp_utm)
     x0, y0 = TO_UTM.transform(r.lon, r.lat)
-    if fp_src != "osm" or m0.sum() * res0 * res0 < 0.3e4 or not fp_utm.buffer(30).contains(__import__("shapely.geometry", fromlist=["Point"]).Point(x0, y0)):
+    mod0_ha = m0.sum() * res0 * res0 / 1e4
+    # the module field is always located from the DOM (periodic stripes near the point); a mapped OSM polygon is
+    # kept only when it agrees with that field (contains its centre and is not more than twice its hull)
+    osm_ok = False
+    if True:
         tiles_s = [(e, n) for e in range(int((x0 - 1500) // 1000), int((x0 + 1500) // 1000) + 1) for n in range(int((y0 - 1500) // 1000), int((y0 + 1500) // 1000) + 1)]
-        dom_s, dgm_s = mosaic("dom20", tiles_s, out_dir), mosaic("dgm1", tiles_s, out_dir)
+        dom_s, dgm_s, dop_s = mosaic("dom20", tiles_s, out_dir), mosaic("dgm1", tiles_s, out_dir), mosaic("dop20", tiles_s, out_dir)
         exp_ha = float(getattr(r, "expected_module_ha", np.nan)) if np.isfinite(getattr(r, "expected_module_ha", np.nan)) else None
-        hull, mod_ha = GG.footprint_from_dom(dom_s, dgm_s, x0, y0, expected_module_ha=exp_ha)
+        hull, mod_ha = GG.footprint_from_dom(dom_s, dgm_s, x0, y0, expected_module_ha=exp_ha, dop_path=dop_s)
         if hull is not None:
-            fp_utm, fp_src = hull, "dom"
+            if fp_src == "osm" and fp_utm.contains(hull.centroid) and fp_utm.area <= 2.0 * hull.area:
+                pass                                          # mapped polygon agrees with the DOM field: keep it
+            else:
+                fp_utm, fp_src = hull, "dom"
             minx, miny, maxx, maxy = fp_utm.buffer(60).bounds
             tiles2 = [(e, n) for e in range(int(minx // 1000), int(maxx // 1000) + 1) for n in range(int(miny // 1000), int(maxy // 1000) + 1)]
             if tiles2 != tiles:
                 dop, dom, dgm = (mosaic(p, tiles2, out_dir) for p in ("dop20", "dom20", "dgm1"))
     rows = imagery.row_geometry(dop, fp_utm)
-    m, h, tfb, res = GG.height_mask(dom, dgm, fp_utm)
+    m, h, tfb, res = GG.module_mask(dop, dom, dgm, fp_utm)
     ax_dom, pitch_dom, share_dom = GG.row_axis_from_mask(m, res)
     rows.update({"row_axis_dom": ax_dom, "pitch_dom": pitch_dom, "share_dom": share_dom, "module_cells_ha": float(m.sum() * res * res / 1e4)})
     polys = osm_tables(els, fp_utm) if fp_src != "dom" else []
@@ -94,6 +101,7 @@ def one(r, osm, out_dir, area_fallback_ha):
     if len(polys) < 3:
         polys, tab_src = GG.row_bands(m, tfb, res, ax_dom, pitch_dom), "dom_row_bands"
     t = GG.table_planes(dom, dgm, polys, row_axis_deg=ax_dom)
+    prof = GG.profile_geometry(dom, dgm, fp_utm, ax_dom, pitch_dom)
     with rasterio.open(dom) as d:
         dom_date = d.tags().get("TIFFTAG_DATETIME", "")
     if t.empty:
@@ -117,8 +125,11 @@ def one(r, osm, out_dir, area_fallback_ha):
             "height_median": float(t.height_above_ground.median()), "plane_rms_median": float(t.plane_rms.median()),
             "ground_slope_capw": float((t.ground_slope * w).sum()), "terrain_following": float(np.mean(np.abs(t.tilt - t.ground_slope) < 1.0)),
             **{f"row_{k}": v for k, v in rows.items() if k != "peaks"},
+            "profile_type": prof.get("type"), "profile_faces": "; ".join(f"{f['tilt']:.1f}/{f['azimuth']:.0f}x{f['share']:.2f}" for f in prof.get("faces", [])),
+            "profile_ridge_m": prof.get("height_ridge"), "profile_min_m": prof.get("height_min"),
             "arrays": "; ".join(f"{c.tilt:.1f}/{c.azimuth:.0f}x{c.share:.2f}" for c in cl)}
-    arrays_rows = [{"park_id": r.park_id, "array_id": c.name, "tilt": c.tilt, "azimuth": c.azimuth, "share": c.share, "source": "geodata"} for c in cl]
+    arrays_rows = [{"park_id": r.park_id, "array_id": c.name, "tilt": c.tilt, "azimuth": c.azimuth, "share": c.share, "source": "geodata_planes"} for c in cl]
+    arrays_rows += [{"park_id": r.park_id, "array_id": f"p{i}", "tilt": f["tilt"], "azimuth": f["azimuth"], "share": f["share"], "source": "geodata_profile"} for i, f in enumerate(prof.get("faces", []))]
     return summ, arrays_rows
 
 
