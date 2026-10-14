@@ -10,7 +10,7 @@ its natural floor 0 (= off).
 
 v4 (2026-10-13, after the independent review): v3 top-10 trials touched max_depth 16, min_child_weight
 ~200 (97 % of the log range), colsample 0.2 and n_layers 8 -> max_depth 24, min_child_weight 1000,
-colsample floor 0.1, n_layers 12. Pruning changed as well: the MedianPruner compares a trial's BEST
+colsample floor 0.1, n_layers 12 (v6: 20 after the v5 best trial sat at 12). Pruning changed as well: the MedianPruner compares a trial's BEST
 intermediate value with the median at the current step, and fold 0 is systematically ~0.03 easier
 than folds 1/2, so with per-fold reports nothing was ever pruned in v3. v4 reports the running mean
 over the folds in FOLD_ORDER (hardest first), which makes the intermediate values comparable."""
@@ -43,7 +43,7 @@ def sample_xgb(trial: optuna.Trial, form: str = None) -> dict:
 
 
 def sample_mlp(trial: optuna.Trial, form: str = None) -> dict:
-    p = {"n_layers": trial.suggest_int("n_layers", 2, 12),
+    p = {"n_layers": trial.suggest_int("n_layers", 2, 20),
          "width": trial.suggest_int("width", 64, 1024, log=True),
          "dropout": trial.suggest_float("dropout", 0.0, 0.5),
          "lr": trial.suggest_float("lr", 2e-5, 1e-2, log=True),
