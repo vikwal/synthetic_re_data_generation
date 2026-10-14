@@ -82,6 +82,9 @@ def main():
     ap.add_argument("--snow-dir", required=True)
     ap.add_argument("--snow-cache", required=True)
     ap.add_argument("--extras-dir", default=os.path.expanduser("~/Work/FL_Contribution/reports/figs_pv_generator"))
+    ap.add_argument("--geodata-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share from geometry_from_geodata_trianel")
+    ap.add_argument("--estimate-windows", nargs="*", type=int, default=[30, 90, 365], help="meter history (days from start) for the power-based angle estimate")
+    ap.add_argument("--geometry-only", action="store_true", help="only the geometry rungs (faster)")
     ap.add_argument("--out", default=os.path.expanduser("~/Work/FL_Contribution/reports/figs_pv_generator"))
     args = ap.parse_args()
     m = tc.load_masterdata()
@@ -96,6 +99,8 @@ def main():
     pm_ids = sorted(os.path.basename(f)[5:-4] for f in __import__("glob").glob(os.path.join(drivers.CAMS_PM_DIR, "cams_*.csv")))
     rows, geo_rows, scales = [], [], {}
     results = {}
+    geo_arr = pd.read_csv(args.geodata_arrays) if args.geodata_arrays and os.path.exists(args.geodata_arrays) else pd.DataFrame()
+    from pv import plausibility as PL
     pvs = [pv for pv in parks.index if pv in meter and meter[pv].notna().sum() > 1000]
     for pv in pvs:
         p = parks.loc[pv]
@@ -143,6 +148,30 @@ def main():
 
         rungs = {
             "full": (corr, cfg_for(terr), True),
+            "geometry_master_only": (corr, cfg_for(master), True),
+            "geometry_fitted_step1": (corr, cfg_for(fitted), True),
+        }
+        if len(geo_arr) and (geo_arr.park_id == pv).any():
+            g = geo_arr[geo_arr.park_id == pv]
+            rungs["geometry_geodata"] = (corr, cfg_for([{"name": a.array_id, "tilt": float(a.tilt), "azimuth": float(a.azimuth), "share": float(a.share)} for a in g.itertuples()]), True)
+        # power-based estimate from the first N days of meter data (grid best pair, corrected driver), then applied to the whole window
+        for nd in args.estimate_windows:
+            sl = slice(idx[0], idx[0] + pd.Timedelta(days=nd))
+            try:
+                est = PL.assess(y.loc[sl], corr.loc[sl], p["lat"], p["lon"], p["alt"], exclude=None, n_boot=0)
+                gr, mx = est["grid"], est["mixture"]
+                if mx["east_west"]:
+                    comps = [c for c in mx["components"]]
+                    tot = sum(c[2] for c in comps)
+                    arrays_est = [{"name": f"m{i}", "tilt": c[0], "azimuth": c[1], "share": c[2] / tot} for i, c in enumerate(comps)]
+                else:
+                    arrays_est = [{"name": "est", "tilt": float(gr["tilt"]), "azimuth": float(gr["azimuth"]), "share": 1.0}]
+                rungs[f"geometry_estimated_{nd}d"] = (corr, cfg_for(arrays_est), True)
+                geo_rows.append({"pv": pv, "estimate_days": nd, "tilt_est": gr["tilt"], "az_est": gr["azimuth"], "east_west": mx["east_west"], "n_clear": est["n_clear_hours"]})
+            except Exception as e:  # noqa: BLE001
+                print(pv, "estimate failed", nd, str(e)[:80], flush=True)
+        if not args.geometry_only:
+            rungs.update({
             "no_snow": (corr, cfg_for(terr), False),
             "no_terrain_master_angles": (corr, cfg_for(master), True),
             "no_horizon": (corr, cfg_for(terr, horizon=False), True),
@@ -152,12 +181,12 @@ def main():
             "no_aging": (corr, cfg_for(terr, aging=False), True),
             "fitted_geometry": (corr, cfg_for(fitted), True),
             "register_only_raw_cams_no_snow": (raw, cfg_for(master, horizon=False, interrow=False, losses=LOSSES_P), False),
-        }
+            })
         ps = {}
         tilt_mean = float(sum(a["tilt"] * a["share"] for a in terr))
         for name, (drv, cfg, ws) in rungs.items():
             ps[name], _ = run(drv, cfg, ws)
-        for thr, init in ((1.0, 0), (1.0, 30), (1.0, 90), (0.5, 30), (2.0, 30)):
+        for thr, init in (() if args.geometry_only else ((1.0, 0), (1.0, 30), (1.0, 90), (0.5, 30), (2.0, 30))):
             r = soiling_ratio(pm, rain, tilt_mean, idx, "2023-07-01", init, thr)
             ps[f"full_soiling_thr{thr:g}_init{init}"] = ps["full"] * r.fillna(1.0)
             rows.append({"pv": pv, "rung": f"full_soiling_thr{thr:g}_init{init}", "subset": "soiling_ratio_stats", "mean_ratio": float(r.mean()),
@@ -186,8 +215,9 @@ def main():
             b = metrics.basic(y[mm], ps["full"][mm] * loo, cap_w)
             rows.append({"pv": pv, "rung": "full_loo_scaled", "subset": tag, "n": int((mm & y.notna()).sum()), "scale_loo": loo, "scale_own": scales[pv], **b})
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(args.out, "ablation_trianel_long.csv"), index=False)
-    pd.DataFrame(geo_rows).to_csv(os.path.join(args.out, "ablation_trianel_geometry.csv"), index=False)
+    tag = "geometry" if args.geometry_only else "long"
+    df.to_csv(os.path.join(args.out, f"ablation_trianel_{tag}.csv"), index=False)
+    pd.DataFrame(geo_rows).to_csv(os.path.join(args.out, f"ablation_trianel_{tag}_geometry.csv"), index=False)
     print("\nscales (full chain, day_nosuspect):", {k: round(v, 3) for k, v in scales.items()})
     main_rungs = [r for r in df.rung.unique() if r != "full_loo_scaled"]
     for sub in ("day_nosuspect", "cloudy", "winter", "snow_days"):
