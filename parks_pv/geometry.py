@@ -44,23 +44,55 @@ def _azimuth(rng, cls: str) -> float:
     return float((AZ_CENTRE[cls] + np.clip(rng.normal(0.0, AZ_SIGMA), -20.0, 20.0)) % 360.0)
 
 
-def nominal_arrays(row, rng) -> tuple:
+def orientation_from_rows(row_axis_deg: float, register_class: str) -> tuple:
+    """Module orientation implied by the mapped table rows (OSM power=generator polygons): rows running
+    east-west (axis ~90) carry south-facing modules, rows running north-south (axis ~0/180) an east-west
+    park. Returns (class, azimuth or None). Oblique rows: the perpendicular on the south side."""
+    a = row_axis_deg % 180.0
+    if a < 30.0 or a > 150.0:
+        return "Ost-West", None
+    az = (a + 90.0) % 360.0                      # perpendicular on the south side (90 < az < 270)
+    return orientation_class(az), az
+
+
+def nominal_arrays(row, rng, row_axis_deg: float = None) -> tuple:
     """(list of dicts {name, tilt, azimuth, share, source}, deviation note or None) for one selected park.
     row needs: orientation_class, tilt_class, secondary_orientation, secondary_tilt_class, uniform_flag,
-    cohort, cls."""
+    cohort, cls. With row_axis_deg (OSM table rows) the true orientation comes from the map: a real register
+    deviation is recorded when it contradicts the register class; the random 15 % deviation applies only to
+    parks without row evidence."""
     main, tilt_cls, coh = row.orientation_class, row.tilt_class, row.cohort
-    deviation = None
-    if rng.random() < DEVIATION_SHARE and main == "Süd":
+    deviation, az_rows = None, None
+    if row_axis_deg is not None and np.isfinite(row_axis_deg):
+        cls_rows, az_rows = orientation_from_rows(row_axis_deg, main)
+        ew_rows, ew_reg = cls_rows == "Ost-West", main == "Ost-West"
+        if ew_rows != ew_reg:
+            deviation = f"registered {main}, mapped rows {cls_rows} (OSM)"
+        elif not ew_rows:
+            off = abs(((az_rows - AZ_CENTRE[main]) + 180.0) % 360.0 - 180.0)
+            if off > 45.0:                       # more than one octant off the registered class
+                deviation = f"registered {main}, mapped rows {cls_rows} {az_rows:.0f} deg (OSM)"
+        main = cls_rows
+    elif rng.random() < DEVIATION_SHARE and main == "Süd":
         main = "Ost-West" if rng.random() < 0.4 else rng.choice(["Süd-West", "Süd-Ost"])
         deviation = f"registered Süd, built {main}"
     out = []
     if main == "Ost-West":
         t = float(rng.uniform(*EW_TILT))
         s = float(rng.uniform(0.45, 0.55))
-        out += [{"name": "east", "tilt": t, "azimuth": _azimuth(rng, "Ost"), "share": s, "source": "east-west"},
-                {"name": "west", "tilt": t, "azimuth": _azimuth(rng, "West"), "share": 1.0 - s, "source": "east-west"}]
+        if row_axis_deg is not None and np.isfinite(row_axis_deg):
+            ax = row_axis_deg % 180.0
+            az_e, az_w = (ax + 90.0) % 360.0, (ax + 270.0) % 360.0
+            if az_e > 180.0:
+                az_e, az_w = az_w, az_e
+        else:
+            az_e, az_w = _azimuth(rng, "Ost"), _azimuth(rng, "West")
+        out += [{"name": "east", "tilt": t, "azimuth": az_e, "share": s, "source": "east-west"},
+                {"name": "west", "tilt": t, "azimuth": az_w, "share": 1.0 - s, "source": "east-west"}]
     else:
-        out.append({"name": "main", "tilt": _tilt(rng, tilt_cls, coh), "azimuth": _azimuth(rng, main), "share": 1.0, "source": "main class"})
+        az = az_rows if az_rows is not None else _azimuth(rng, main)
+        out.append({"name": "main", "tilt": _tilt(rng, tilt_cls, coh), "azimuth": az, "share": 1.0,
+                    "source": "main class (OSM rows)" if az_rows is not None else "main class"})
     sec = [s for s in str(row.secondary_orientation or "").split("/") if s]
     if sec:
         s_tot = float(rng.uniform(0.15, 0.45))

@@ -49,11 +49,14 @@ def stage_sites(args):
     osm = json.load(open(OSM_JSON)) if os.path.exists(OSM_JSON) else {}
     pvg = json.load(open(PVGIS_JSON)) if os.path.exists(PVGIS_JSON) else {}
     terr = pd.read_parquet(os.path.join(paths.MASTR_DIR, "pool_terrain_20250625.parquet")).set_index("park_id")
+    rows_path = os.path.join(paths.DATA_DIR, "osm_row_geometry.csv")
+    row_axis = pd.read_csv(rows_path).set_index("park_id") if os.path.exists(rows_path) else pd.DataFrame()
     arrays_rows, site_rows, view_rows, par_rows, horizons = [], [], [], [], {}
     for r in sel.itertuples():
         rng = G.park_rng(r.park_id, args.seed)
         par = P.park_parameters(r)
-        nominal, deviation = G.nominal_arrays(r, rng)
+        ax = float(row_axis.loc[r.park_id, "row_axis_deg"]) if r.park_id in row_axis.index and row_axis.loc[r.park_id, "n_elongated"] >= 3 else None
+        nominal, deviation = G.nominal_arrays(r, rng, ax)
         area_fb = float(r.area_ha) if np.isfinite(r.area_ha) and r.area_ha > 0 else par["kwp_dc"] / par["kwp_per_ha"]
         poly, fp_src = G.footprint(r, osm.get(r.park_id, {}).get("elements", []), area_fb)
         try:
@@ -84,7 +87,7 @@ def stage_sites(args):
                           "terrain_cls": r.terrain_cls, "footprint_src": fp_src, "footprint_ha": round(terrain.area_ha(poly), 2),
                           **{k: round(v, 3) for k, v in tstats.items()}, "n_arrays": len(arrays), "tilt_mean_true": round(float(tm), 2),
                           "azimuth_mean_true": round(float(am), 2), "tilt_capw_true": round(t_mean, 2),
-                          "register_deviation": deviation or "", "horizon_src": hz_src, "horizon_max_deg": round(max(hz.values()), 2) if hz else np.nan,
+                          "register_deviation": deviation or "", "row_axis_osm_deg": ax if ax is not None else np.nan, "horizon_src": hz_src, "horizon_max_deg": round(max(hz.values()), 2) if hz else np.nan,
                           "horizon_south_deg": round(float(hz.get("180.0", np.nan)), 2) if hz else np.nan})
         view_rows.append(G.register_view(r, arrays))
         par_rows.append({"park_id": r.park_id, **par})

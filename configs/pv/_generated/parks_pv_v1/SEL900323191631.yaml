@@ -42,22 +42,22 @@ longitude: 14.58222
 kwp_dc: 3705.0
 arrays:
 - name: main_0
-  tilt: 16.76
-  azimuth: 175.8
-  share: 0.7
+  tilt: 14.18
+  azimuth: 178.57
+  share: 0.6875
   gcr: 0.4116666666666667
 - name: main_1
-  tilt: 14.42
-  azimuth: 186.32
+  tilt: 12.05
+  azimuth: 191.61
   share: 0.1625
   gcr: 0.4116666666666667
 - name: main_2
-  tilt: 18.52
-  azimuth: 194.53
+  tilt: 16.37
+  azimuth: 199.72
   share: 0.0875
   gcr: 0.4116666666666667
 - name: main_3
-  tilt: 16.11
-  azimuth: 158.2
-  share: 0.05
+  tilt: 13.8
+  azimuth: 159.62
+  share: 0.0625
   gcr: 0.4116666666666667
