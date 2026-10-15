@@ -42,13 +42,14 @@ def one(task):
             g, c, n, m, p = res["grid"], res["centroid_azimuth"], res["noon_tilt"], res["mixture"], res["plausibility"]
             daz = ((g["azimuth"] - true_az + 180) % 360) - 180
             rows.append({"park_id": pid, "season": season, "window_days": w, "n_clear_hours": res["n_clear_hours"], "n_days": g.get("n_days"),
+                         "n_suspect": res["n_suspect"], "noon_zenith_spread": res["zenith_spread"], "tilt_identifiable": bool(res["tilt_identifiable"]),
                          "true_tilt": true_tilt, "true_az": true_az, "register_orientation": reg_or, "register_tilt_class": reg_tilt, "deviation": deviation,
                          "tilt_grid": g["tilt"], "az_grid": g["azimuth"], "r2_grid": g["r2"], "tilt_lo": g["tilt_range"][0], "tilt_hi": g["tilt_range"][1],
                          "az_lo": g["azimuth_range"][0], "az_hi": g["azimuth_range"][1],
                          "tilt_boot_lo": g.get("tilt_boot", (np.nan,) * 3)[0], "tilt_boot_hi": g.get("tilt_boot", (np.nan,) * 3)[2],
                          "az_boot_lo": g.get("azimuth_boot", (np.nan,) * 3)[0], "az_boot_hi": g.get("azimuth_boot", (np.nan,) * 3)[2],
                          "az_centroid": c["azimuth"], "az_centroid_iqr": c["iqr"], "tilt_noon": n.get("tilt"), "zenith_spread": n.get("zenith_spread"),
-                         "mix_components": m["n_components"], "mix_east_west": m["east_west"], "w_east": m["w_east"], "w_west": m["w_west"], "w_south": m["w_south"], "mix_tilt_eff": m["tilt_eff"], "mix_az_eff": m["azimuth_eff"],
+                         "mix_components": m["n_components"], "mix_east_west": m["east_west"], "mix_flat": m["flat"], "w_flat": m["w_flat"], "w_east": m["w_east"], "w_west": m["w_west"], "w_south": m["w_south"], "mix_tilt_eff": m["tilt_eff"], "mix_az_eff": m["azimuth_eff"],
                          "err_tilt_grid": g["tilt"] - true_tilt, "err_az_grid": daz, "err_az_centroid": ((c["azimuth"] - true_az + 180) % 360) - 180 if np.isfinite(c["azimuth"]) else np.nan,
                          "err_tilt_noon": (n.get("tilt") - true_tilt) if n.get("tilt") is not None and np.isfinite(n.get("tilt", np.nan)) else np.nan,
                          "tilt_in_region": g["tilt_range"][0] - 2.5 <= true_tilt <= g["tilt_range"][1] + 2.5,
@@ -62,7 +63,11 @@ def main():
     ap.add_argument("--windows", nargs="+", type=int, default=[14, 30, 90, 365])
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--out", default=os.path.expanduser("~/Work/FL_Contribution/reports/figs_pv_park_synthesis_v1"))
+    ap.add_argument("--summary-only", action="store_true", help="recompute the summary from the existing per-row CSV")
     a = ap.parse_args()
+    if a.summary_only:
+        summarise(pd.read_csv(os.path.join(a.out, "plausibility_calibration.csv")), a.out)
+        return
     parks = pd.read_csv(os.path.join(paths.RELEASE_DIR, "parks.csv"))
     arrays = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"))
     view = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_masterdata_view.csv")).set_index("park_id")
@@ -80,7 +85,21 @@ def main():
     df = pd.DataFrame(rows)
     os.makedirs(a.out, exist_ok=True)
     df.to_csv(os.path.join(a.out, "plausibility_calibration.csv"), index=False)
-    ok = df[df.get("error", pd.Series(index=df.index, dtype=object)).isna()] if "error" in df else df
+    summarise(df, a.out)
+
+
+def _rate(flag: pd.Series) -> float:
+    """Share of False among the decided (non-null) flags."""
+    f = flag.dropna()
+    return float((~f.astype(bool)).mean()) if len(f) else np.nan
+
+
+def summarise(df: pd.DataFrame, out: str) -> pd.DataFrame:
+    ok = (df[df["error"].isna()] if "error" in df else df).copy()
+    ok["deviation"] = ok["deviation"].fillna("")
+    for c in ("register_az_ok", "register_tilt_ok"):            # object columns (None where undecidable) -> nullable bool
+        ok[c] = ok[c].map({True: True, False: False, "True": True, "False": False}).astype("boolean")
+    ok["tilt_identifiable"] = ok["tilt_identifiable"].map({True: True, False: False, "True": True, "False": False}).fillna(False).astype(bool)
     g = ok.groupby(["season", "window_days"])
     summ = pd.DataFrame({
         "n": g.size(), "clear_hours_med": g.n_clear_hours.median(),
@@ -89,13 +108,18 @@ def main():
         "tilt_grid_mae": g.err_tilt_grid.apply(lambda s: s.abs().median()), "tilt_grid_p90": g.err_tilt_grid.apply(lambda s: s.abs().quantile(0.9)),
         "tilt_noon_mae": g.err_tilt_noon.apply(lambda s: s.abs().median()),
         "tilt_region_cov": g.tilt_in_region.mean(), "az_region_cov": g.az_in_region.mean(),
-        "false_alarm_az": g.apply(lambda x: (~x.register_az_ok[x.deviation == ""]).mean()),
-        "false_alarm_tilt": g.apply(lambda x: (~x.register_tilt_ok[x.deviation == ""]).mean()),
-        "detect_deviation": g.apply(lambda x: (~x.register_az_ok[x.deviation != ""]).mean() if (x.deviation != "").any() else np.nan),
+        "az_assessed_share": g.apply(lambda x: x.register_az_ok.notna().mean()),
+        "tilt_assessed_share": g.tilt_identifiable.mean(),
+        "tilt_grid_mae_assessed": g.apply(lambda x: x.err_tilt_grid[x.tilt_identifiable].abs().median()),
+        "false_alarm_az": g.apply(lambda x: _rate(x.register_az_ok[x.deviation == ""])),
+        "false_alarm_tilt": g.apply(lambda x: _rate(x.register_tilt_ok[(x.deviation == "") & x.tilt_identifiable])),
+        "detect_deviation": g.apply(lambda x: _rate(x.register_az_ok[x.deviation != ""]) if (x.deviation != "").any() else np.nan),
         "ew_flag_rate_south": g.apply(lambda x: x.mix_east_west[(x.register_orientation == "Süd") & (x.deviation == "")].mean()),
     })
-    summ.to_csv(os.path.join(a.out, "plausibility_calibration_summary.csv"))
+    summ = summ.apply(lambda c: pd.to_numeric(c, errors="coerce"))
+    summ.to_csv(os.path.join(out, "plausibility_calibration_summary.csv"))
     print(summ.round(3).to_string())
+    return summ
 
 
 if __name__ == "__main__":

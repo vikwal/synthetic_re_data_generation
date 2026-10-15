@@ -155,10 +155,12 @@ def main():
             g = geo_arr[geo_arr.park_id == pv]
             rungs["geometry_geodata"] = (corr, cfg_for([{"name": a.array_id, "tilt": float(a.tilt), "azimuth": float(a.azimuth), "share": float(a.share)} for a in g.itertuples()]), True)
         # power-based estimate from the first N days of meter data (grid best pair, corrected driver), then applied to the whole window
+        ac_lim = float(par.loc[pv, "ac_cap_meter_kw"]) * 1000.0 if np.isfinite(par.loc[pv, "ac_cap_meter_kw"]) else None
         for nd in args.estimate_windows:
+            nd = min(nd, int((idx[-1] - idx[0]).days))          # the meter window ends 2024-05-31: "365" is 313 days
             sl = slice(idx[0], idx[0] + pd.Timedelta(days=nd))
             try:
-                est = PL.assess(y.loc[sl], corr.loc[sl], p["lat"], p["lon"], p["alt"], exclude=None, n_boot=0)
+                est = PL.assess(y.loc[sl], corr.loc[sl], p["lat"], p["lon"], p["alt"], exclude=(depth_cm > 0.5).loc[sl], ac_limit_w=ac_lim, n_boot=0)
                 gr, mx = est["grid"], est["mixture"]
                 if mx["east_west"]:
                     comps = [c for c in mx["components"]]
@@ -167,7 +169,8 @@ def main():
                 else:
                     arrays_est = [{"name": "est", "tilt": float(gr["tilt"]), "azimuth": float(gr["azimuth"]), "share": 1.0}]
                 rungs[f"geometry_estimated_{nd}d"] = (corr, cfg_for(arrays_est), True)
-                geo_rows.append({"pv": pv, "estimate_days": nd, "tilt_est": gr["tilt"], "az_est": gr["azimuth"], "east_west": mx["east_west"], "n_clear": est["n_clear_hours"]})
+                geo_rows.append({"pv": pv, "estimate_days": nd, "tilt_est": gr["tilt"], "az_est": gr["azimuth"], "east_west": mx["east_west"], "n_clear": est["n_clear_hours"],
+                                 "n_suspect": est["n_suspect"], "n_clipped_clear": est["n_clipped_clear"], "zenith_spread": round(est["zenith_spread"], 1), "tilt_identifiable": est["tilt_identifiable"]})
             except Exception as e:  # noqa: BLE001
                 print(pv, "estimate failed", nd, str(e)[:80], flush=True)
         if not args.geometry_only:

@@ -280,6 +280,55 @@ def test_angle_estimators_recover_orientation():
     assert abs(n["tilt_eff"] - 30.0) < 5 and abs(n["azimuth_eff"] - 200.0) < 8
 
 
+def test_suspect_mask_catches_outage_hours_and_grid_recovers():
+    from pv import plausibility as PL
+    drv = _clear_driver(8)
+    truth = _cfg(arrays=[{"tilt": 30.0, "azimuth": 180.0, "share": 1.0}], dc_ac=1.0)
+    y = chain.run_park(truth, drv)["p_ac_w"] / 1000e3
+    bank = angles.poa_bank(drv, LAT, LON, ALT, tilts=[10, 20, 30, 40], azimuths=[160, 180, 200])
+    mask = angles.clear_hours(drv["ghi"], LAT, LON, ALT)
+    bad = mask & (drv.index.hour.isin([9, 10, 11, 12]) & (drv.index.day <= 3))     # curtailment on three mornings
+    y_bad = y.where(~bad, 0.2 * y)
+    sus = PL.suspect_mask(y_bad, bank, mask)
+    assert sus[bad].all() and not sus[mask & ~bad].any()
+    g = angles.grid_fit(y_bad, bank, mask & ~sus)
+    assert g.iloc[0]["tilt"] == 30.0 and g.iloc[0]["azimuth"] == 180.0
+
+
+def test_clipping_mask_uses_limit_or_quantile():
+    from pv import plausibility as PL
+    idx = _idx(1)
+    p = pd.Series(np.r_[np.zeros(6), np.linspace(0, 1000, 6), [1000, 1000, 1000], np.linspace(1000, 0, 6), np.zeros(3)], index=idx)
+    assert PL.clipping_mask(p, ac_limit_w=1000.0).sum() == 5
+    assert PL.clipping_mask(p).sum() >= 3
+
+
+def test_tilt_verdict_withheld_without_zenith_spread():
+    from pv import plausibility as PL
+    drv = _clear_driver(10)
+    truth = _cfg(arrays=[{"tilt": 25.0, "azimuth": 180.0, "share": 1.0}], dc_ac=1.0)
+    y = chain.run_park(truth, drv)["p_ac_w"] / 1000e3
+    res = PL.assess(y, drv, LAT, LON, ALT, register_orientation="Süd", register_tilt_class="20 - 40 Grad", n_boot=0)
+    assert res["zenith_spread"] < PL.TILT_ZENITH_SPREAD and res["tilt_identifiable"] is False
+    assert res["plausibility"]["tilt_ok"] is None and res["plausibility"]["azimuth_ok"] is True
+    assert res["n_suspect"] == 0
+    # the same data declared identifiable gives a verdict
+    res2 = PL.assess(y, drv, LAT, LON, ALT, register_orientation="Süd", register_tilt_class="20 - 40 Grad", n_boot=0, zenith_spread_min=0.0)
+    assert res2["plausibility"]["tilt_ok"] is True
+
+
+def test_flat_east_west_is_consistent_with_east_west_register():
+    from pv import plausibility as PL
+    drv = _clear_driver(10)
+    truth = _cfg(arrays=[{"tilt": 7.0, "azimuth": 90.0, "share": 0.5}, {"tilt": 7.0, "azimuth": 270.0, "share": 0.5}], dc_ac=1.0)
+    y = chain.run_park(truth, drv)["p_ac_w"] / 1000e3
+    res = PL.assess(y, drv, LAT, LON, ALT, register_orientation="Ost-West", register_tilt_class="< 20 Grad", n_boot=0, zenith_spread_min=0.0)
+    assert res["mixture"]["w_flat"] > 0.3 or res["grid"]["tilt"] <= 5.0
+    assert res["plausibility"]["azimuth_ok"] in (True, None)
+    res_s = PL.assess(y, drv, LAT, LON, ALT, register_orientation="Süd", register_tilt_class="< 20 Grad", n_boot=0, zenith_spread_min=0.0)
+    assert res_s["plausibility"]["azimuth_ok"] is not False        # flat: undecidable, never a false alarm
+
+
 # -------------------------------------------------------------- metrics
 
 def test_plateau_detection():

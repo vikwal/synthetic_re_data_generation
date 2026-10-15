@@ -9,7 +9,13 @@ snow hours), all built on the POA bank of pv.angles:
   grid_region                   profile-likelihood region {(b, g): R2 >= R2max - delta} on the bank, plus a
                                 bootstrap over clear days for the point estimate
 and the decision: master-data classes (8 azimuth octants, tilt classes) are implausible when they lie outside
-the confidence region. Everything returns effective angles (terrain-following rows make them a mixture)."""
+the confidence region. Everything returns effective angles (terrain-following rows make them a mixture).
+
+Real meters need two more masks (suspect_mask, clipping_mask): hours far below the fitted clear-sky shape
+(curtailment, outages, partial availability) and hours at the AC limit distort the grid fit - on a metered
+east-west park a year of data drifted to 0 deg / 240 deg without them. The tilt is only identifiable when the
+clear noons span a range of zenith angles (seasons); a summer month alone fits 5-10 deg for a 25 deg park with
+a deceptively narrow day-bootstrap interval, so the tilt verdict is withheld below TILT_ZENITH_SPREAD."""
 import numpy as np
 import pandas as pd
 
@@ -17,6 +23,9 @@ from pv import angles, arrays as arr, timebase
 
 TILTS = np.arange(0.0, 61.0, 5.0)
 AZIMUTHS = np.arange(60.0, 301.0, 10.0)
+TILT_ZENITH_SPREAD = 15.0      # deg of clear-noon zenith range needed before a tilt verdict is given
+SUSPECT_FRACTION = 0.5         # hours below this fraction of the fitted clear-sky shape are suspect
+CLIP_FRACTION = 0.97           # hours at or above this fraction of the AC limit are clipped
 
 
 def clear_mask(drv: pd.DataFrame, lat: float, lon: float, alt: float, exclude: pd.Series = None, kc_min: float = 0.8,
@@ -25,6 +34,39 @@ def clear_mask(drv: pd.DataFrame, lat: float, lon: float, alt: float, exclude: p
     if exclude is not None:
         m &= ~exclude.reindex(m.index).fillna(False).astype(bool)
     return m
+
+
+def clipping_mask(power: pd.Series, ac_limit_w: float = None, frac: float = CLIP_FRACTION, q: float = 0.999) -> pd.Series:
+    """Hours at the AC limit (given, else the q-quantile of the series as a proxy)."""
+    lim = float(ac_limit_w) if ac_limit_w is not None and np.isfinite(ac_limit_w) else float(power.quantile(q))
+    return (power >= frac * lim).fillna(False)
+
+
+def suspect_mask(power: pd.Series, bank: dict, mask: pd.Series, frac: float = SUSPECT_FRACTION, iterations: int = 2) -> pd.Series:
+    """Clear hours whose power is below frac x the scaled best-pair POA (curtailment, outages, partial
+    availability). The best pair is refitted without the suspects once (iterations)."""
+    sus = pd.Series(False, index=power.index)
+    m = mask & power.notna()
+    for _ in range(iterations):
+        g = angles.grid_fit(power, bank, m & ~sus)
+        if len(g) == 0 or not np.isfinite(g.iloc[0].r2):
+            break
+        b = g.iloc[0]
+        new = (m & (power < frac * b.scale * bank[(b.tilt, b.azimuth)])).fillna(False)
+        if new.equals(sus):
+            break
+        sus = new
+    return sus
+
+
+def noon_zenith_spread(mask: pd.Series, zenith: pd.Series) -> float:
+    """Range (deg) of the true noon zenith over the days whose noon hour (or a neighbour) is in the mask: the
+    seasonal lever that identifies the tilt. Days with only morning or evening hours in the mask do not count."""
+    noon = zenith.groupby(zenith.index.date).idxmin().dropna()
+    m = mask.reindex(zenith.index).fillna(False).astype(bool).values
+    pos = pd.Series(np.arange(len(zenith)), index=zenith.index).loc[noon.tolist()].values
+    keep = [float(zenith.iloc[i]) for i in pos if m[max(i - 1, 0):i + 2].any()]
+    return float(np.ptp(keep)) if len(keep) >= 2 else 0.0
 
 
 def half_energy_azimuth(power: pd.Series, sun_az: pd.Series, day_mask: pd.Series, min_hours: int = 6) -> pd.Series:
@@ -139,18 +181,27 @@ def grid_region(power: pd.Series, bank: dict, mask: pd.Series, delta: float = 0.
     return out
 
 
+FLAT_TILT = 2.5                # bank components at or below this tilt have no azimuth
+FLAT_WEIGHT = 0.5              # mixture weight on flat components that makes the fit "flat"
+
+
 def mixture(power: pd.Series, bank: dict, mask: pd.Series, min_side: float = 0.25, max_south: float = 0.3) -> dict:
     """NNLS mixture over the bank. east_west is flagged only for a genuine two-sided layout: at least min_side of
     the weight on each of the east (<= 120 deg) and west (>= 240 deg) sides and at most max_south between 135
-    and 225 deg - small leaks of weight to the sides (terrain spread, noise) do not count."""
+    and 225 deg - small leaks of weight to the sides (terrain spread, noise) do not count. Components at tilt
+    <= FLAT_TILT carry no azimuth (the bank series are identical for every azimuth there) and are counted as
+    w_flat, never as south: a flat east-west park is indistinguishable from a flat south park by power alone."""
     nn = angles.nnls_mixture(power, bank, mask)
     wall = nn["weights"]
     az = np.array([a for (t, a) in wall.index])
-    w_e, w_w = float(wall.values[az <= 120].sum()), float(wall.values[az >= 240].sum())
-    w_s = float(wall.values[(az >= 135) & (az <= 225)].sum())
+    flat = np.array([t <= FLAT_TILT for (t, a) in wall.index])
+    w_f = float(wall.values[flat].sum())
+    w_e, w_w = float(wall.values[(az <= 120) & ~flat].sum()), float(wall.values[(az >= 240) & ~flat].sum())
+    w_s = float(wall.values[(az >= 135) & (az <= 225) & ~flat].sum())
     w = wall[wall >= 0.1]
     return {"n_components": int(len(w)), "components": [(float(t), float(a), float(x)) for (t, a), x in w.items()],
             "tilt_eff": nn["tilt_eff"], "azimuth_eff": nn["azimuth_eff"], "r2": nn["r2"], "w_east": w_e, "w_west": w_w, "w_south": w_s,
+            "w_flat": w_f, "flat": bool(w_f >= FLAT_WEIGHT),
             "east_west": bool(w_e >= min_side and w_w >= min_side and w_s <= max_south)}
 
 
@@ -164,23 +215,32 @@ def tilt_class(t: float) -> str:
 
 
 def plausibility(region: dict, mix: dict, register_orientation: str, register_tilt_class: str, use_bootstrap: bool = True,
-                 az_margin: float = 45.0, tilt_margin: float = 5.0) -> dict:
+                 az_margin: float = 45.0, tilt_margin: float = 5.0, tilt_identifiable: bool = True) -> dict:
     """Compare the register classes with the estimate. Azimuth: implausible when the whole bootstrap 5-95 %
     interval of the best azimuth (fallback: profile region) lies more than az_margin (one octant) from the
     registered class centre, or when the mixture says east-west and the register does not (and vice versa).
-    Tilt: implausible when the interval, widened by tilt_margin, misses the registered class."""
+    A flat fit (mixture weight on tilt <= FLAT_TILT, or the whole tilt interval <= 5 deg) has no azimuth: the
+    azimuth verdict is None, except that it is consistent with a registered east-west layout (flat east-west
+    rows are flat). Tilt: implausible when the interval, widened by tilt_margin, misses the registered class; with
+    tilt_identifiable False (too little noon-zenith spread) the tilt verdict is None and the tilt interval is
+    the profile-likelihood region, not the day bootstrap."""
     from parks_pv.geometry import AZ_CENTRE
     if use_bootstrap and "azimuth_boot" in region:
         az_lo, az_hi = region["azimuth_boot"][0], region["azimuth_boot"][2]
         t_lo, t_hi = region["tilt_boot"][0], region["tilt_boot"][2]
     else:
         (az_lo, az_hi), (t_lo, t_hi) = region["azimuth_range"], region["tilt_range"]
+    if not tilt_identifiable:
+        t_lo, t_hi = region["tilt_range"]
     if not (np.isfinite(az_lo) and np.isfinite(t_lo)):
         return {"azimuth_ok": None, "tilt_ok": None, "estimated_azimuth_classes": [], "estimated_tilt_classes": []}
     az_classes = {orientation_class(a) for a in np.arange(az_lo, az_hi + 0.1, 5.0)}
     t_classes = {tilt_class(t) for t in np.arange(max(t_lo - tilt_margin, 0.0), t_hi + tilt_margin + 0.1, 2.5)}
+    flat = bool(mix.get("flat", False)) or (np.isfinite(t_hi) and t_hi <= 5.0)
     if mix["east_west"]:
         az_ok = register_orientation == "Ost-West"
+    elif flat:
+        az_ok = True if register_orientation == "Ost-West" else None
     elif register_orientation == "Ost-West":
         az_ok = False
     elif register_orientation in AZ_CENTRE:
@@ -189,23 +249,39 @@ def plausibility(region: dict, mix: dict, register_orientation: str, register_ti
         az_ok = dist <= az_margin
     else:
         az_ok = True
-    return {"azimuth_ok": bool(az_ok), "tilt_ok": register_tilt_class in t_classes,
-            "estimated_azimuth_classes": sorted(az_classes | ({"Ost-West"} if mix["east_west"] else set())), "estimated_tilt_classes": sorted(t_classes)}
+    return {"azimuth_ok": None if az_ok is None else bool(az_ok), "tilt_ok": (register_tilt_class in t_classes) if tilt_identifiable else None,
+            "flat": flat, "estimated_azimuth_classes": sorted(({"flach"} if flat else az_classes) | ({"Ost-West"} if mix["east_west"] else set())),
+            "estimated_tilt_classes": sorted(t_classes)}
 
 
 def assess(power: pd.Series, drv: pd.DataFrame, lat: float, lon: float, alt: float, exclude: pd.Series = None,
            register_orientation: str = None, register_tilt_class: str = None, horizon: pd.Series = None, delta: float = 0.005,
-           n_boot: int = 50) -> dict:
-    """Full assessment of one park on a driver frame (ghi, dhi) and a power series on the same hourly index."""
-    mask = clear_mask(drv, lat, lon, alt, exclude)
+           n_boot: int = 50, ac_limit_w: float = None, robust: bool = True, zenith_spread_min: float = TILT_ZENITH_SPREAD) -> dict:
+    """Full assessment of one park on a driver frame (ghi, dhi) and a power series on the same hourly index.
+    Masks, in order: clear hours, caller's exclude (snow, imputed, known outages), clipping at ac_limit_w
+    (None: 99.9 % quantile proxy), then the suspect refit (robust). tilt_identifiable requires the clear noons
+    to span >= zenith_spread_min deg of zenith."""
+    clip = clipping_mask(power, ac_limit_w) if (robust or ac_limit_w is not None) else pd.Series(False, index=power.index)
+    excl = clip.copy()
+    if exclude is not None:
+        excl |= exclude.reindex(power.index).fillna(False).astype(bool)
+    mask = clear_mask(drv, lat, lon, alt, excl)
     bank = angles.poa_bank(drv, lat, lon, alt, TILTS, AZIMUTHS, horizon=horizon)
+    sus = suspect_mask(power, bank, mask) if robust else pd.Series(False, index=power.index)
+    n_clear_raw = int(mask.sum())
+    mask = mask & ~sus
     sp = timebase.solar_position(drv.index, lat, lon, alt)
+    spread = noon_zenith_spread(mask & power.notna(), sp["apparent_zenith"])
+    identifiable = bool(spread >= zenith_spread_min)
     reg = grid_region(power, bank, mask, delta, n_boot)
     tg = float(round(reg["tilt"] / 5) * 5) if np.isfinite(reg["tilt"]) else 25.0
     cen = azimuth_from_daily_centroid(power, bank, sp["azimuth"], mask, tilt_guess=tg)
     noon = tilt_from_noon_ratio(power, drv, lat, lon, alt, mask, azimuth=reg["azimuth"] if np.isfinite(reg["azimuth"]) else 180.0)
     mix = mixture(power, bank, mask)
-    out = {"n_clear_hours": int(mask.sum()), "grid": reg, "centroid_azimuth": {k: v for k, v in cen.items() if k != "daily"}, "noon_tilt": noon, "mixture": mix}
+    out = {"n_clear_hours": int(mask.sum()), "n_clear_before_suspect": n_clear_raw, "n_suspect": int(sus.sum()),
+           "n_clipped_clear": int((clip & clear_mask(drv, lat, lon, alt, exclude)).sum()), "zenith_spread": spread,
+           "tilt_identifiable": identifiable, "grid": reg, "centroid_azimuth": {k: v for k, v in cen.items() if k != "daily"},
+           "noon_tilt": noon, "mixture": mix}
     if register_orientation is not None:
-        out["plausibility"] = plausibility(reg, mix, register_orientation, register_tilt_class)
+        out["plausibility"] = plausibility(reg, mix, register_orientation, register_tilt_class, tilt_identifiable=identifiable)
     return out
