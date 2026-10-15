@@ -72,17 +72,18 @@ def one(r, osm, out_dir, area_fallback_ha):
     dop, dom, dgm = (mosaic(p, tiles, out_dir) for p in ("dop20", "dom20", "dgm1"))
     # footprint check against the DOM: if the mapped/registered footprint holds < 0.3 ha of module cells, or the
     # point lies outside it, take the module field nearest to the coordinate from the DOM itself
-    m0, _, _, res0 = GG.module_mask(dop, dom, dgm, fp_utm)
+    m0, _, _, res0 = GG.module_mask(dop, dom, dgm, fp_utm, min_height=0.3)
     x0, y0 = TO_UTM.transform(r.lon, r.lat)
     mod0_ha = m0.sum() * res0 * res0 / 1e4
     # the module field is always located from the DOM (periodic stripes near the point); a mapped OSM polygon is
     # kept only when it agrees with that field (contains its centre and is not more than twice its hull)
     osm_ok = False
     if True:
-        tiles_s = [(e, n) for e in range(int((x0 - 1500) // 1000), int((x0 + 1500) // 1000) + 1) for n in range(int((y0 - 1500) // 1000), int((y0 + 1500) // 1000) + 1)]
+        R = float(getattr(r, "search_radius_m", 600.0))          # MaStR coordinates are precise; rounded ones need ~1500 m
+        tiles_s = [(e, n) for e in range(int((x0 - R) // 1000), int((x0 + R) // 1000) + 1) for n in range(int((y0 - R) // 1000), int((y0 + R) // 1000) + 1)]
         dom_s, dgm_s, dop_s = mosaic("dom20", tiles_s, out_dir), mosaic("dgm1", tiles_s, out_dir), mosaic("dop20", tiles_s, out_dir)
         exp_ha = float(getattr(r, "expected_module_ha", np.nan)) if np.isfinite(getattr(r, "expected_module_ha", np.nan)) else None
-        hull, mod_ha = GG.footprint_from_dom(dom_s, dgm_s, x0, y0, expected_module_ha=exp_ha, dop_path=dop_s)
+        hull, mod_ha = GG.footprint_from_dom(dom_s, dgm_s, x0, y0, radius_m=R, min_height=0.3, expected_module_ha=exp_ha, dop_path=dop_s)
         if hull is not None:
             if fp_src == "osm" and fp_utm.contains(hull.centroid) and fp_utm.area <= 2.0 * hull.area:
                 pass                                          # mapped polygon agrees with the DOM field: keep it
@@ -93,17 +94,21 @@ def one(r, osm, out_dir, area_fallback_ha):
             if tiles2 != tiles:
                 dop, dom, dgm = (mosaic(p, tiles2, out_dir) for p in ("dop20", "dom20", "dgm1"))
     rows = imagery.row_geometry(dop, fp_utm)
-    m, h, tfb, res = GG.module_mask(dop, dom, dgm, fp_utm)
+    m, h, tfb, res = GG.module_mask(dop, dom, dgm, fp_utm, min_height=0.3)
     ax_dom, pitch_dom, share_dom = GG.row_axis_from_mask(m, res)
     rows.update({"row_axis_dom": ax_dom, "pitch_dom": pitch_dom, "share_dom": share_dom, "module_cells_ha": float(m.sum() * res * res / 1e4)})
-    polys = osm_tables(els, fp_utm) if fp_src != "dom" else []
+    polys = osm_tables(els, fp_utm)
     tab_src = "osm"
     if len(polys) < 3:
         polys, tab_src = GG.row_bands(m, tfb, res, ax_dom, pitch_dom), "dom_row_bands"
-    t = GG.table_planes(dom, dgm, polys, row_axis_deg=ax_dom)
+    t = GG.table_planes(dom, dgm, polys, min_height=0.3, row_axis_deg=ax_dom)
     prof = GG.profile_geometry(dom, dgm, fp_utm, ax_dom, pitch_dom)
-    with rasterio.open(dom) as d:
-        dom_date = d.tags().get("TIFFTAG_DATETIME", "")
+    dom_date = ""
+    for e_, n_ in tiles:
+        tp = os.path.join(out_dir, f"dom20_{e_}_{n_}.tif")
+        if os.path.exists(tp):
+            with rasterio.open(tp) as d:
+                dom_date = d.tags().get("TIFFTAG_DATETIME", "") or dom_date
     if t.empty:
         return {"park_id": r.park_id, "status": "no_tables", "footprint_src": fp_src, "table_src": tab_src, "dom_date": dom_date, **{f"row_{k}": v for k, v in rows.items() if k != "peaks"}}, None
     t["geometry"] = [polys[i] for i in t["table"]]
@@ -128,6 +133,29 @@ def one(r, osm, out_dir, area_fallback_ha):
             "profile_type": prof.get("type"), "profile_faces": "; ".join(f"{f['tilt']:.1f}/{f['azimuth']:.0f}x{f['share']:.2f}" for f in prof.get("faces", [])),
             "profile_ridge_m": prof.get("height_ridge"), "profile_min_m": prof.get("height_min"),
             "arrays": "; ".join(f"{c.tilt:.1f}/{c.azimuth:.0f}x{c.share:.2f}" for c in cl)}
+    exp_ha = float(getattr(r, "expected_module_ha", np.nan))
+    prof_faces = prof.get("faces", [])
+    if prof.get("type") == "single_face" and prof_faces and len(t) >= 3:
+        # side of the single face: the planes know which way the tables face
+        az_pl = float(am)
+        f = prof_faces[0]
+        if abs(((f["azimuth"] - az_pl) + 180.0) % 360.0 - 180.0) > 90.0:
+            f["azimuth"] = (f["azimuth"] + 180.0) % 360.0
+            # the flank tilt stays; mark the flip
+            prof["side_flipped_to_planes"] = True
+    prof_tilt = float(sum(f["tilt"] * f["share"] for f in prof_faces)) if prof_faces else np.nan
+    flank_w = min(prof.get("flank_left_width", 0.0) or 0.0, prof.get("flank_right_width", 0.0) or 0.0) if prof.get("type") == "two_faces" else max(prof.get("flank_left_width", 0.0) or 0.0, prof.get("flank_right_width", 0.0) or 0.0)
+    year = int(getattr(r, "year", 0) or 0)
+    dom_year = int(dom_date[:4]) if dom_date[:4].isdigit() else 0
+    gates = {"gate_dom_after_build": bool(dom_year and year and dom_year > year),
+             "gate_stripes": bool(share_dom >= 0.15),
+             "gate_area": bool(np.isfinite(exp_ha) and exp_ha > 0 and 0.5 <= (m.sum() * res * res / 1e4) / exp_ha <= 2.0),
+             "gate_profile_planes_agree": bool(np.isfinite(prof_tilt) and abs(prof_tilt - float((t.tilt * w).sum())) <= 4.0),
+             "gate_flank_width": bool(flank_w >= 3.0)}
+    gates["gates_passed"] = int(sum(gates.values()))
+    gates["accept"] = bool(gates["gate_dom_after_build"] and gates["gate_stripes"] and gates["gate_area"] and gates["gate_flank_width"])
+    summ.update(gates)
+    summ.update({"expected_module_ha": exp_ha, "measured_module_ha": float(m.sum() * res * res / 1e4), "profile_tilt": prof_tilt, "flank_width_m": flank_w})
     arrays_rows = [{"park_id": r.park_id, "array_id": c.name, "tilt": c.tilt, "azimuth": c.azimuth, "share": c.share, "source": "geodata_planes"} for c in cl]
     arrays_rows += [{"park_id": r.park_id, "array_id": f"p{i}", "tilt": f["tilt"], "azimuth": f["azimuth"], "share": f["share"], "source": "geodata_profile"} for i, f in enumerate(prof.get("faces", []))]
     return summ, arrays_rows
@@ -146,6 +174,10 @@ def main():
     out_dir = os.path.join(paths.INPUT_DIR, "geodata", a.state.lower())
     os.makedirs(out_dir, exist_ok=True)
     summ, arrays_rows = [], []
+    from parks_pv.params import WP_M2
+    from pv import modules
+    sel = sel.copy()
+    sel["expected_module_ha"] = [float(x.dc_kwp) * 1000.0 / WP_M2[modules.era_of(int(x.year))] / 1e4 for x in sel.itertuples()]
     for r in sel.itertuples():
         try:
             s, ar = one(r, osm, out_dir, float(r.area_ha) if np.isfinite(r.area_ha) and r.area_ha > 0 else 5.0)
