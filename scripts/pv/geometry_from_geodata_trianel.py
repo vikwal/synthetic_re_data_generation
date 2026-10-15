@@ -37,7 +37,7 @@ def main():
             print(pv, "no Bavarian tile", flush=True)
             continue
         # expected module area: kWp / (typical kWp per ha of modules ~ 2 x ground density) - rough, only ranks candidates
-        r = pd.Series({"park_id": pv, "lat": p["lat"], "lon": p["lon"], "area_ha": np.nan, "expected_module_ha": float(p["kw_master"]) / 1500.0, "year": int(p.get("year_hint", 0) or 0), "search_radius_m": 1500.0})
+        r = pd.Series({"park_id": pv, "lat": p["lat"], "lon": p["lon"], "area_ha": np.nan, "expected_module_ha": float(p["kw_master"]) / 1500.0, "year": int(p["year_hint"]) if pd.notna(p.get("year_hint", np.nan)) else 0, "search_radius_m": 1500.0})
         try:
             s, ar = GFG.one(r, osm, OUT, 5.0)
         except Exception as e:  # noqa: BLE001

@@ -152,6 +152,7 @@ def one(r, osm, out_dir, area_fallback_ha):
              "gate_area": bool(np.isfinite(exp_ha) and exp_ha > 0 and 0.5 <= (m.sum() * res * res / 1e4) / exp_ha <= 2.0),
              "gate_profile_planes_agree": bool(np.isfinite(prof_tilt) and abs(prof_tilt - float((t.tilt * w).sum())) <= 4.0),
              "gate_flank_width": bool(flank_w >= 3.0)}
+    summ["profile_faces"] = "; ".join(f"{f['tilt']:.1f}/{f['azimuth']:.0f}x{f['share']:.2f}" for f in prof_faces)
     gates["gates_passed"] = int(sum(gates.values()))
     gates["accept"] = bool(gates["gate_dom_after_build"] and gates["gate_stripes"] and gates["gate_area"] and gates["gate_flank_width"])
     summ.update(gates)

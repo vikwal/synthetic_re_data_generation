@@ -43,8 +43,12 @@ def main():
     # measured classes from the profile (preferred) and the planes
     ok["faces"] = ok.profile_faces.fillna("")
     ok["ew_measured"] = ok.profile_type == "two_faces"
-    ok["tilt_measured"] = ok.profile_tilt.where(ok.profile_tilt.notna(), ok.tilt_capw)
-    ok["az_measured"] = ok.faces.str.extract(r"/(\d+)x")[0].astype(float)
+    # planes first: with >= 3 fitted table faces the area-weighted plane tilt and the mean-normal azimuth are the
+    # measurement; the profile only decides east-west (two faces) and is the fallback for sparse parks
+    enough = ok.n_tables.fillna(0) >= 3
+    ok["tilt_measured"] = np.where(enough, ok.tilt_capw, ok.profile_tilt.where(ok.profile_tilt.notna(), ok.tilt_capw))
+    az_prof = ok.faces.str.extract(r"/(\d+)x")[0].astype(float)
+    ok["az_measured"] = np.where(enough, ok.azimuth_mean_normal, az_prof)
     ok["tilt_cls_measured"] = ok.tilt_measured.map(tilt_class)
     ok["or_cls_measured"] = np.where(ok.ew_measured, "Ost-West", ok.az_measured.map(lambda a: orientation_class(a) if np.isfinite(a) else None))
     ok["tilt_agree"] = ok.tilt_cls_measured == ok.tilt_class
