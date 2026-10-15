@@ -85,6 +85,9 @@ def main():
     ap.add_argument("--geodata-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share from geometry_from_geodata_trianel")
     ap.add_argument("--estimate-windows", nargs="*", type=int, default=[30, 90, 365], help="meter history (days from start) for the power-based angle estimate")
     ap.add_argument("--geometry-only", action="store_true", help="only the geometry rungs (faster)")
+    ap.add_argument("--estimate-bank", choices=["poa", "chain"], default="poa", help="basis series for the power-based estimate")
+    ap.add_argument("--estimate-prior", default=None, help="CSV pv,row_axis_deg: fix the azimuth from the mapped rows, estimate only the tilt")
+    ap.add_argument("--rung-suffix", default="", help="suffix for the power-based rung names and output files")
     ap.add_argument("--out", default=os.path.expanduser("~/Work/FL_Contribution/reports/figs_pv_generator"))
     args = ap.parse_args()
     m = tc.load_masterdata()
@@ -156,20 +159,34 @@ def main():
             rungs["geometry_geodata"] = (corr, cfg_for([{"name": a.array_id, "tilt": float(a.tilt), "azimuth": float(a.azimuth), "share": float(a.share)} for a in g.itertuples()]), True)
         # power-based estimate from the first N days of meter data (grid best pair, corrected driver), then applied to the whole window
         ac_lim = float(par.loc[pv, "ac_cap_meter_kw"]) * 1000.0 if np.isfinite(par.loc[pv, "ac_cap_meter_kw"]) else None
+        prior = None
+        if args.estimate_prior:
+            pr = pd.read_csv(args.estimate_prior).set_index("pv")
+            if pv in pr.index and np.isfinite(pr.loc[pv, "row_axis_deg"]) and bool(pr.loc[pv, "prior_ok"]) if "prior_ok" in pr else np.isfinite(pr.loc[pv, "row_axis_deg"]):
+                prior = PL.azimuth_prior_from_rows(float(pr.loc[pv, "row_axis_deg"]))
+        az_prior, prior_ew = (None, False) if prior is None else ((prior["azimuths"][0], True) if prior["east_west"] else (prior["azimuth"], False))
+        est_cfg = cfg_for(terr) if args.estimate_bank == "chain" else None
         for nd in args.estimate_windows:
             nd = min(nd, int((idx[-1] - idx[0]).days))          # the meter window ends 2024-05-31: "365" is 313 days
             sl = slice(idx[0], idx[0] + pd.Timedelta(days=nd))
             try:
-                est = PL.assess(y.loc[sl], corr.loc[sl], p["lat"], p["lon"], p["alt"], exclude=(depth_cm > 0.5).loc[sl], ac_limit_w=ac_lim, n_boot=0)
+                est = PL.assess(y.loc[sl], corr.loc[sl], p["lat"], p["lon"], p["alt"], exclude=(depth_cm > 0.5).loc[sl], ac_limit_w=ac_lim, n_boot=0,
+                                cfg=est_cfg, horizon=hz if est_cfg is not None else None, azimuth_prior=az_prior, prior_east_west=prior_ew)
                 gr, mx = est["grid"], est["mixture"]
-                if mx["east_west"]:
+                ewm = est["east_west_model"]
+                if ewm.get("preferred"):
+                    arrays_est = [{"name": "east", "tilt": float(ewm["tilt"]), "azimuth": float(ewm["azimuth_east"]), "share": float(ewm["share_east"])},
+                                  {"name": "west", "tilt": float(ewm["tilt"]), "azimuth": float(ewm["azimuth_west"]), "share": 1.0 - float(ewm["share_east"])}]
+                elif mx["east_west"]:
                     comps = [c for c in mx["components"]]
                     tot = sum(c[2] for c in comps)
                     arrays_est = [{"name": f"m{i}", "tilt": c[0], "azimuth": c[1], "share": c[2] / tot} for i, c in enumerate(comps)]
                 else:
                     arrays_est = [{"name": "est", "tilt": float(gr["tilt"]), "azimuth": float(gr["azimuth"]), "share": 1.0}]
-                rungs[f"geometry_estimated_{nd}d"] = (corr, cfg_for(arrays_est), True)
-                geo_rows.append({"pv": pv, "estimate_days": nd, "tilt_est": gr["tilt"], "az_est": gr["azimuth"], "east_west": mx["east_west"], "n_clear": est["n_clear_hours"],
+                rungs[f"geometry_estimated_{nd}d{args.rung_suffix}"] = (corr, cfg_for(arrays_est), True)
+                geo_rows.append({"pv": pv, "estimate_days": nd, "bank": est["bank"], "azimuth_prior": az_prior, "prior_east_west": prior_ew,
+                                 "tilt_est": gr["tilt"], "az_est": gr["azimuth"], "east_west": mx["east_west"], "ew_model": ewm.get("preferred"),
+                                 "ew_model_tilt": ewm.get("tilt"), "ew_model_share_east": ewm.get("share_east"), "n_clear": est["n_clear_hours"],
                                  "n_suspect": est["n_suspect"], "n_clipped_clear": est["n_clipped_clear"], "zenith_spread": round(est["zenith_spread"], 1), "tilt_identifiable": est["tilt_identifiable"]})
             except Exception as e:  # noqa: BLE001
                 print(pv, "estimate failed", nd, str(e)[:80], flush=True)
@@ -218,7 +235,7 @@ def main():
             b = metrics.basic(y[mm], ps["full"][mm] * loo, cap_w)
             rows.append({"pv": pv, "rung": "full_loo_scaled", "subset": tag, "n": int((mm & y.notna()).sum()), "scale_loo": loo, "scale_own": scales[pv], **b})
     df = pd.DataFrame(rows)
-    tag = "geometry" if args.geometry_only else "long"
+    tag = ("geometry" if args.geometry_only else "long") + args.rung_suffix
     df.to_csv(os.path.join(args.out, f"ablation_trianel_{tag}.csv"), index=False)
     pd.DataFrame(geo_rows).to_csv(os.path.join(args.out, f"ablation_trianel_{tag}_geometry.csv"), index=False)
     print("\nscales (full chain, day_nosuspect):", {k: round(v, 3) for k, v in scales.items()})

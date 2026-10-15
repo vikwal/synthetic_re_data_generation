@@ -329,6 +329,56 @@ def test_flat_east_west_is_consistent_with_east_west_register():
     assert res_s["plausibility"]["azimuth_ok"] is not False        # flat: undecidable, never a false alarm
 
 
+def test_chain_bank_recovers_orientation_and_matches_chain():
+    from pv import plausibility as PL
+    drv = _clear_driver(6)
+    cfg = _cfg(arrays=[{"tilt": 30.0, "azimuth": 200.0, "share": 1.0, "gcr": 0.4}], dc_ac=1.0, shading={"inter_row": True})
+    y = chain.run_park(cfg, drv)["p_dc_w"]
+    bank = PL.chain_bank(cfg, drv, tilts=[20, 30, 40], azimuths=[180, 200, 220])
+    assert set(bank) == {(float(t), float(a)) for t in (20, 30, 40) for a in (180, 200, 220)}
+    mask = angles.clear_hours(drv["ghi"], LAT, LON, ALT)
+    g = angles.grid_fit(y, bank, mask)
+    assert g.iloc[0]["tilt"] == 30.0 and g.iloc[0]["azimuth"] == 200.0 and g.iloc[0]["r2"] > 0.999
+
+
+def test_east_west_hypothesis_prefers_pair_only_for_east_west_layout():
+    from pv import plausibility as PL
+    drv = _clear_driver(12)
+    bank = angles.poa_bank(drv, LAT, LON, ALT, PL.TILTS, PL.AZIMUTHS)
+    mask = angles.clear_hours(drv["ghi"], LAT, LON, ALT)
+    ew = _cfg(arrays=[{"tilt": 15.0, "azimuth": 90.0, "share": 0.5}, {"tilt": 15.0, "azimuth": 270.0, "share": 0.5}], dc_ac=1.0)
+    y_ew = chain.run_park(ew, drv)["p_dc_w"]
+    h = PL.east_west_hypothesis(y_ew, bank, mask)
+    assert h["preferred"] and h["tilt"] == 15.0 and (h["azimuth_east"], h["azimuth_west"]) == (90.0, 270.0)
+    south = _cfg(arrays=[{"tilt": 25.0, "azimuth": 180.0, "share": 1.0}], dc_ac=1.0)
+    y_s = chain.run_park(south, drv)["p_dc_w"]
+    assert not PL.east_west_hypothesis(y_s, bank, mask)["preferred"]
+    res = PL.assess(y_ew, drv, LAT, LON, ALT, register_orientation="Ost-West", register_tilt_class="< 20 Grad", n_boot=0, zenith_spread_min=0.0)
+    assert res["mixture"]["east_west"] and res["plausibility"]["azimuth_ok"] is True
+
+
+def test_azimuth_prior_restricts_bank_and_recovers_tilt():
+    from pv import plausibility as PL
+    drv = _clear_driver(8)
+    truth = _cfg(arrays=[{"tilt": 20.0, "azimuth": 190.0, "share": 1.0}], dc_ac=1.0)
+    y = chain.run_park(truth, drv)["p_dc_w"]
+    res = PL.assess(y, drv, LAT, LON, ALT, n_boot=0, azimuth_prior=190.0, cfg=truth)
+    assert res["bank"] == "chain" and res["grid"]["azimuth"] == 190.0 and res["grid"]["tilt"] == 20.0
+    res_poa = PL.assess(y, drv, LAT, LON, ALT, n_boot=0, azimuth_prior=190.0)
+    assert res_poa["grid"]["azimuth"] == 190.0 and abs(res_poa["grid"]["tilt"] - 20.0) <= 5.0     # plain POA: temperature/IAM bias one step
+    # with a prior the azimuth verdict is the prior's: rows south vs register east-west -> implausible, and vice versa
+    v = PL.assess(y, drv, LAT, LON, ALT, n_boot=0, azimuth_prior=190.0, cfg=truth, register_orientation="Ost-West", register_tilt_class="20 - 40 Grad", zenith_spread_min=0.0)
+    assert v["plausibility"]["azimuth_ok"] is False and v["plausibility"]["tilt_ok"] is True
+    v = PL.assess(y, drv, LAT, LON, ALT, n_boot=0, azimuth_prior=190.0, cfg=truth, register_orientation="Süd", register_tilt_class="20 - 40 Grad", zenith_spread_min=0.0)
+    assert v["plausibility"]["azimuth_ok"] is True
+    v = PL.assess(y, drv, LAT, LON, ALT, n_boot=0, azimuth_prior=80.0, prior_east_west=True, cfg=truth, register_orientation="Süd", register_tilt_class="20 - 40 Grad", zenith_spread_min=0.0)
+    assert v["plausibility"]["azimuth_ok"] is False
+    pr = PL.azimuth_prior_from_rows(100.0)
+    assert not pr["east_west"] and pr["azimuth"] == 190.0
+    pr = PL.azimuth_prior_from_rows(170.0)
+    assert pr["east_west"] and pr["azimuths"] == (80.0, 260.0)
+
+
 # -------------------------------------------------------------- metrics
 
 def test_plateau_detection():

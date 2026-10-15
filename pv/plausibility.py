@@ -23,6 +23,10 @@ from pv import angles, arrays as arr, timebase
 
 TILTS = np.arange(0.0, 61.0, 5.0)
 AZIMUTHS = np.arange(60.0, 301.0, 10.0)
+EW_AZIMUTHS = [(60.0, 240.0), (70.0, 250.0), (80.0, 260.0), (90.0, 270.0), (100.0, 280.0), (110.0, 290.0), (120.0, 300.0)]
+EW_SHARES = (0.3, 0.4, 0.5, 0.6, 0.7)
+EW_BIC_MARGIN = 10.0           # the two-plane model must beat the single plane by this much BIC
+EW_MIN_TILT = 10.0             # below this tilt an east-west pair is indistinguishable from a flat plane
 TILT_ZENITH_SPREAD = 15.0      # deg of clear-noon zenith range needed before a tilt verdict is given
 SUSPECT_FRACTION = 0.5         # hours below this fraction of the fitted clear-sky shape are suspect
 CLIP_FRACTION = 0.97           # hours at or above this fraction of the AC limit are clipped
@@ -34,6 +38,87 @@ def clear_mask(drv: pd.DataFrame, lat: float, lon: float, alt: float, exclude: p
     if exclude is not None:
         m &= ~exclude.reindex(m.index).fillna(False).astype(bool)
     return m
+
+
+def chain_bank(cfg: dict, drv: pd.DataFrame, tilts, azimuths, horizon: pd.Series = None, gcr: float = None) -> dict:
+    """{(tilt, az): p_dc} from the production chain (pv.chain.run_park with one array per pair, return_arrays):
+    IAM, cell temperature with the park's module gamma, inter-row shading at the park's GCR, horizon. Aging and
+    soiling are off (constant factors drop out of the scale fit). drv needs ghi/dhi; temp_air, wind_speed and
+    albedo are filled with defaults when missing. cfg is the park config (module, temperature, shading, ...)."""
+    from pv import chain, config as pvconfig
+    d = drv.copy()
+    for k, v in (("temp_air", 12.0), ("wind_speed", 2.0), ("albedo", 0.2), ("imputed_share", 0.0)):
+        if k not in d:
+            d[k] = v
+    g = gcr if gcr is not None else next((a.get("gcr") for a in cfg.get("arrays", []) if a.get("gcr")), None)
+    pairs = [(float(t), float(a)) for t in tilts for a in azimuths]
+    c = {k: v for k, v in cfg.items() if k not in ("arrays", "aging", "soiling")}
+    c["arrays"] = [{"name": f"b{j}", "tilt": t, "azimuth": a, "share": 1.0 / len(pairs), "gcr": g} for j, (t, a) in enumerate(pairs)]
+    c["aging"] = {"enabled": False, "commissioning_date": None, "era": None}
+    c["soiling"] = {"enabled": False}
+    c.setdefault("transposition", {})
+    if not isinstance(c["transposition"].get("albedo", 0.2), (int, float)):
+        c["transposition"] = dict(c["transposition"], albedo="era5")
+    res = chain.run_park(pvconfig.normalise(c), d, horizon=horizon, return_arrays=True)
+    per = res.attrs["arrays"]
+    return {(t, a): per[f"b{j}"]["p_dc_w"] for j, (t, a) in enumerate(pairs)}
+
+
+def azimuth_prior_from_rows(row_axis_deg: float) -> dict:
+    """Module azimuth implied by a mapped table-row axis (deg, 0-180): east-west rows carry south-facing modules
+    (perpendicular on the south side), north-south rows an east-west pair. Same convention as parks_pv.geometry."""
+    ax = float(row_axis_deg) % 180.0
+    if ax < 30.0 or ax > 150.0:
+        az_e, az_w = (ax + 90.0) % 360.0, (ax + 270.0) % 360.0
+        if az_e > 180.0:
+            az_e, az_w = az_w, az_e
+        return {"east_west": True, "azimuth": None, "azimuths": (az_e, az_w)}
+    return {"east_west": False, "azimuth": (ax + 90.0) % 360.0, "azimuths": None}
+
+
+def _fit(y: np.ndarray, x: np.ndarray) -> tuple:
+    s = float(np.dot(x, y) / np.dot(x, x)) if np.dot(x, x) > 0 else 0.0
+    rss = float(np.sum((y - s * x) ** 2))
+    return s, rss
+
+
+def east_west_hypothesis(power: pd.Series, bank: dict, mask: pd.Series, pairs=None, shares=EW_SHARES, min_tilt: float = EW_MIN_TILT) -> dict:
+    """Explicit two-plane model p = s (w POA(t, az_e) + (1 - w) POA(t, az_w)) over the bank tilts >= min_tilt and the
+    azimuth pairs, against the best single plane, compared by BIC (4 vs 3 parameters). preferred is True when the
+    pair beats the single plane by EW_BIC_MARGIN. Pairs default to the bank azimuths 180 deg apart (EW_AZIMUTHS)."""
+    m = (mask & power.notna()).values
+    y = power.values[m]
+    n = int(m.sum())
+    if n < 24:
+        return {"preferred": False, "n": n}
+    tilts = sorted({t for (t, a) in bank})
+    azs = {a for (t, a) in bank}
+    pairs = pairs or [p for p in EW_AZIMUTHS if p[0] in azs and p[1] in azs]
+    best1 = None
+    for (t, a), s in bank.items():
+        sc, rss = _fit(y, s.values[m])
+        if best1 is None or rss < best1[2]:
+            best1 = (t, a, rss)
+    best2 = None
+    for t in tilts:
+        if t < min_tilt:
+            continue
+        for ae, aw in pairs:
+            if (t, ae) not in bank or (t, aw) not in bank:
+                continue
+            xe, xw = bank[(t, ae)].values[m], bank[(t, aw)].values[m]
+            for w in shares:
+                sc, rss = _fit(y, w * xe + (1.0 - w) * xw)
+                if best2 is None or rss < best2[4]:
+                    best2 = (t, ae, aw, w, rss, sc)
+    tss = float(np.sum((y - y.mean()) ** 2))
+    if best1 is None or best2 is None or best1[2] <= 0:
+        return {"preferred": False, "n": n}
+    bic1 = n * np.log(best1[2] / n) + 3 * np.log(n)
+    bic2 = n * np.log(best2[4] / n) + 4 * np.log(n)
+    return {"preferred": bool(bic2 + EW_BIC_MARGIN < bic1), "n": n, "tilt": best2[0], "azimuth_east": best2[1], "azimuth_west": best2[2],
+            "share_east": best2[3], "r2": 1.0 - best2[4] / tss if tss > 0 else np.nan, "r2_single": 1.0 - best1[2] / tss if tss > 0 else np.nan,
+            "single": (best1[0], best1[1]), "delta_bic": float(bic2 - bic1)}
 
 
 def clipping_mask(power: pd.Series, ac_limit_w: float = None, frac: float = CLIP_FRACTION, q: float = 0.999) -> pd.Series:
@@ -215,7 +300,8 @@ def tilt_class(t: float) -> str:
 
 
 def plausibility(region: dict, mix: dict, register_orientation: str, register_tilt_class: str, use_bootstrap: bool = True,
-                 az_margin: float = 45.0, tilt_margin: float = 5.0, tilt_identifiable: bool = True) -> dict:
+                 az_margin: float = 45.0, tilt_margin: float = 5.0, tilt_identifiable: bool = True,
+                 azimuth_prior: float = None, prior_east_west: bool = False) -> dict:
     """Compare the register classes with the estimate. Azimuth: implausible when the whole bootstrap 5-95 %
     interval of the best azimuth (fallback: profile region) lies more than az_margin (one octant) from the
     registered class centre, or when the mixture says east-west and the register does not (and vice versa).
@@ -223,7 +309,10 @@ def plausibility(region: dict, mix: dict, register_orientation: str, register_ti
     azimuth verdict is None, except that it is consistent with a registered east-west layout (flat east-west
     rows are flat). Tilt: implausible when the interval, widened by tilt_margin, misses the registered class; with
     tilt_identifiable False (too little noon-zenith spread) the tilt verdict is None and the tilt interval is
-    the profile-likelihood region, not the day bootstrap."""
+    the profile-likelihood region, not the day bootstrap.
+    With azimuth_prior (mapped rows / orthophoto) the azimuth verdict is the prior's alone - east-west rows against a
+    single-orientation register, or a row azimuth more than az_margin from the registered class centre - and the
+    power decides only the tilt (separate methods for orientation and tilt)."""
     from parks_pv.geometry import AZ_CENTRE
     if use_bootstrap and "azimuth_boot" in region:
         az_lo, az_hi = region["azimuth_boot"][0], region["azimuth_boot"][2]
@@ -237,7 +326,16 @@ def plausibility(region: dict, mix: dict, register_orientation: str, register_ti
     az_classes = {orientation_class(a) for a in np.arange(az_lo, az_hi + 0.1, 5.0)}
     t_classes = {tilt_class(t) for t in np.arange(max(t_lo - tilt_margin, 0.0), t_hi + tilt_margin + 0.1, 2.5)}
     flat = bool(mix.get("flat", False)) or (np.isfinite(t_hi) and t_hi <= 5.0)
-    if mix["east_west"]:
+    if azimuth_prior is not None:
+        flat = False
+        if prior_east_west or register_orientation == "Ost-West":
+            az_ok = bool(prior_east_west) == (register_orientation == "Ost-West")
+        elif register_orientation in AZ_CENTRE:
+            az_ok = abs(((float(azimuth_prior) - AZ_CENTRE[register_orientation]) + 180.0) % 360.0 - 180.0) <= az_margin
+        else:
+            az_ok = True
+        az_lo = az_hi = float(azimuth_prior)
+    elif mix["east_west"]:
         az_ok = register_orientation == "Ost-West"
     elif flat:
         az_ok = True if register_orientation == "Ost-West" else None
@@ -256,17 +354,38 @@ def plausibility(region: dict, mix: dict, register_orientation: str, register_ti
 
 def assess(power: pd.Series, drv: pd.DataFrame, lat: float, lon: float, alt: float, exclude: pd.Series = None,
            register_orientation: str = None, register_tilt_class: str = None, horizon: pd.Series = None, delta: float = 0.005,
-           n_boot: int = 50, ac_limit_w: float = None, robust: bool = True, zenith_spread_min: float = TILT_ZENITH_SPREAD) -> dict:
+           n_boot: int = 50, ac_limit_w: float = None, robust: bool = True, zenith_spread_min: float = TILT_ZENITH_SPREAD,
+           bank: dict = None, cfg: dict = None, azimuth_prior: float = None, prior_east_west: bool = False,
+           ew_hypothesis: bool = True) -> dict:
     """Full assessment of one park on a driver frame (ghi, dhi) and a power series on the same hourly index.
     Masks, in order: clear hours, caller's exclude (snow, imputed, known outages), clipping at ac_limit_w
     (None: 99.9 % quantile proxy), then the suspect refit (robust). tilt_identifiable requires the clear noons
-    to span >= zenith_spread_min deg of zenith."""
+    to span >= zenith_spread_min deg of zenith.
+    Bank: a precomputed {(tilt, az): series} (sliced to power.index), else the production chain when cfg is given
+    (chain_bank: IAM, module gamma, inter-row shading), else the plain POA bank. With azimuth_prior (deg, from
+    mapped rows / orthophoto) the bank is restricted to that azimuth - or, with prior_east_west, to the pair
+    azimuth_prior and azimuth_prior + 180 - and only the tilt (and east/west share) is estimated from power.
+    ew_hypothesis adds the explicit two-plane fit with BIC model choice; its verdict ORs into mixture.east_west."""
     clip = clipping_mask(power, ac_limit_w) if (robust or ac_limit_w is not None) else pd.Series(False, index=power.index)
     excl = clip.copy()
     if exclude is not None:
         excl |= exclude.reindex(power.index).fillna(False).astype(bool)
     mask = clear_mask(drv, lat, lon, alt, excl)
-    bank = angles.poa_bank(drv, lat, lon, alt, TILTS, AZIMUTHS, horizon=horizon)
+    if azimuth_prior is not None:
+        azs = [float(azimuth_prior) % 360.0, (float(azimuth_prior) + 180.0) % 360.0] if prior_east_west else [float(azimuth_prior) % 360.0]
+    else:
+        azs = list(AZIMUTHS)
+    if bank is not None:
+        bank_src = "precomputed"
+        bank = {k: v.reindex(power.index) for k, v in bank.items() if azimuth_prior is None or k[1] in azs}
+        if azimuth_prior is not None and not bank:
+            raise ValueError("precomputed bank lacks the prior azimuth(s); build it with those azimuths")
+    elif cfg is not None:
+        bank_src = "chain"
+        bank = chain_bank(cfg, drv, TILTS, azs, horizon=horizon)
+    else:
+        bank_src = "poa"
+        bank = angles.poa_bank(drv, lat, lon, alt, TILTS, azs, horizon=horizon)
     sus = suspect_mask(power, bank, mask) if robust else pd.Series(False, index=power.index)
     n_clear_raw = int(mask.sum())
     mask = mask & ~sus
@@ -278,10 +397,19 @@ def assess(power: pd.Series, drv: pd.DataFrame, lat: float, lon: float, alt: flo
     cen = azimuth_from_daily_centroid(power, bank, sp["azimuth"], mask, tilt_guess=tg)
     noon = tilt_from_noon_ratio(power, drv, lat, lon, alt, mask, azimuth=reg["azimuth"] if np.isfinite(reg["azimuth"]) else 180.0)
     mix = mixture(power, bank, mask)
+    ewh = {"preferred": False, "n": 0}
+    if ew_hypothesis:
+        pairs = [tuple(azs)] if (azimuth_prior is not None and prior_east_west) else None
+        ewh = east_west_hypothesis(power, bank, mask, pairs=pairs) if (azimuth_prior is None or prior_east_west) else ewh
+        mix["east_west_nnls"] = mix["east_west"]
+        mix["east_west"] = bool(mix["east_west"] or ewh["preferred"])
     out = {"n_clear_hours": int(mask.sum()), "n_clear_before_suspect": n_clear_raw, "n_suspect": int(sus.sum()),
            "n_clipped_clear": int((clip & clear_mask(drv, lat, lon, alt, exclude)).sum()), "zenith_spread": spread,
            "tilt_identifiable": identifiable, "grid": reg, "centroid_azimuth": {k: v for k, v in cen.items() if k != "daily"},
-           "noon_tilt": noon, "mixture": mix}
+           "noon_tilt": noon, "mixture": mix, "east_west_model": ewh,
+           "bank": bank_src,
+           "azimuth_prior": azimuth_prior, "prior_east_west": bool(prior_east_west)}
     if register_orientation is not None:
-        out["plausibility"] = plausibility(reg, mix, register_orientation, register_tilt_class, tilt_identifiable=identifiable)
+        out["plausibility"] = plausibility(reg, mix, register_orientation, register_tilt_class, tilt_identifiable=identifiable,
+                                           azimuth_prior=azimuth_prior, prior_east_west=prior_east_west)
     return out
