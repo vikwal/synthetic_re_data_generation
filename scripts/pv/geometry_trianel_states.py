@@ -81,6 +81,8 @@ def run_park(pv: str, p: pd.Series, st: pd.Series, args) -> list:
     if sub == "by":
         dop = sorted(glob.glob(os.path.join(GEO, "dop20_*.tif")))
     rows = {"peaks": [], "blocks": [], "n_windows": 0}
+    if args.surface_only:
+        dop = []
     if dop:
         rgb = GT.mosaic(dop, bounds, res_img, zone, bands=[1, 2, 3])
         rows = GT.row_axis_from_image(rgb, inside, res_img)
@@ -104,7 +106,9 @@ def run_park(pv: str, p: pd.Series, st: pd.Series, args) -> list:
     if tiles(sub, "als") or tiles(sub, "laser"): sources.append(("laz", tiles(sub, "als") + tiles(sub, "laser")))
     if tiles(sub, "bdom"): sources.append(("bdom_image", tiles(sub, "bdom")))
     if sub == "by" and glob.glob(os.path.join(GEO, "dom20_*.tif")): sources.append(("dom20_image", sorted(glob.glob(os.path.join(GEO, "dom20_*.tif")))))
+    axis_grid0, pitch0 = axis_grid, pitch
     for name, paths in sources:
+        axis_grid, pitch = axis_grid0, pitch0
         try:
             if name == "laz":
                 surf, ground, npts = GT.dsm_from_laz(paths, bounds, res_dsm)
@@ -114,8 +118,22 @@ def run_park(pv: str, p: pd.Series, st: pd.Series, args) -> list:
                 surf = GT.mosaic(paths, bounds, res_dsm, zone)[0]
                 base = dgm if dgm is not None else GT.ground_from_surface(surf, res_dsm)
                 hag = surf - base; dates = [os.path.basename(x) for x in paths] + (["ground: surface-percentile"] if dgm is None else [])
-            if not np.isfinite(axis_grid):
-                out_rows.append(dict(pv=pv, source=name, ok=False, reason="no row axis")); continue
+            axis_grid_src, pitch_src = axis_grid, pitch
+            if args.surface_only or not np.isfinite(axis_grid):
+                # row axis and pitch from the height image itself: spectrum of hag (clipped 0..3 m) inside a coarse block
+                exp0 = float(p.kw_master) * 5.0 * 2.2; pxy0 = GT.Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform(float(p.lon), float(p.lat))
+                fp0 = GT.footprint_from_hag(hag, res_dsm, bounds, exp0, pxy0, pitch_m=10.0)
+                ins0 = ~geometry_mask([fp0], hag.shape, from_bounds(*bounds, hag.shape[1], hag.shape[0])) if fp0 is not None and fp0.area > 1500 else np.isfinite(hag)
+                hclip = np.clip(np.where(np.isfinite(hag), hag, 0.0), 0.0, 3.0) * 80.0
+                rs = GT.row_axis_from_image(np.stack([hclip] * 3), ins0, res_dsm)
+                if rs["blocks"]:
+                    axis_grid_src, pitch_src = rs["blocks"][0]["axis_grid"], rs["blocks"][0]["pitch_m"]
+                elif rs["peaks"]:
+                    axis_grid_src, pitch_src = rs["peaks"][0][0], rs["peaks"][0][1]
+                else:
+                    out_rows.append(dict(pv=pv, source=name, ok=False, reason="no row pattern in surface")); continue
+                rows_rows.append(dict(pv=pv, state_code=sub, footprint="surface", rank=f"surface:{name}", axis_grid=round(axis_grid_src, 1), axis_true=round((axis_grid_src + conv) % 180, 1), pitch_m=round(pitch_src, 2), share=round(rs["peaks"][0][2], 3) if rs["peaks"] else np.nan, n_windows=rs["n_windows"]))
+            axis_grid, pitch = axis_grid_src, pitch_src
             exp_m2 = float(p.kw_master) * 5.0 * 2.2        # modules ~5 m2/kWp, block area incl. gaps ~2.2x
             pxy = GT.Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform(float(p.lon), float(p.lat))
             fp_hag = GT.footprint_from_hag(hag, res_dsm, bounds, exp_m2, pxy, pitch_m=pitch if np.isfinite(pitch) else 10.0)
@@ -154,7 +172,9 @@ def run_park(pv: str, p: pd.Series, st: pd.Series, args) -> list:
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--parks", default="pv1,pv2,pv3,pv5,pv6,pv7"); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--parks", default="pv1,pv2,pv3,pv5,pv6,pv7")
+    ap.add_argument("--surface-only", action="store_true", help="row axis, pitch and block from the surface model alone (no orthophoto)")
+    ap.add_argument("--suffix", default=""); a = ap.parse_args()
     parks = TC.parks_table(TC.load_masterdata()); st = park_states()
     out, rows = [], []
     for pv in a.parks.split(","):
@@ -164,8 +184,8 @@ def main():
         except Exception as e:
             print(pv, "ERROR", type(e).__name__, e, flush=True)
     os.makedirs(FIGS, exist_ok=True)
-    pd.DataFrame(out).to_csv(os.path.join(FIGS, "geodata_states_trianel.csv"), index=False)
-    pd.DataFrame(rows).to_csv(os.path.join(FIGS, "geodata_states_trianel_rows.csv"), index=False)
+    pd.DataFrame(out).to_csv(os.path.join(FIGS, f"geodata_states_trianel{a.suffix}.csv"), index=False)
+    pd.DataFrame(rows).to_csv(os.path.join(FIGS, f"geodata_states_trianel_rows{a.suffix}.csv"), index=False)
 
 
 if __name__ == "__main__":

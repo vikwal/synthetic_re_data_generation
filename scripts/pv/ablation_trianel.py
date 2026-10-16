@@ -83,6 +83,7 @@ def main():
     ap.add_argument("--snow-cache", required=True)
     ap.add_argument("--extras-dir", default=os.path.expanduser("~/Work/FL_Contribution/reports/figs_pv_generator"))
     ap.add_argument("--geodata-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share from geometry_from_geodata_trianel")
+    ap.add_argument("--base-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share: replaces the master-data (+terrain) geometry as the base of every ladder rung")
     ap.add_argument("--estimate-windows", nargs="*", type=int, default=[30, 90, 365], help="meter history (days from start) for the power-based angle estimate")
     ap.add_argument("--geometry-only", action="store_true", help="only the geometry rungs (faster)")
     ap.add_argument("--estimate-bank", choices=["poa", "chain"], default="poa", help="basis series for the power-based estimate")
@@ -118,6 +119,12 @@ def main():
         y = meter[pv].reindex(idx)
         cap_w = float(par.loc[pv, "kwp_dc"]) * 1000.0
         master, terr, fp_src = geometry(pv, p, facts, par, osm)
+        terr_master = terr
+        if args.base_arrays and os.path.exists(args.base_arrays):
+            ba = pd.read_csv(args.base_arrays); ba = ba[ba.park_id == pv]
+            if len(ba):
+                master = terr = [{"name": str(a.array_id), "tilt": float(a.tilt), "azimuth": float(a.azimuth), "share": float(a.share)} for a in ba.itertuples()]
+                fp_src = f"base:{os.path.basename(args.base_arrays)}"
         fitted = json.load(open(os.path.join(args.extras_dir, f"extras_{pv}.json")))["fitted_arrays"]
         geo_rows.append({"pv": pv, "footprint_src": fp_src, "n_terrain_arrays": len(terr), "tilt_master": p["tilt_master"], "az_master": p["az_master"],
                          "terrain_arrays": "; ".join(f"{a['tilt']:.1f}/{a['azimuth']:.0f}x{a['share']:.2f}" for a in terr)})
@@ -151,6 +158,7 @@ def main():
 
         rungs = {
             "full": (corr, cfg_for(terr), True),
+            **({"reference_master": (corr, cfg_for(terr_master), True)} if terr_master is not terr else {}),
             "geometry_master_only": (corr, cfg_for(master), True),
             "geometry_fitted_step1": (corr, cfg_for(fitted), True),
         }
@@ -216,7 +224,7 @@ def main():
         day = zen < 90.0
         cs_g = timebase.clearsky(idx, p["lat"], p["lon"], p["alt"])["ghi"]
         kc = raw["ghi"] / cs_g.replace(0, np.nan)
-        suspect = day & (kc > 0.6) & ((90.0 - zen) > 20.0) & (y < 0.5 * ps["full"]) & y.notna()
+        suspect = day & (kc > 0.6) & ((90.0 - zen) > 20.0) & (y < 0.5 * ps.get("reference_master", ps["full"])) & y.notna()   # mask from the master-data chain, comparable across runs
         winter = day & ~suspect & (idx >= pd.Timestamp("2023-11-15", tz="UTC")) & (idx < pd.Timestamp("2024-03-15", tz="UTC"))
         snow_days = pd.Series(np.isin(idx.date, list(set(depth_cm.index[depth_cm >= 1.0].date))), index=idx) & day & ~suspect
         subsets = {"day": day, "day_nosuspect": day & ~suspect, "cloudy": day & ~suspect & (kc < 0.5), "clear": day & ~suspect & (kc >= 0.8),
