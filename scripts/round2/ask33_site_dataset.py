@@ -33,10 +33,10 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 
 PYTHON = os.path.join(REPO, "synthre", "bin", "python")
-EXPERIMENT = "SITE_v2"
+EXPERIMENT = os.environ.get("ROUND2_EXPERIMENT", "SITE_v2")  # e.g. SITE_v2_noqm
 SYNTH_BASE = "/mnt/nvme2/synthetic"
 RUN_DIR = os.path.join(SYNTH_BASE, "wind", "round2", EXPERIMENT)
-GEN_DIR = os.path.join(REPO, "configs", "round2", "_generated", "site_v2")
+GEN_DIR = os.path.join(REPO, "configs", "round2", "_generated", EXPERIMENT.lower())
 COMM_TABLE = os.path.join(REPO, "data", "round2", "site_commissioning.csv")
 PREDICTED_CLASSES = os.path.join(REPO, "data", "round2", "predicted_classes.csv")
 BRANCH_ASSIGNMENT = os.path.join(REPO, "data", "round2", "branch_assignment.csv")
@@ -191,7 +191,7 @@ def merged_config(station_id: str) -> str:
     out = os.path.join(GEN_DIR, f"config_{station_id}.yaml")
     with open(out, "w") as f:
         yaml.safe_dump(cfg, f)
-    return f"round2/_generated/site_v2/config_{station_id}.yaml"
+    return f"round2/_generated/{EXPERIMENT.lower()}/config_{station_id}.yaml"
 
 
 def generate(ids: list = None, force: bool = False) -> None:

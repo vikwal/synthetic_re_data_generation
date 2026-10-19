@@ -1,0 +1,20 @@
+# SITE_v2_noqm -- Mendeley V4 chain WITHOUT quantile mapping (merge paper, 2026-10-19).
+# Derived from SITE_v2 -- publishable per-station dataset (public 200-site release):
+# (SITE_v2 itself: dyn. power-law extrapolation, paper-deployed, matches M4/section 3
+# dataset description), gated QM correction, Weibull aging, no wakes
+# (single-turbine site dataset).
+round2:
+  experiment_id: 'SITE_v2_noqm'
+  correction: 'off'                  # no station-anchored QM (each site would be anchored to its own record)
+  correction_branch: 'auto'          # JSON branch per station: A=171, C=29 (coastal), B=0
+  shear: 'most'                     # as in the published Mendeley V4 (site_v2_20260714)
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: false}             # single-turbine site dataset
+  density: 'v1_mixed'                # ERA5-only density inputs regardless of mode
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/site_commissioning.csv'
+  artifacts_dir: 'data/round2_site'  # site-only correction/ + topo_features.csv (avoids park/site JSON collision)
+  output_naming: 'readable'          # Ask 35: human-readable published column names
+  output_start: '2023-07-24'
