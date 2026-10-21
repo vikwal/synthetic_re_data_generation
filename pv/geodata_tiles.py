@@ -91,8 +91,13 @@ def mosaic(paths: list, bounds: tuple, res: float, zone: int, bands=None) -> np.
             if nodata is not None and not (isinstance(nodata, float) and np.isnan(nodata)):
                 a = np.where(a == nodata, np.nan, a)
             tmp = np.full((H, W), np.nan, np.float32)
+            # downsampling (source cells finer than res, e.g. DOP20 -> 0.5 m) averages, upsampling (DOM1/DGM1 -> 0.5 m)
+            # interpolates bilinearly; before 2026-10-21 the choice was made on res alone, so DOP20 was resampled
+            # bilinearly to 0.5 m (point sampling with aliasing of the 0.2 m texture)
+            src_res = abs(src_transform.a)
+            resampling = Resampling.average if src_res < 0.99 * res else Resampling.bilinear
             reproject(a, tmp, src_transform=src_transform, src_crs=src_crs, dst_transform=dst_transform, dst_crs=CRS[zone],
-                      resampling=Resampling.bilinear if res < 1.0 else Resampling.average, src_nodata=np.nan, dst_nodata=np.nan)
+                      resampling=resampling, src_nodata=np.nan, dst_nodata=np.nan)
             m = np.isfinite(tmp); out[b][m] = tmp[m]
     return out
 
@@ -142,9 +147,10 @@ def laz_dates(paths: list) -> list:
 def row_axis_from_image(rgb: np.ndarray, inside: np.ndarray, res: float, win_m: float = 80.0, step_m: float = 40.0) -> dict:
     """rgb (3,H,W) at res m, inside mask. Returns global peaks (grid-north axis, pitch, share) and the window map."""
     g = np.nanmean(rgb, axis=0); blk = max(int(round(1.0 / res)), 1)
+    valid_px = np.isfinite(rgb).all(axis=0) & (rgb > 0).any(axis=0)     # black / NaN nodata must not enter the spectrum as dark pixels (2026-10-21)
     H, W = (g.shape[0] // blk) * blk, (g.shape[1] // blk) * blk
     g1 = np.nanmean(g[:H, :W].reshape(H // blk, blk, W // blk, blk), axis=(1, 3))
-    v1 = (inside[:H, :W].reshape(H // blk, blk, W // blk, blk).mean(axis=(1, 3)) > 0.99) & np.isfinite(g1)
+    v1 = ((inside & valid_px)[:H, :W].reshape(H // blk, blk, W // blk, blk).mean(axis=(1, 3)) > 0.99) & np.isfinite(g1)
     g1 = np.where(np.isfinite(g1), g1, 0.0)
     peaks = row_spectrum(g1, v1, res * blk) if v1.sum() > 400 else []     # true cell size of g1 (2026-10-21)
     win, step = int(win_m), int(step_m); loc = []
