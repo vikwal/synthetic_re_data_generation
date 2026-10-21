@@ -115,7 +115,7 @@ def one(r, osm, out_dir, area_fallback_ha):
     t = t[(t.plane_rms < 1.5) & (t.height_above_ground.between(0.3, 5.0))].copy()
     w = t.area_m2 / t.area_m2.sum()
     tm, am = arr.mean_angles(t.tilt.values, t.azimuth.values, w.values)
-    cl = arr.cluster_arrays(t.tilt.values, t.azimuth.values, t.area_m2.values, 4)
+    cl, blk = GG.block_arrays(t)                      # gated row blocks (pv.geodata_geometry.block_arrays)
     t.drop(columns="geometry").to_csv(os.path.join(out_dir, f"{r.park_id}_tables.csv"), index=False)
     ras = GG.rasters_1m(t, fp_utm, dgm)
     with rasterio.open(os.path.join(out_dir, f"{r.park_id}_rasters.tif"), "w", driver="GTiff", height=ras["slope"].shape[0], width=ras["slope"].shape[1],
@@ -132,7 +132,7 @@ def one(r, osm, out_dir, area_fallback_ha):
             **{f"row_{k}": v for k, v in rows.items() if k != "peaks"},
             "profile_type": prof.get("type"), "profile_faces": "; ".join(f"{f['tilt']:.1f}/{f['azimuth']:.0f}x{f['share']:.2f}" for f in prof.get("faces", [])),
             "profile_ridge_m": prof.get("height_ridge"), "profile_min_m": prof.get("height_min"),
-            "arrays": "; ".join(f"{c.tilt:.1f}/{c.azimuth:.0f}x{c.share:.2f}" for c in cl)}
+            "arrays": "; ".join(f"{c.tilt:.1f}/{c.azimuth:.0f}x{c.share:.2f}" for c in cl), "block_rule": blk["reason"], "n_blocks": blk["n_blocks"]}
     exp_ha = float(getattr(r, "expected_module_ha", np.nan))
     prof_faces = prof.get("faces", [])
     if prof.get("type") == "single_face" and prof_faces and len(t) >= 3:

@@ -36,7 +36,7 @@ def run_park(cfg: dict, drv: pd.DataFrame, horizon: pd.Series = None, pm: pd.Dat
     idx = drv.index
     sp, cs, dni = prepare_sun(cfg, drv)
     albedo = _albedo(cfg, drv)
-    dni_extra = pvlib.irradiance.get_extra_radiation(idx + timebase.CENTRE)
+    dni_extra = pvlib.irradiance.get_extra_radiation(timebase.centre(idx))
     dni_extra.index = idx
     hz = horizon if cfg["shading"]["horizon"] else None
 

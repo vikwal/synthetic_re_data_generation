@@ -147,6 +147,23 @@ def run_park(pv: str, p: pd.Series, st: pd.Series, args) -> list:
             axis_ref, pitch_ref, contrast = GT.refine_fold(hag, ins, res_dsm, axis_grid, use_pitch)
             t = GT.tilt_from_surface(hag, ins, res_dsm, axis_ref, pitch_ref)
             t["pitch_surface"] = pitch_s; t["pitch_surface_corr"] = pcorr; t["pitch_used"] = pitch_ref; t["axis_surface_true"] = round((axis_ref + conv) % 180, 2); t["fold_contrast"] = round(contrast, 2); t["block"] = fp_note; t["hag_p50_block"] = float(np.nanpercentile(hag[ins], 50)); t["hag_p90_block"] = float(np.nanpercentile(hag[ins], 90))
+
+            # --- terrain slope in the facing direction (2026-10-21): hag-based tilts are relative to the local ground
+            if t.get("ok") and base is not None:
+                gy_, gx_ = np.gradient(np.where(np.isfinite(base), base, np.nan), res_dsm)
+                dgE, dgN = gx_, -gy_                                   # rows grow southwards -> flip the sign of d/d(row)
+                dd = np.radians(t["flank_dir_grid"])                   # facing direction in the grid frame
+                slope_facing = -(dgE * np.sin(dd) + dgN * np.cos(dd))  # > 0: ground falls towards the facing direction
+                okc = ins & np.isfinite(slope_facing) & np.isfinite(hag) & (hag > -0.5) & (hag < 6)
+                g_fac = float(np.nanmedian(slope_facing[okc])) if okc.any() else float("nan")
+                t["slope_facing"] = g_fac
+                t["terrain_deg"] = float(np.degrees(np.arctan(np.hypot(np.nanmedian(dgE[okc]), np.nanmedian(dgN[okc]))))) if okc.any() else float("nan")
+                hz = lambda b, g: float(np.degrees(np.arctan(np.tan(np.radians(b)) + g)))
+                t["tilt_profile_horiz"] = hz(t["tilt_profile"], g_fac)
+                t["tilt_plane_horiz"] = hz(t["tilt_plane_median"], g_fac) if np.isfinite(t["tilt_plane_median"]) else float("nan")
+                chosen_left = t["flank_left_m"] > t["flank_right_m"]   # the chosen (longer) flank faces flank_dir, the other one the opposite way
+                t["tilt_left_horiz"] = hz(t["tilt_left"], g_fac if chosen_left else -g_fac)
+                t["tilt_right_horiz"] = hz(t["tilt_right"], -g_fac if chosen_left else g_fac)
             try:
                 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
                 os.makedirs(OUTD, exist_ok=True); fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))

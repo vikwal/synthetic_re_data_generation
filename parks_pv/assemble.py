@@ -1,6 +1,6 @@
 """Release frame + manifest per PV park (counterpart of parks/assemble.py).
 
-Release columns (hourly means, UTC, label = interval START, as the meters): drivers (corrected CAMS
+Release columns (interval means on the release step, UTC, label = interval START, as the meters): drivers (corrected CAMS
 ghi/dhi, raw CAMS, ERA5 ghi, temp, wind, albedo, snow depth), chain diagnostics (dni, zenith, poa,
 t_cell, aging, clipping, horizon shading, snow factor) and power_park_free / power_park [W]."""
 import json
@@ -11,6 +11,7 @@ import pandas as pd
 
 from parks_pv import paths
 from parks_pv.drivers import sha256_frame
+from pv import timebase
 
 DRIVER_COLS = ["ghi", "dhi", "ghi_cams_raw", "dhi_cams_raw", "ghi_clear_cams", "ghi_era5", "temp_air", "wind_speed", "pressure",
                "albedo", "snow_depth_cm", "imputed_share", "ring_missing"]
@@ -37,18 +38,27 @@ def git_state(repo: str = paths.REPO) -> dict:
     return {"commit": run("rev-parse", "HEAD").strip(), "branch": run("rev-parse", "--abbrev-ref", "HEAD").strip(), "dirty_files": dirty}
 
 
+def snow_chain_text(model: str) -> str:
+    """Tail of the manifest chain string for a snow model (depth_linear keeps the v1 wording)."""
+    if model == "depth_linear":
+        return "ERA5 snow depth_linear factor"
+    return f"snow {model} factor (max(ERA5, ICON-D2 09 UTC h_snow) ramp 5 cm + tilt slide-off)"
+
+
 def manifest(sel_row, cfg: dict, par: dict, drv_meta: dict, site: dict, arrays: list, horizon_src: str, release: pd.DataFrame,
              config_sha: str, horizon_sha: str) -> dict:
     return {
         "dataset": paths.NAME, "park_id": sel_row.park_id, "client": sel_row.client, "cls": sel_row.cls, "region": int(sel_row.region),
         "chain": "PVWatts-P (corrected CAMS ghi/dhi -> closure DNI with clear-sky cap -> Hay-Davies per array, horizon + inter-row, "
                  "physical IAM, Faiman -> PVWatts DC with era gamma -> era aging -> DC losses -> PVWatts inverter (DC/AC clipping) "
-                 "-> AC losses, availability 0.98 -> ERA5 snow depth_linear factor)",
+                 "-> AC losses, availability 0.98 -> " + snow_chain_text(drv_meta.get("snow_model", "depth_linear")) + ")",
         "config": cfg, "config_sha256": config_sha, "params": par, "arrays": arrays, "site": site,
         "horizon": {"source": horizon_src, "sha256": horizon_sha},
         "drivers": drv_meta,
-        "period": [str(release.index[0]), str(release.index[-1])], "n_hours": int(len(release)),
-        "time_label": "interval start, UTC, hourly means",
+        "period": [str(release.index[0]), str(release.index[-1])], "n_steps": int(len(release)),
+        "step": str(timebase.step_of(release.index)),
+        "n_hours": float(len(release) * timebase.step_of(release.index) / pd.Timedelta("1h")),
+        "time_label": f"interval start, UTC, {timebase.step_of(release.index)} means",
         "release_sha256": sha256_frame(release),
         "git": git_state(),
         "created": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"),

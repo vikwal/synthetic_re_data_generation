@@ -43,21 +43,21 @@ kwp_dc: 841.8
 arrays:
 - name: main_0
   tilt: 11.07
-  azimuth: 225.14
+  azimuth: 224.93
   share: 0.3333333333333333
   gcr: 0.75
 - name: main_1
-  tilt: 11.13
-  azimuth: 196.08
+  tilt: 11.15
+  azimuth: 195.89
   share: 0.2222222222222222
   gcr: 0.75
 - name: main_2
-  tilt: 19.21
-  azimuth: 234.13
+  tilt: 19.2
+  azimuth: 234.01
   share: 0.2222222222222222
   gcr: 0.75
 - name: main_3
   tilt: 15.85
-  azimuth: 213.21
+  azimuth: 213.07
   share: 0.2222222222222222
   gcr: 0.75

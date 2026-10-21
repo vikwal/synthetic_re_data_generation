@@ -72,3 +72,15 @@ def test_release_frame_and_clients_table():
     c = M.clients_table(parks).set_index("client_id")
     assert c.loc["R0", "n_parks"] == 2 and c.loc["R0", "capacity_kw"] == 3000.0 and c.loc["R0", "region_id"] == 1
     assert c.loc["holdout", "archetype"] == "holdout" and c.loc["N0", "region_id"] == ""
+
+
+def test_refine_snow_does_not_bridge_gaps():
+    import numpy as np, pandas as pd
+    from parks_pv import drivers as DRV
+    t = pd.date_range("2024-01-01", periods=6, freq="1h", tz="UTC")
+    h = pd.DataFrame({"snow_depth_cm": [2.0, 4.0, np.nan, np.nan, 10.0, 12.0], "snowfall_cm": [0.0, 1.0, np.nan, np.nan, 0.0, 0.0]}, index=t)
+    f = DRV._refine_snow(h, "30min")
+    assert f.loc["2024-01-01 00:30", "snow_depth_cm"] == 3.0 and f.loc["2024-01-01 04:30", "snow_depth_cm"] == 11.0
+    assert f.loc["2024-01-01 01:30":"2024-01-01 03:30", "snow_depth_cm"].isna().all()      # no bridge across the missing hours
+    assert f.loc["2024-01-01 01:30", "snowfall_cm"] == 1.0 and np.isnan(f.loc["2024-01-01 02:30", "snowfall_cm"])
+    assert len(f) == 12

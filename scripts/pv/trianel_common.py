@@ -140,15 +140,16 @@ def ac_cap_from_meter(meter: pd.Series, cap_w: float) -> tuple:
     return float(s.quantile(0.999)), "p99.9"
 
 
-def park_parameters(parks: pd.DataFrame, facts: pd.DataFrame, meter: pd.DataFrame) -> pd.DataFrame:
-    """Decide kwp_dc, dc_ac, year, module per park from master data + MaStR + meter plateau."""
+def park_parameters(parks: pd.DataFrame, facts: pd.DataFrame, meter: pd.DataFrame, use_meter_ac: bool = True) -> pd.DataFrame:
+    """Decide kwp_dc, dc_ac, year, module per park from master data + MaStR + meter plateau.
+    use_meter_ac=False ignores the meter for the AC limit (register-only twins, D2 2026-10-20): DC/AC from MaStR, else 1.10."""
     rows = []
     for pv, p in parks.iterrows():
         f = facts.loc[pv]
         dc_mastr = f["dc_kwp_mastr"] if pd.notna(f["dc_kwp_mastr"]) and float(f["dc_kwp_mastr"]) > 0 else None
         ac_mastr = f["ac_kw_mastr"] if pd.notna(f["ac_kw_mastr"]) else None
         kwp = float(dc_mastr) if dc_mastr else float(p["kw_master"])
-        ac_meter, ac_meter_src = (ac_cap_from_meter(meter[pv], kwp * 1000.0)) if pv in meter else (np.nan, None)
+        ac_meter, ac_meter_src = (ac_cap_from_meter(meter[pv], kwp * 1000.0)) if (pv in meter and use_meter_ac) else (np.nan, None)
         ac_meter = ac_meter / 1000.0 if np.isfinite(ac_meter) else np.nan
         plateau = bool(ac_meter_src and ac_meter_src.startswith("plateau"))
         if dc_mastr and ac_mastr and not (plateau and ac_meter < 0.95 * float(ac_mastr)):

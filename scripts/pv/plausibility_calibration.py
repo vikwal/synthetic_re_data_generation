@@ -17,7 +17,7 @@ import pandas as pd
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO)
 from parks_pv import paths  # noqa: E402
-from pv import angles, arrays as arr, plausibility as PL  # noqa: E402
+from pv import angle_diagnostics, angles, arrays as arr, plausibility as PL  # noqa: E402
 
 WINDOW_STARTS = {"summer": "2024-06-01", "winter": "2023-12-01", "spring": "2024-03-01"}
 
@@ -47,7 +47,10 @@ def one(task):
             except Exception as e:  # noqa: BLE001
                 rows.append({"park_id": pid, "season": season, "window_days": w, "error": str(e)[:80]})
                 continue
-            g, c, n, m, p, h = res["grid"], res["centroid_azimuth"], res["noon_tilt"], res["mixture"], res["plausibility"], res["east_west_model"]
+            g, m, p, h = res["grid"], res["mixture"], res["plausibility"], res["east_west_model"]
+            tg = float(round(g["tilt"] / 5) * 5) if np.isfinite(g["tilt"]) else 25.0
+            diag = angle_diagnostics.run(d["power_park"].loc[sl], drv.loc[sl], lat, lon, alt, {k: v.loc[sl] for k, v in bank.items()}, res["mask"], tilt_guess=tg)
+            c, n = diag["centroid_azimuth"], diag["noon_tilt"]
             daz = ((g["azimuth"] - true_az + 180) % 360) - 180
             rows.append({"park_id": pid, "season": season, "window_days": w, "n_clear_hours": res["n_clear_hours"], "n_days": g.get("n_days"),
                          "n_suspect": res["n_suspect"], "noon_zenith_spread": res["zenith_spread"], "tilt_identifiable": bool(res["tilt_identifiable"]),
@@ -57,7 +60,7 @@ def one(task):
                          "tilt_boot_lo": g.get("tilt_boot", (np.nan,) * 3)[0], "tilt_boot_hi": g.get("tilt_boot", (np.nan,) * 3)[2],
                          "az_boot_lo": g.get("azimuth_boot", (np.nan,) * 3)[0], "az_boot_hi": g.get("azimuth_boot", (np.nan,) * 3)[2],
                          "az_centroid": c["azimuth"], "az_centroid_iqr": c["iqr"], "tilt_noon": n.get("tilt"), "zenith_spread": n.get("zenith_spread"),
-                         "mix_components": m["n_components"], "mix_east_west": m["east_west"], "mix_east_west_nnls": m.get("east_west_nnls"), "mix_flat": m["flat"], "w_flat": m["w_flat"],
+                         "mix_components": len(m["components"]), "mix_east_west": m["east_west"], "mix_east_west_nnls": m.get("east_west_nnls"), "mix_flat": m["flat"], "w_flat": m["w_flat"],
                          "ew_model_preferred": h.get("preferred"), "ew_model_tilt": h.get("tilt"), "ew_model_share_east": h.get("share_east"), "ew_model_delta_bic": h.get("delta_bic"),
                          "bank": bank_kind, "azimuth_prior": az_prior, "prior_east_west": prior_ew, "w_east": m["w_east"], "w_west": m["w_west"], "w_south": m["w_south"], "mix_tilt_eff": m["tilt_eff"], "mix_az_eff": m["azimuth_eff"],
                          "err_tilt_grid": g["tilt"] - true_tilt, "err_az_grid": daz, "err_az_centroid": ((c["azimuth"] - true_az + 180) % 360) - 180 if np.isfinite(c["azimuth"]) else np.nan,
@@ -103,10 +106,6 @@ def main():
     summarise(df, a.out, suffix)
 
 
-def x_cols(df: pd.DataFrame) -> set:
-    return set(df.columns)
-
-
 def _rate(flag: pd.Series) -> float:
     """Share of False among the decided (non-null) flags."""
     f = flag.dropna()
@@ -135,7 +134,7 @@ def summarise(df: pd.DataFrame, out: str, suffix: str = "") -> pd.DataFrame:
         "detect_deviation": g.apply(lambda x: _rate(x.register_az_ok[x.deviation != ""]) if (x.deviation != "").any() else np.nan),
         "ew_flag_rate_south": g.apply(lambda x: x.mix_east_west[(x.register_orientation == "Süd") & (x.deviation == "")].mean()),
         "ew_flag_rate_ew": g.apply(lambda x: x.mix_east_west[(x.register_orientation == "Ost-West") & (x.deviation == "")].mean()),
-        "ew_model_rate_ew": g.apply(lambda x: x.ew_model_preferred[(x.register_orientation == "Ost-West") & (x.deviation == "")].astype(float).mean()) if "ew_model_preferred" in x_cols(df) else np.nan,
+        "ew_model_rate_ew": g.apply(lambda x: x.ew_model_preferred[(x.register_orientation == "Ost-West") & (x.deviation == "")].astype(float).mean()) if "ew_model_preferred" in df.columns else np.nan,
     })
     summ = summ.apply(lambda c: pd.to_numeric(c, errors="coerce"))
     summ.to_csv(os.path.join(out, f"plausibility_calibration_summary{suffix}.csv"))

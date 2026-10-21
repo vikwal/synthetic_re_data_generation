@@ -393,3 +393,114 @@ def test_plateau_detection():
 def test_basic_metrics_perfect():
     y = pd.Series(np.arange(20.0))
     assert metrics.basic(y, y, 100.0)["r2"] == pytest.approx(1.0)
+
+
+def test_grid_region_bootstrap_repeats_days_by_multiplicity():
+    from pv import plausibility as PL
+    drv = _clear_driver(12)
+    truth = _cfg(arrays=[{"tilt": 30.0, "azimuth": 200.0, "share": 1.0}], dc_ac=1.0)
+    y = chain.run_park(truth, drv)["p_dc_w"]
+    bank = angles.poa_bank(drv, LAT, LON, ALT, [20, 30, 40], [180, 200, 220])
+    mask = angles.clear_hours(drv["ghi"], LAT, LON, ALT)
+    reg = PL.grid_region(y, bank, mask, n_boot=20)
+    assert reg["n_days"] == 12 and reg["tilt_boot"][1] == 30.0 and reg["azimuth_boot"][1] == 200.0
+    # a resample that drops the multiplicity would be a 63 % subsample; with repeats every draw still holds all hours of its days
+    assert reg["tilt_boot"][0] <= 30.0 <= reg["tilt_boot"][2]
+    reg0 = PL.grid_region(y, bank, mask, n_boot=0)
+    assert "tilt_boot" not in reg0 and reg0["n_days"] == 12
+
+
+def test_plausibility_prior_reports_prior_classes_and_tilt_none_without_class():
+    from pv import plausibility as PL
+    region = {"tilt": 20.0, "azimuth": 180.0, "r2": 0.99, "scale": 1.0, "tilt_range": (15.0, 25.0), "azimuth_range": (170.0, 190.0),
+              "tilt_boot": (15.0, 20.0, 25.0), "azimuth_boot": (170.0, 180.0, 190.0), "n_hours": 100, "n_days": 10}
+    mix = {"flat": False, "east_west": False}
+    v = PL.plausibility(region, mix, "Süd", "20 - 40 Grad", azimuth_prior=100.0)
+    assert v["azimuth_ok"] is False and v["estimated_azimuth_classes"] == ["Ost"]       # the prior's class, not the power's
+    v = PL.plausibility(region, mix, "Süd")
+    assert v["azimuth_ok"] is True and v["tilt_ok"] is None                           # no register tilt class -> no tilt verdict
+    assert PL._interval_distance(170.0, 190.0, 180.0) == 0.0 and PL._interval_distance(60.0, 300.0, 0.0) == 60.0
+
+
+def test_angle_diagnostics_run_on_assess_mask():
+    from pv import angle_diagnostics, plausibility as PL
+    drv = _clear_driver(8)
+    truth = _cfg(arrays=[{"tilt": 25.0, "azimuth": 180.0, "share": 1.0}], dc_ac=1.0)
+    y = chain.run_park(truth, drv)["p_dc_w"]
+    res = PL.assess(y, drv, LAT, LON, ALT, n_boot=0)
+    bank = angles.poa_bank(drv, LAT, LON, ALT, PL.TILTS, PL.AZIMUTHS)
+    d = angle_diagnostics.run(y, drv, LAT, LON, ALT, bank, res["mask"], tilt_guess=25.0)
+    assert abs(d["centroid_azimuth"]["azimuth"] - 180.0) < 10 and d["centroid_azimuth"]["n_days"] >= 5
+    assert "tilt" in d["noon_tilt"]
+
+
+def test_block_arrays_gates():
+    from pv import geodata_geometry as GG
+    rng = np.random.default_rng(0)
+
+    def tables(specs):
+        rows = []
+        for tilt, az, n, area in specs:
+            for _ in range(n):
+                rows.append({"tilt": tilt + rng.normal(0, 1.0), "azimuth": az + rng.normal(0, 1.5), "area_m2": area, "axis_deg": (az - 90.0) % 180.0 + rng.normal(0, 2.0)})
+        return pd.DataFrame(rows)
+    # two blocks 21 deg apart: not worth separating -> one plane with the mean normal
+    cl, info = GG.block_arrays(tables([(15.0, 184.0, 30, 100.0), (15.0, 205.0, 20, 100.0)]))
+    assert info["reason"] == "merged" and len(cl) == 1 and 190 < cl[0].azimuth < 198
+    # two blocks 46 deg apart with enough tables each: split, area shares
+    cl, info = GG.block_arrays(tables([(15.0, 184.0, 30, 100.0), (15.0, 230.0, 20, 100.0)]))
+    assert info["reason"] == "split" and len(cl) == 2 and abs(cl[0].share - 0.6) < 0.02 and abs(cl[1].azimuth - 230.0) < 3
+    # a small second block (3 tables, 9 % of the area) merges into the main block
+    cl, info = GG.block_arrays(tables([(15.0, 184.0, 30, 100.0), (15.0, 250.0, 3, 100.0)]))
+    assert info["reason"] == "merged" and len(cl) == 1
+    # an east-west tent: two faces 180 deg apart -> split
+    cl, info = GG.block_arrays(tables([(10.0, 90.0, 25, 50.0), (10.0, 270.0, 25, 50.0)]))
+    assert info["reason"] == "split" and len(cl) == 2 and {round(c.azimuth / 10) * 10 for c in cl} == {90, 270}
+    # noisy tilts in one block (standard error of the median above 3 deg) -> collapsed
+    t = tables([(15.0, 184.0, 30, 100.0), (15.0, 230.0, 20, 100.0)])
+    t.loc[t.azimuth > 210, "tilt"] = rng.uniform(2.0, 40.0, (t.azimuth > 210).sum())
+    cl, info = GG.block_arrays(t)
+    assert info["reason"] == "collapsed:tilt_se" and len(cl) == 1
+
+
+# ------------------------------------------------------------- 30-minute step
+
+def test_step_helpers_30min():
+    idx = timebase.step_index("2024-06-21", "2024-06-22", "30min")
+    assert len(idx) == 48 and timebase.step_of(idx) == pd.Timedelta("30min")
+    assert timebase.centre(idx)[0] == pd.Timestamp("2024-06-21 00:15", tz="UTC")
+    t = pd.date_range("2024-01-01 00:15", periods=4, freq="15min", tz="UTC")      # END labels of 15-min intervals
+    s = pd.Series([1.0, 3.0, 5.0, 7.0], index=t)
+    h = timebase.to_step_mean(s, label="end", src_step="15min", step="30min")
+    assert list(h.values) == [2.0, 6.0] and h.index[0] == pd.Timestamp("2024-01-01 00:00", tz="UTC")
+    sp = timebase.solar_position(idx, LAT, LON, ALT)
+    assert sp["apparent_zenith"].idxmin() == pd.Timestamp("2024-06-21 11:00", tz="UTC")   # centre 11:15, solar noon 11:20
+    cs30 = timebase.clearsky(idx, LAT, LON, ALT)
+    cs60 = timebase.clearsky(timebase.hourly_index("2024-06-21", "2024-06-22"), LAT, LON, ALT)
+    assert abs(cs30["ghi"].sum() * 0.5 / cs60["ghi"].sum() - 1.0) < 1e-3
+
+
+def test_chain_30min_matches_hourly_energy():
+    idx = timebase.step_index("2024-06-20", "2024-06-23", "30min")
+    cs = timebase.clearsky(idx, LAT, LON, ALT)
+    drv = pd.DataFrame({"ghi": cs["ghi"], "dhi": cs["dhi"], "temp_air": 20.0, "wind_speed": 2.0, "albedo": 0.2, "imputed_share": 0.0}, index=idx)
+    cfg = _cfg(arrays=[{"tilt": 25.0, "azimuth": 180.0, "share": 1.0, "gcr": 0.4}], dc_ac=1.2, shading={"inter_row": True})
+    r30 = chain.run_park(cfg, drv)
+    r60 = chain.run_park(cfg, _clear_driver(3).loc["2024-06-20":"2024-06-22"]) if False else chain.run_park(cfg, pd.DataFrame(
+        {"ghi": timebase.clearsky(timebase.hourly_index("2024-06-20", "2024-06-23"), LAT, LON, ALT)["ghi"],
+         "dhi": timebase.clearsky(timebase.hourly_index("2024-06-20", "2024-06-23"), LAT, LON, ALT)["dhi"],
+         "temp_air": 20.0, "wind_speed": 2.0, "albedo": 0.2, "imputed_share": 0.0}, index=timebase.hourly_index("2024-06-20", "2024-06-23")))
+    e30, e60 = r30["p_ac_w"].sum() * 0.5, r60["p_ac_w"].sum()
+    assert abs(e30 / e60 - 1.0) < 0.01
+    assert r30["clipped"].sum() * 0.5 >= r60["clipped"].sum() * 0.8          # the finer step resolves the clipping plateau at least as well
+
+
+def test_instant_to_step_means_and_era5_solar_repeat():
+    from pv import drivers as D
+    t = pd.date_range("2024-01-01 00:00", periods=4, freq="1h", tz="UTC")
+    inst = pd.DataFrame({"x": [0.0, 2.0, 4.0, 6.0]}, index=t)
+    m = D.instant_to_step_means(inst, "30min")
+    assert list(m.index[:3]) == list(pd.date_range("2024-01-01 00:00", periods=3, freq="30min", tz="UTC"))
+    assert list(m["x"].values[:4]) == [0.5, 1.5, 2.5, 3.5]                     # means over [t, t+30min)
+    h = D.instant_to_step_means(inst, "1h")
+    assert list(h["x"].values[:3]) == [1.0, 3.0, 5.0]

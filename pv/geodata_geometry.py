@@ -367,3 +367,89 @@ def profile_geometry(dom_path: str, dgm_path: str, footprint, row_axis_deg: floa
             out.update({"type": "single_face", "faces": [{"tilt": t_r, "azimuth": normal, "share": 1.0}]})
     return out
 
+
+
+# ------------------------------------------------------------------ row blocks -> sub-arrays, gated (2026-10-16)
+BLOCK_MIN_TABLES = 5            # a block needs this many table faces
+BLOCK_MIN_SHARE = 0.10          # and this share of the table area; smaller blocks merge into the nearest block
+BLOCK_MAX_AXIS_SPREAD = 10.0    # deg, RMS spread of the table axes within a block (same bound as the OSM row prior)
+BLOCK_MAX_TILT_SE = 3.0         # deg, standard error of the block's median tilt, 1.25 IQR / sqrt(n)
+BLOCK_MIN_AZ_DIFF = 30.0        # blocks closer than this in azimuth ...
+BLOCK_MIN_TILT_DIFF = 10.0      # ... and in tilt are not worth separating (chain differs by < 0.1 % nRMSE)
+
+
+def _axis_spread(axes: np.ndarray, weights: np.ndarray) -> float:
+    a = np.radians(np.asarray(axes, float) * 2.0)
+    mean = np.degrees(np.arctan2(np.sum(weights * np.sin(a)), np.sum(weights * np.cos(a)))) / 2.0
+    dev = (np.asarray(axes, float) - mean + 90.0) % 180.0 - 90.0
+    return float(np.sqrt(np.average(dev ** 2, weights=weights)))
+
+
+def _blocks(t: pd.DataFrame, w: np.ndarray, lab: np.ndarray) -> list:
+    from pv import arrays as arr
+    out = []
+    for i in np.unique(lab):
+        m = lab == i
+        bt, ba = arr.mean_angles(t.tilt.to_numpy()[m], t.azimuth.to_numpy()[m], w[m])
+        q1, q3 = np.percentile(t.tilt.to_numpy()[m], [25, 75])
+        out.append({"label": int(i), "tilt": float(bt), "azimuth": float(ba), "share": float(w[m].sum() / w.sum()), "n": int(m.sum()),
+                    "tilt_se": float(1.25 * (q3 - q1) / np.sqrt(m.sum())),
+                    "axis_spread": _axis_spread(t.axis_deg.to_numpy()[m], w[m]) if "axis_deg" in t and t.axis_deg.notna()[m].all() else 0.0})
+    return out
+
+
+def _angle_between(a: dict, b: dict) -> tuple:
+    daz = abs(((a["azimuth"] - b["azimuth"]) + 180.0) % 360.0 - 180.0)
+    return daz, abs(a["tilt"] - b["tilt"])
+
+
+def block_arrays(tables: pd.DataFrame, k: int = 4) -> tuple:
+    """Sub-arrays from per-table plane fits (columns tilt, azimuth, area_m2, optional axis_deg), gated so that the
+    split never carries more estimation noise than it removes. Blocks start as k-means clusters of the table
+    azimuths (area-weighted; row blocks differ in azimuth, tilt noise must stay inside a block) and are merged pairwise: a block below BLOCK_MIN_TABLES or BLOCK_MIN_SHARE joins the
+    nearest block, and two blocks closer than BLOCK_MIN_AZ_DIFF in azimuth and BLOCK_MIN_TILT_DIFF in tilt join
+    (the chain then differs by < 0.1 % nRMSE, the split can only lose). What remains is used only if every block
+    has an axis spread <= BLOCK_MAX_AXIS_SPREAD and a median-tilt standard error <= BLOCK_MAX_TILT_SE; otherwise
+    one plane with the mean normal of all tables. Returns (list of Array, info); info['reason'] names the rule
+    ('split', 'merged', 'single', 'collapsed:axis_spread', 'collapsed:tilt_se')."""
+    from pv import arrays as arr
+    from sklearn.cluster import KMeans
+    t = tables.dropna(subset=["tilt", "azimuth", "area_m2"]).copy()
+    w = t.area_m2.to_numpy(float)
+    if len(t) == 0:
+        return [], {"reason": "no_tables", "n_blocks": 0}
+    tm, am = arr.mean_angles(t.tilt.to_numpy(), t.azimuth.to_numpy(), w)
+    single = [arr.Array(name="a0", tilt=float(tm), azimuth=float(am), share=1.0)]
+    if len(t) < 2 * BLOCK_MIN_TABLES:
+        return single, {"reason": "single", "n_blocks": 1}
+    az = np.radians(t.azimuth.to_numpy())               # blocks are row blocks: cluster on the azimuth only, so that
+    u = np.column_stack([np.cos(az), np.sin(az)])         # tilt noise stays inside a block and shows up in tilt_se
+    kk = int(min(k, len(t) // BLOCK_MIN_TABLES))
+    lab = KMeans(n_clusters=kk, n_init=10, random_state=0).fit(u, sample_weight=w / w.sum()).labels_.copy()
+    merged = False
+    while True:
+        blocks = _blocks(t, w, lab)
+        if len(blocks) == 1:
+            break
+        small = [b for b in blocks if b["n"] < BLOCK_MIN_TABLES or b["share"] < BLOCK_MIN_SHARE]
+        if small:                                     # smallest block -> nearest other block (normal angle)
+            b = min(small, key=lambda x: x["share"])
+            others = [o for o in blocks if o["label"] != b["label"]]
+            target = min(others, key=lambda o: sum(_angle_between(b, o)))
+        else:                                         # closest pair; merge only if indistinct
+            pairs = [(blocks[i], blocks[j]) for i in range(len(blocks)) for j in range(i + 1, len(blocks))]
+            b, target = min(pairs, key=lambda p: sum(_angle_between(*p)))
+            daz, dt = _angle_between(b, target)
+            if daz >= BLOCK_MIN_AZ_DIFF or dt >= BLOCK_MIN_TILT_DIFF:
+                break
+        lab[lab == b["label"]] = target["label"]
+        merged = True
+    info = {"n_blocks": len(blocks), "blocks": blocks}
+    if len(blocks) == 1:
+        return single, {**info, "reason": "merged" if merged else "single"}
+    if any(b["axis_spread"] > BLOCK_MAX_AXIS_SPREAD for b in blocks):
+        return single, {**info, "reason": "collapsed:axis_spread"}
+    if any(b["tilt_se"] > BLOCK_MAX_TILT_SE for b in blocks):
+        return single, {**info, "reason": "collapsed:tilt_se"}
+    blocks.sort(key=lambda b: -b["share"])
+    return [arr.Array(name=f"a{j}", tilt=b["tilt"], azimuth=b["azimuth"], share=b["share"]) for j, b in enumerate(blocks)], {**info, "reason": "split"}

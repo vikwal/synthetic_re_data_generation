@@ -26,7 +26,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pv import angles, chain, metrics, timebase  # noqa: E402
+from pv import angle_diagnostics, angles, chain, metrics, timebase  # noqa: E402
 from parks import era5_db  # noqa: E402
 import trianel_common as tc  # noqa: E402
 
@@ -274,11 +274,11 @@ def fig_asymmetry(all_series, meters, caps, parks, out):
         r = all_series[pv][("C", "cams")] if ("C", "cams") in all_series[pv] else all_series[pv][("C", "era5")]
         sp = pd.DataFrame({"apparent_zenith": r["zenith"], "azimuth": r["azimuth_sun"]})
         y = meters[pv] / caps[pv]
-        am = angles.morning_evening_asymmetry(y, sp)
+        am = angle_diagnostics.morning_evening_asymmetry(y, sp)
         ax.plot(am["elev_lo"] + 5, am["west_minus_east"], color=COL["meas"], marker="o", lw=2.0, label="Messung")
         for v, c in [("C", COL["cams"]), ("CF", COL["fit"])]:
             key = (v, "cams") if (v, "cams") in all_series[pv] else (v, "era5")
-            a2 = angles.morning_evening_asymmetry(all_series[pv][key]["p_ac_w"] / caps[pv], sp)
+            a2 = angle_diagnostics.morning_evening_asymmetry(all_series[pv][key]["p_ac_w"] / caps[pv], sp)
             ax.plot(a2["elev_lo"] + 5, a2["west_minus_east"], color=c, marker="s", ms=3, label=f"{v} (Stammdaten)" if v == "C" else "CF (gefittet)")
             for _, q in a2.iterrows():
                 rows.append({"pv": pv, "series": v, "elev_lo": q["elev_lo"], "west_minus_east": q["west_minus_east"]})

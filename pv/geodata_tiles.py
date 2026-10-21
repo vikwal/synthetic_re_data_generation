@@ -146,14 +146,14 @@ def row_axis_from_image(rgb: np.ndarray, inside: np.ndarray, res: float, win_m: 
     g1 = np.nanmean(g[:H, :W].reshape(H // blk, blk, W // blk, blk), axis=(1, 3))
     v1 = (inside[:H, :W].reshape(H // blk, blk, W // blk, blk).mean(axis=(1, 3)) > 0.99) & np.isfinite(g1)
     g1 = np.where(np.isfinite(g1), g1, 0.0)
-    peaks = row_spectrum(g1, v1, 1.0) if v1.sum() > 400 else []
+    peaks = row_spectrum(g1, v1, res * blk) if v1.sum() > 400 else []     # true cell size of g1 (2026-10-21)
     win, step = int(win_m), int(step_m); loc = []
     for i in range(0, g1.shape[0] - win + 1, step):
         for j in range(0, g1.shape[1] - win + 1, step):
             sub = g1[i:i + win, j:j + win]; vs = v1[i:i + win, j:j + win]
             if vs.mean() < 0.6 or sub[vs].std() < 3:
                 continue
-            pk = row_spectrum(sub, vs, 1.0, n_peaks=1)
+            pk = row_spectrum(sub, vs, res * blk, n_peaks=1)
             if pk and pk[0][2] >= 0.25:
                 loc.append((j + win / 2, i + win / 2, pk[0][0], pk[0][1], pk[0][2]))
     loc = np.array(loc) if loc else np.zeros((0, 5))

@@ -17,9 +17,7 @@ import numpy as np
 import pandas as pd
 
 from pv import arrays as arr, terrain
-
-AZ_CENTRE = {"Süd": 180.0, "Süd-West": 225.0, "Süd-Ost": 135.0, "Ost": 90.0, "West": 270.0, "Nord": 0.0,
-             "Nord-Ost": 45.0, "Nord-West": 315.0}
+from pv.plausibility import AZ_CENTRE, azimuth_prior_from_rows, orientation_class, tilt_class  # noqa: F401  (re-exported)
 # true mount tilt (deg) by register tilt class and cohort: uniform ranges
 TILT_RANGE = {("20 - 40 Grad", "<=2012"): (25.0, 32.0), ("20 - 40 Grad", "2013-20"): (20.0, 28.0), ("20 - 40 Grad", "2021+"): (20.0, 25.0),
               ("< 20 Grad", "<=2012"): (15.0, 19.0), ("< 20 Grad", "2013-20"): (12.0, 19.0), ("< 20 Grad", "2021+"): (10.0, 18.0),
@@ -44,15 +42,11 @@ def _azimuth(rng, cls: str) -> float:
     return float((AZ_CENTRE[cls] + np.clip(rng.normal(0.0, AZ_SIGMA), -20.0, 20.0)) % 360.0)
 
 
-def orientation_from_rows(row_axis_deg: float, register_class: str) -> tuple:
-    """Module orientation implied by the mapped table rows (OSM power=generator polygons): rows running
-    east-west (axis ~90) carry south-facing modules, rows running north-south (axis ~0/180) an east-west
-    park. Returns (class, azimuth or None). Oblique rows: the perpendicular on the south side."""
-    a = row_axis_deg % 180.0
-    if a < 30.0 or a > 150.0:
-        return "Ost-West", None
-    az = (a + 90.0) % 360.0                      # perpendicular on the south side (90 < az < 270)
-    return orientation_class(az), az
+def orientation_from_rows(row_axis_deg: float) -> tuple:
+    """(register class, azimuth or None) implied by the mapped table rows; pv.plausibility.azimuth_prior_from_rows
+    holds the rule (east-west rows -> south-facing modules, north-south rows -> east-west park)."""
+    p = azimuth_prior_from_rows(row_axis_deg)
+    return ("Ost-West", None) if p["east_west"] else (orientation_class(p["azimuth"]), p["azimuth"])
 
 
 def nominal_arrays(row, rng, row_axis_deg: float = None) -> tuple:
@@ -64,7 +58,7 @@ def nominal_arrays(row, rng, row_axis_deg: float = None) -> tuple:
     main, tilt_cls, coh = row.orientation_class, row.tilt_class, row.cohort
     deviation, az_rows = None, None
     if row_axis_deg is not None and np.isfinite(row_axis_deg):
-        cls_rows, az_rows = orientation_from_rows(row_axis_deg, main)
+        cls_rows, az_rows = orientation_from_rows(row_axis_deg)
         ew_rows, ew_reg = cls_rows == "Ost-West", main == "Ost-West"
         if ew_rows != ew_reg:
             deviation = f"registered {main}, mapped rows {cls_rows} (OSM)"
@@ -81,10 +75,7 @@ def nominal_arrays(row, rng, row_axis_deg: float = None) -> tuple:
         t = float(rng.uniform(*EW_TILT))
         s = float(rng.uniform(0.45, 0.55))
         if row_axis_deg is not None and np.isfinite(row_axis_deg):
-            ax = row_axis_deg % 180.0
-            az_e, az_w = (ax + 90.0) % 360.0, (ax + 270.0) % 360.0
-            if az_e > 180.0:
-                az_e, az_w = az_w, az_e
+            az_e, az_w = azimuth_prior_from_rows(row_axis_deg)["azimuths"]
         else:
             az_e, az_w = _azimuth(rng, "Ost"), _azimuth(rng, "West")
         out += [{"name": "east", "tilt": t, "azimuth": az_e, "share": s, "source": "east-west"},
@@ -150,16 +141,6 @@ def terrain_arrays(poly, nominal: list, k_total: int = MAX_ARRAYS, seed: int = 0
     for a in out:
         a["share"] /= tot
     return out, stats
-
-
-def orientation_class(azimuth: float) -> str:
-    """Azimuth (deg from north) -> MaStR 8-class orientation."""
-    names = ["Nord", "Nord-Ost", "Ost", "Süd-Ost", "Süd", "Süd-West", "West", "Nord-West"]
-    return names[int(((azimuth + 22.5) % 360.0) // 45.0)]
-
-
-def tilt_class(tilt: float) -> str:
-    return "< 20 Grad" if tilt < 20 else "20 - 40 Grad" if tilt < 40 else "40 - 60 Grad" if tilt < 60 else "> 60 Grad"
 
 
 def register_view(sel_row, arrays: list) -> dict:

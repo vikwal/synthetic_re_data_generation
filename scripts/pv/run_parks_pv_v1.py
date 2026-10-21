@@ -10,8 +10,13 @@
     assemble   release frames + manifests -> ${DATA_ROOT}/synthetic/solar/parks_pv_v1/
     tables     parks.csv, clients.csv, sites.csv, pv_arrays.csv, pv_masterdata_view.csv, README.md
 
+Snow model: generate --snow-model depth_slide (default depth_linear = release v1) adds the ICON-D2 daily snow driver.
+An existing release is re-snowed without a chain run by scripts/pv/resnow_release.py (release parks_pv_v1s_30min).
+
     synthre/bin/python scripts/pv/run_parks_pv_v1.py sites [--parks ID,ID] [--seed 42]
     synthre/bin/python scripts/pv/run_parks_pv_v1.py generate --model-tag xgb_v5 --workers 8
+    PV_RELEASE_VARIANT=_30min synthre/bin/python scripts/pv/run_parks_pv_v1.py generate --step 30min   # 30-min release
+The corrected CAMS (stage correct) is written at 30 min and hourly in one go and shared by the variants.
 """
 import argparse
 import json
@@ -28,9 +33,9 @@ from parks_pv import assemble as A, geometry as G, metadata as M, params as P, p
 from pv import terrain  # noqa: E402
 
 START, END = "2023-07-24", "2026-08-01"          # release window [start, end)
-CORR_DIR = os.path.join(paths.WORK_DIR, "cams_corrected")
+CORR_DIR = paths.CORR_DIR
 CHAIN_DIR = os.path.join(paths.WORK_DIR, "chain")
-SNOW_CACHE = os.path.join(paths.WORK_DIR, "era5_snow")
+SNOW_CACHE = paths.SNOW_CACHE_DIR
 
 OSM_JSON = os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")
 PVGIS_JSON = os.path.join(paths.INPUT_DIR, "osm", "pvgis_horizon.json")
@@ -140,17 +145,20 @@ def stage_correct(args):
 
 
 def _one_generate(task):
-    park_id, lat, lon, cfg_path, hz, model_tag = task
+    park_id, lat, lon, cfg_path, hz, model_tag, step, snow_model = task
     from parks import era5_db
     from parks_pv import drivers as DRV, generate as GEN
     conn = era5_db.connect()
     try:
-        drv, meta = DRV.build(park_id, lat, lon, START, END, conn, model_tag, snow_cache=os.path.join(SNOW_CACHE, f"{park_id}.parquet"))
+        drv, meta = DRV.build(park_id, lat, lon, START, END, conn, model_tag, snow_cache=os.path.join(SNOW_CACHE, f"{park_id}.parquet"), step=step)
     finally:
         conn.close()
     cfg = yaml.safe_load(open(cfg_path))
+    if snow_model != "depth_linear":
+        drv["icon_snow_depth_cm"], meta["icon_snow"] = DRV.icon_snow_series(park_id, drv.index)
+        meta["snow_model"], meta["snow_params"] = snow_model, GEN.snow_params(snow_model)
     horizon = pd.Series({float(k): float(v) for k, v in hz.items()}).sort_index() if hz else None
-    res = GEN.run(cfg, drv, horizon=horizon)
+    res = GEN.run(cfg, drv, horizon=horizon, snow_model=snow_model)
     os.makedirs(CHAIN_DIR, exist_ok=True)
     drv.to_parquet(os.path.join(CHAIN_DIR, f"{park_id}_drivers.parquet"))
     res.to_parquet(os.path.join(CHAIN_DIR, f"{park_id}_chain.parquet"))
@@ -160,21 +168,21 @@ def _one_generate(task):
     return {"park_id": park_id, "cf_ac": float(cf), "cf_dc": float(res["power_park"].mean() / (cfg["kwp_dc"] * 1000.0)),
             "clipped_share_day": float(res.loc[day, "clipped"].mean()), "snow_loss_share": float(1 - res["power_park"].sum() / res["power_park_free"].sum()),
             "cams_fallback_share": meta["share_hours_cams_fallback"], "ring_missing_share": meta["share_hours_ring_missing"],
-            "era5_solar_cell": meta["era5_solar_cell"], "era5_met_cell": meta["era5_met_cell"], "n_hours": int(len(res))}
+            "era5_solar_cell": meta["era5_solar_cell"], "era5_met_cell": meta["era5_met_cell"], "n_steps": int(len(res)), "step": step}
 
 
 def stage_generate(args):
     from concurrent.futures import ProcessPoolExecutor
     sel = load_selection(args.parks)
     hz = json.load(open(HORIZON_OUT))
-    tasks = [(r.park_id, r.lat, r.lon, os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml"), hz.get(r.park_id, {}), args.model_tag) for r in sel.itertuples()]
+    tasks = [(r.park_id, r.lat, r.lon, os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml"), hz.get(r.park_id, {}), args.model_tag, args.step, args.snow_model) for r in sel.itertuples()]
     rows = []
     with ProcessPoolExecutor(args.workers) as ex:
         for out in ex.map(_one_generate, tasks):
             rows.append(out)
             print(out["park_id"], f"CF_ac {out['cf_ac']:.3f} clipped {out['clipped_share_day']:.3f} snow {out['snow_loss_share']:.3f} "
                   f"fallback {out['cams_fallback_share']:.3f}", flush=True)
-    pd.DataFrame(rows).to_csv(os.path.join(paths.DATA_DIR, "run_summary.csv"), index=False)
+    pd.DataFrame(rows).to_csv(os.path.join(paths.DATA_DIR, f"run_summary{paths.VARIANT}.csv"), index=False)
 
 
 def stage_assemble(args):
@@ -204,7 +212,7 @@ def stage_tables(args):
     sel = load_selection()
     par = pd.read_csv(os.path.join(paths.DATA_DIR, "park_params.csv"))
     sites = pd.read_csv(os.path.join(paths.DATA_DIR, "sites.csv"))
-    rs = pd.read_csv(os.path.join(paths.DATA_DIR, "run_summary.csv"))
+    rs = pd.read_csv(os.path.join(paths.DATA_DIR, f"run_summary{paths.VARIANT}.csv"))
     parks = M.parks_table(sel, par, sites, rs)
     parks.to_csv(os.path.join(paths.RELEASE_DIR, "parks.csv"), index=False)
     M.clients_table(parks).to_csv(os.path.join(paths.RELEASE_DIR, "clients.csv"), index=False)
@@ -222,6 +230,9 @@ def main():
     ap.add_argument("--model-tag", default="xgb_v5")
     ap.add_argument("--gpu", type=int, default=0)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--step", default="1h", help="chain step of the release ('1h' or '30min'); use PV_RELEASE_VARIANT for a separate release dir")
+    ap.add_argument("--snow-model", default="depth_linear", choices=["depth_linear", "depth_slide"],
+                    help="snow loss model of stage generate (parks_pv.generate); depth_slide needs ICON-D2 under paths.ICON_SL09_DIR")
     a = ap.parse_args()
     a.parks = a.parks.split(",") if a.parks else None
     {"sites": stage_sites, "configs": stage_configs, "points": stage_points, "correct": stage_correct, "generate": stage_generate,

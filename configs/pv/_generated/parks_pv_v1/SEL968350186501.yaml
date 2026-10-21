@@ -41,23 +41,18 @@ latitude: 52.78365
 longitude: 11.46744
 kwp_dc: 8632.6
 arrays:
-- name: main_0
-  tilt: 18.91
-  azimuth: 183.03
-  share: 0.55492
+- name: east_0
+  tilt: 11.26
+  azimuth: 87.09
+  share: 0.3226
   gcr: 0.5128205128205128
-- name: main_1
-  tilt: 13.53
-  azimuth: 198.72
-  share: 0.15056
+- name: west_0
+  tilt: 13.66
+  azimuth: 275.52
+  share: 0.28782
   gcr: 0.5128205128205128
 - name: sec0_0
-  tilt: 18.28
-  azimuth: 224.24
-  share: 0.22987
-  gcr: 0.5128205128205128
-- name: sec0_1
-  tilt: 17.95
-  azimuth: 245.57
-  share: 0.06465
+  tilt: 16.58
+  azimuth: 232.97
+  share: 0.38958
   gcr: 0.5128205128205128

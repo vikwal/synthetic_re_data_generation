@@ -69,7 +69,8 @@ def main():
     for r in parks.itertuples():
         d = series[r.park_id]
         full_years = d[(d.index >= "2023-08-01") & (d.index < "2026-08-01")]      # 3 full years
-        e_kwh = full_years["power_park"].sum() / 1000.0
+        dt_h = pd.Series(full_years.index).diff().median() / pd.Timedelta("1h")   # step length in h, 0.5 for the 30-min release
+        e_kwh = full_years["power_park"].sum() * dt_h / 1000.0
         rows.append({"park_id": r.park_id, "client": r.client_id, "region": r.region, "cohort": r.cohort, "cls": r.archetype,
                      "terrain_cls": r.terrain_cls, "lat": r.latitude, "kwp_dc": r.capacity_kwp_dc, "ac_kw": r.capacity_kw, "dc_ac": r.dc_ac_ratio,
                      "kwh_per_kwp_a": e_kwh / r.capacity_kwp_dc / 3.0, "cf_ac": full_years["power_park"].mean() / (r.capacity_kw * 1000.0),
