@@ -57,6 +57,14 @@ def table(df: pd.DataFrame, digits: int = 2) -> str:
     return df.round(digits).to_html(index=False, border=0, classes="t", na_rep="–", escape=True)
 
 
+def read_csv0(path: str) -> pd.DataFrame:
+    """CSV that may be empty (a park without groups or arrays writes a header-less file)."""
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
 def kv(d: dict) -> str:
     rows = "".join(f"<tr><th>{html.escape(str(k))}</th><td>{html.escape(str(v))}</td></tr>" for k, v in d.items())
     return f'<table class="t kv">{rows}</table>'
@@ -332,7 +340,7 @@ def fleet_report(pid: str, suffix: str, out_dir: str) -> dict:
         row.update(status="failed", source="", note=str(dp.status_reason.iloc[0]) if len(dp) else "")
         return row
     src = pick.source.iloc[0]
-    win = pd.read_csv(os.path.join(rd, f"windows_{src}.csv")); G = pd.read_csv(os.path.join(rd, f"groups_{src}.csv")); arrays = pd.read_csv(os.path.join(rd, f"arrays_{src}.csv"))
+    win = read_csv0(os.path.join(rd, f"windows_{src}.csv")); G = read_csv0(os.path.join(rd, f"groups_{src}.csv")); arrays = read_csv0(os.path.join(rd, f"arrays_{src}.csv"))
     park = json.load(open(os.path.join(rd, f"park_{src}.json")))
     code, zone = R.STATE[state]
     osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
@@ -457,6 +465,11 @@ def main():
             print(rows[-1], flush=True)
         meta = sel.set_index("park_id")[["dc_kwp", "year", "orientation_class", "tilt_class"]]
         rows = [dict(r, **{k: meta.loc[r["park_id"], k] for k in meta.columns if k not in r}) for r in rows]
+        if a.parks and os.path.exists(os.path.join(out, "index.csv")):   # update the rows of these parks in the existing index
+            old = pd.read_csv(os.path.join(out, "index.csv"), dtype={"park_id": str})
+            new = pd.DataFrame(rows)
+            rows = pd.concat([old[~old.park_id.isin(new.park_id)], new]).set_index("park_id").reindex(sel.park_id).reset_index().to_dict("records")
+            a.parks = None
         if not a.parks:
             index(rows, out, "Geometrie der Flotte (Fenstermethode, v2)")
     else:

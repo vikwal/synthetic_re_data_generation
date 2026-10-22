@@ -102,6 +102,9 @@ def main():
         stage_sites(a)
     else:
         getattr(V1, f"stage_{a.stage}")(a)
+        if a.stage == "tables":                                   # the release README of v2 (v1 text below the v2 header)
+            import shutil
+            shutil.copy(os.path.join(REPO, "parks_pv", "README_release_v2.md"), os.path.join(paths.RELEASE_DIR, "README.md"))
 
 
 if __name__ == "__main__":
