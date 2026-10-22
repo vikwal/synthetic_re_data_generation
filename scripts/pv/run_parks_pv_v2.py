@@ -33,6 +33,38 @@ from pv.plausibility import orientation_class  # noqa: E402
 V1_DATA = os.path.join(REPO, "data", "parks_pv_v1")
 
 
+def stage_added(args):
+    """Parks of selection v2 that are not in parks_pv_v1: the v1 tables built by run_parks_pv_v1.site_tables (same
+    seed, OSM row axis of pv.osm_rows) -> data/parks_pv_v2/added_v1_{arrays,sites,params}.csv; their horizons are
+    added to the shared horizons_used.json (new keys only). geometry_release_states.py reads added_v1_arrays.csv for
+    the fallback arrays of these parks."""
+    import json
+    import run_parks_pv_v1 as V1
+    from pv import osm_rows
+    sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}).dropna(subset=["park_id"])
+    v1 = pd.read_csv(os.path.join(V1_DATA, "park_params.csv"), dtype={"park_id": str})
+    added = sel[~sel.park_id.isin(v1.park_id)]
+    osm = json.load(open(V1.OSM_JSON)); pvg = json.load(open(V1.PVGIS_JSON)) if os.path.exists(V1.PVGIS_JSON) else {}
+    terr = pd.read_parquet(os.path.join(paths.MASTR_DIR, "pool_terrain_20250625.parquet")).set_index("park_id")
+    ax = []
+    for r in added.itertuples():
+        res = osm_rows.row_axis_park(osm.get(r.park_id, {}).get("elements", []), r.lat, r.lon, r.dc_kwp)
+        ax.append(dict(park_id=r.park_id, row_axis_deg=res["row_axis_deg"], n_elongated=res["n_elongated"]))
+    row_axis = pd.DataFrame(ax).set_index("park_id")
+    hz_all = json.load(open(V1.HORIZON_OUT))
+    arrays, sites, pars = [], [], []
+    for r in added.itertuples():
+        a_rows, site, view, p, hz = V1.site_tables(r, osm, pvg, terr, row_axis, args.seed)
+        arrays += a_rows; sites.append(site); pars.append(p)
+        hz_all.setdefault(r.park_id, hz)
+        print(r.park_id, "added:", site["footprint_src"], site["horizon_src"], f"{site['n_arrays']} v1 arrays, row axis {row_axis.loc[r.park_id].to_dict()}", flush=True)
+    json.dump(hz_all, open(V1.HORIZON_OUT, "w"))
+    os.makedirs(paths.DATA_DIR, exist_ok=True)
+    pd.DataFrame(arrays).to_csv(os.path.join(paths.DATA_DIR, "added_v1_arrays.csv"), index=False)
+    pd.DataFrame(sites).to_csv(os.path.join(paths.DATA_DIR, "added_v1_sites.csv"), index=False)
+    pd.DataFrame(pars).to_csv(os.path.join(paths.DATA_DIR, "added_v1_params.csv"), index=False)
+
+
 def stage_sites(args):
     assert paths.NAME == "parks_pv_v2", "set PV_RELEASE_NAME=parks_pv_v2"
     sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}).dropna(subset=["park_id"])
@@ -40,6 +72,12 @@ def stage_sites(args):
     a1 = pd.read_csv(os.path.join(V1_DATA, "pv_arrays.csv"), dtype={"park_id": str})
     s1 = pd.read_csv(os.path.join(V1_DATA, "sites.csv"), dtype={"site_id": str}).set_index("site_id")
     par = pd.read_csv(os.path.join(V1_DATA, "park_params.csv"), dtype={"park_id": str}).set_index("park_id")
+    added = sel[~sel.park_id.isin(par.index)]
+    if len(added):                                                # parks of selection v2 that replace v1 parks (stage `added`)
+        s1 = pd.concat([s1, pd.read_csv(os.path.join(paths.DATA_DIR, "added_v1_sites.csv"), dtype={"site_id": str}).set_index("site_id")])
+        par = pd.concat([par, pd.read_csv(os.path.join(paths.DATA_DIR, "added_v1_params.csv"), dtype={"park_id": str}).set_index("park_id")])
+        missing = set(added.park_id) - set(par.index)
+        assert not missing, f"run stage added first: {missing}"
     arrays_rows, site_rows, view_rows = [], [], []
     for r in sel.itertuples():
         g = geo[geo.park_id == r.park_id]
@@ -86,7 +124,7 @@ def stage_sites(args):
 def main():
     import run_parks_pv_v1 as V1
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=["sites", "configs", "generate", "assemble", "tables"])
+    ap.add_argument("stage", choices=["added", "sites", "configs", "generate", "assemble", "tables"])
     ap.add_argument("--geodata", default=None, help="pv_arrays_geodata_v2.csv of scripts/pv/fleet_geo_status.py (stage sites)")
     ap.add_argument("--parks", default=None)
     ap.add_argument("--seed", type=int, default=42)
@@ -98,7 +136,9 @@ def main():
     assert paths.NAME == "parks_pv_v2", "set PV_RELEASE_NAME=parks_pv_v2"
     if a.parks:
         a.parks = a.parks.split(",")
-    if a.stage == "sites":
+    if a.stage == "added":
+        stage_added(a)
+    elif a.stage == "sites":
         stage_sites(a)
     else:
         getattr(V1, f"stage_{a.stage}")(a)

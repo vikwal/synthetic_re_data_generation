@@ -46,10 +46,11 @@ EST_TOL = {"laz": 3.0}       # estimator gate (deg) per surface source (E4a); 1-
 EST_TOL_RASTER = 5.0
 GROUP_TOL = dict(axis=10.0, az=30.0, tilt=4.0)
 SYM_MIN = 0.75               # ridge symmetry of an opposite pair that is merged into "azimuth undetermined"
-MIN_SURE = 3                 # windows with a sure side choice for a measured group azimuth (E4d)
+MIN_SURE = 3                 # windows with a sure side choice for a measured group azimuth (E4d); a smaller group needs all of its windows
 MAX_GROUPS = 4
 SPLINTER = dict(n=3, share=0.05)
-PARK_ACCEPT = dict(n_ok=5, tab_share=0.40)
+PARK_ACCEPT = dict(n_ok=2, tab_share=0.40)   # 2026-10-22 decision 1 (B): >= 2 windows (was 5) as long as they cover >= 40 % of the table cells
+PARK_ACCEPT_BOX = dict(n_ok=5, tab_share=0.40)   # box mode keeps 5: without an outline a few windows at the box edge can be another park (SEL968423559874)
 BOX = dict(size_m=300.0, step_m=50.0, area_factor=3.0)
 AZ_CENTRE = {"Süd": 180.0, "Süd-West": 225.0, "Süd-Ost": 135.0, "Ost": 90.0, "West": 270.0, "Nord": 0.0,
              "Nord-Ost": 45.0, "Nord-West": 315.0}   # = pv.plausibility.AZ_CENTRE (copied to keep this module light)
@@ -307,13 +308,41 @@ def keep_central_component(win: pd.DataFrame, nw: int, centre_ij: tuple) -> pd.D
     return win
 
 
+def keep_central_construction(win: pd.DataFrame, nw: int, centre_ij: tuple) -> pd.DataFrame:
+    """Box mode (2026-10-22, decision 2): a neighbouring park can touch the park at the register point, so its windows
+    join the central component. Groups are formed once; only the group of the accepted window nearest the register
+    point and the groups of the same construction (same east-west status) are kept; the windows of the other groups
+    get the reason "anderer Park (Bauweise)"."""
+    G = group_windows(win)
+    if len(G) <= 1:
+        return win
+    acc = win[win.ok.astype(bool)]
+    ci, cj = centre_ij
+    w0 = int(acc.loc[((acc.i0 + nw / 2 - ci) ** 2 + (acc.j0 + nw / 2 - cj) ** 2).idxmin(), "w"])
+    gw = {int(g.group): {int(x) for x in str(g.windows).split()} for g in G.itertuples()}
+    g0 = next((G.loc[G.group == k].iloc[0] for k, ws in gw.items() if w0 in ws), G.iloc[0])
+    # only a different east-west status marks another park: sections of one park with another row direction or azimuth
+    # are common (SEL910440791607: second section 13 deg off) and must stay (2026-10-22, after the first fleet run with
+    # the stricter axis/azimuth rule)
+    same = lambda g: bool(g.ew == g0.ew)
+    drop = set().union(*[gw[int(g.group)] for g in G.itertuples() if not same(g)]) if any(not same(g) for g in G.itertuples()) else set()
+    if not drop:
+        return win
+    win = win.copy()
+    m = win.w.isin(drop)
+    win.loc[m, "ok"] = False
+    win.loc[m, "reason"] = "anderer Park (Bauweise)"
+    return win
+
+
 # ------------------------------------------------------------------------------------------------ W5 grouping
 def rejected_flag(win: pd.DataFrame, nw: int, box: bool = False) -> dict:
     """Share of the table cells in rejected windows and the largest 4-connected block of rejected table windows.
     The shares assume that rejected windows look like accepted ones; a large connected rejected block can hold
     another construction -> flag (not a rejection). Box mode (no outline, 2026-10-22): only windows with a row pattern
     count as table windows, because the box also holds hedges, trees and buildings in the 0.4-4.5 m band."""
-    tabw_ = win[win.f_tab >= F_TAB_MIN]
+    other = win.reason.astype(str).str.startswith("anderer Park") if "reason" in win else pd.Series(False, index=win.index)
+    tabw_ = win[(win.f_tab >= F_TAB_MIN) & ~other]   # windows of other parks (box mode) do not count
     if box and "g_pattern" in tabw_:
         tabw_ = tabw_[tabw_.g_pattern.fillna(False).astype(bool)]
     rej_ = tabw_[~tabw_.ok.astype(bool)]
@@ -394,14 +423,16 @@ def group_windows(win: pd.DataFrame) -> pd.DataFrame:
         rows_g.append(dict(group=k_, n_windows=len(all_), area_tab_ha=all_.area_tab.sum() / 1e4, axis_true=circ_mean(all_.axis_true, 180.0),
                            pitch=float(all_.pitch.median()), tilt_horiz=float(all_.tilt_horiz.median()), tilt_p10=float(all_.tilt_horiz.quantile(0.1)),
                            tilt_p90=float(all_.tilt_horiz.quantile(0.9)), azimuth=circ_mean(src_.azimuth_true),
-                           az_undetermined=bool(g_["az_undetermined"] or (n_sure_ < MIN_SURE and not g_["ew"])), n_sure=n_sure_, n_opposite=len(opp_),
+                           az_undetermined=bool(g_["az_undetermined"] or (n_sure_ < min(MIN_SURE, len(all_)) and not g_["ew"])), n_sure=n_sure_, n_opposite=len(opp_),
                            ew=g_["ew"], ridge_sym=float(all_.ridge_sym.median()), slope_deg=float(all_.slope_facing_deg.median()),
                            windows=" ".join(str(int(x)) for x in sorted(all_.w))))
     G = pd.DataFrame(rows_g, columns=[c for c in cols if c not in ("share_raw", "share")])
     if not len(G):
         return pd.DataFrame(columns=cols)
     G["share_raw"] = G.area_tab_ha / G.area_tab_ha.sum()
-    keep_g = (G.n_windows >= SPLINTER["n"]) & (G.share_raw >= SPLINTER["share"])     # splinters out, THEN at most four
+    # splinters out, THEN at most four; a group below SPLINTER['n'] windows is a splinter only next to a larger group
+    # (2026-10-22: a small park with 2 accepted windows in one group keeps its group)
+    keep_g = ((G.n_windows >= SPLINTER["n"]) | (G.n_windows >= G.n_windows.max())) & (G.share_raw >= SPLINTER["share"])
     attrs = dict(n_splinter=int((~keep_g).sum()), splinter_share=float(G.share_raw[~keep_g].sum()), n_cut=max(int(keep_g.sum()) - MAX_GROUPS, 0))
     G = G[keep_g].head(MAX_GROUPS).reset_index(drop=True)
     G["group"] = range(len(G))
@@ -443,21 +474,22 @@ def arrays_from_groups(G: pd.DataFrame, register_orientation: str = None) -> pd.
     return pd.DataFrame(out, columns=["group", "tilt", "azimuth", "share", "az_source", "az_conflict", "note"])
 
 
-def park_status(win: pd.DataFrame, G: pd.DataFrame, flag: dict) -> dict:
+def park_status(win: pd.DataFrame, G: pd.DataFrame, flag: dict, box: bool = False) -> dict:
     """Park acceptance (E4d): accepted | failed ("Messung gescheitert") | no_park ("kein Park an dieser Koordinate")."""
+    acc_ = PARK_ACCEPT_BOX if box else PARK_ACCEPT
     n_ok = int(win.ok.astype(bool).sum()) if len(win) else 0
     tab_share = 1.0 - flag["rej_tab_frac"] if flag["n_tab_windows"] else 0.0
     if flag["n_tab_windows"] == 0:
         status, why = "no_park", "kein Fenster mit Tischen"
-    elif n_ok >= PARK_ACCEPT["n_ok"] and tab_share >= PARK_ACCEPT["tab_share"] and len(G):
+    elif n_ok >= acc_["n_ok"] and tab_share >= acc_["tab_share"] and len(G):
         status, why = "accepted", ""
     else:
-        why = "; ".join(x for x in (f"{n_ok} angenommene Fenster (< {PARK_ACCEPT['n_ok']})" if n_ok < PARK_ACCEPT["n_ok"] else "",
-                                    f"Tischanteil angenommen {tab_share:.0%} (< {PARK_ACCEPT['tab_share']:.0%})" if tab_share < PARK_ACCEPT["tab_share"] else "",
+        why = "; ".join(x for x in (f"{n_ok} angenommene Fenster (< {acc_['n_ok']})" if n_ok < acc_["n_ok"] else "",
+                                    f"Tischanteil angenommen {tab_share:.0%} (< {acc_['tab_share']:.0%})" if tab_share < acc_["tab_share"] else "",
                                     "keine Gruppe" if not len(G) else "") if x)
         status = "failed"
     # information only (2026-10-22): small parks reach few windows; would a relaxed minimum of 2 windows accept them?
-    accept_relaxed = bool(status == "accepted" or (n_ok >= 2 and tab_share >= PARK_ACCEPT["tab_share"] and len(G)))
+    accept_relaxed = bool(status == "accepted" or (n_ok >= 2 and tab_share >= acc_["tab_share"] and len(G)))   # = accepted since n_ok 2
     return dict(status=status, status_reason=why, n_windows=int(len(win)), n_ok=n_ok, n_tab_windows=int(flag["n_tab_windows"]),
                 tab_share_accepted=tab_share, accept_relaxed=accept_relaxed)
 
@@ -471,10 +503,12 @@ def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: flo
     if box and len(win):
         win = drop_isolated(win, nw)
         win = keep_central_component(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))   # the box is centred on the register point
+    if box and len(win) and win.ok.astype(bool).any():
+        win = keep_central_construction(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))
     flag = rejected_flag(win, nw, box) if len(win) else dict(n_tab_windows=0, rej_tab_frac=0.0, rej_cluster_windows=0, rej_cluster_frac=0.0, warn_rejected=False)
     G = group_windows(win)
     arrays = arrays_from_groups(G, register_orientation)
-    park = park_status(win, G, flag)
+    park = park_status(win, G, flag, box)
     ok = win[win.ok.astype(bool)] if len(win) else win
     park.update(flag, source=source, win_m=win_m, box=box, conv=conv, pitch0=pitch0,
                 tilt_med=float(ok.tilt_horiz.median()) if len(ok) else np.nan,

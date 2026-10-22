@@ -203,3 +203,21 @@ def test_keep_central_component():
     rows = [dict(w=k, i0=i * 100, j0=j * 100, ok=True, reason="") for k, (i, j) in enumerate([(2, 2), (2, 1), (1, 2), (0, 4), (1, 4)])]
     out = GW.keep_central_component(pd.DataFrame(rows), 100, (250.0, 250.0))
     assert out.ok.tolist() == [True, True, True, False, False] and set(out.reason[3:]) == {"anderer Park"}
+
+
+def test_small_park_two_windows_accepted():
+    # 2 accepted windows covering all table cells: one group (no splinter), measured azimuth with both sure, park accepted
+    win = _table([(2, 90.0, 180.0, 20.0, False, True, 0.2, 400.0)])
+    G = GW.group_windows(win)
+    assert len(G) == 1 and not bool(G.az_undetermined.iloc[0])
+    assert GW.park_status(win, G, GW.rejected_flag(win, 100))["status"] == "accepted"
+
+
+def test_box_keeps_central_construction():
+    # central east-west park (axis 0) next to a south park (axis 90): the south group is another park
+    rows, w = [], 0
+    for i, j, ew, axis, az in [(2, 2, True, 0.0, 90.0), (2, 1, True, 0.0, 270.0), (1, 2, True, 0.0, 90.0), (2, 3, False, 90.0, 180.0), (1, 3, False, 90.0, 180.0), (3, 3, False, 90.0, 180.0)]:
+        rows.append(dict(w=w, i0=i * 100, j0=j * 100, f_tab=0.4, ok=True, reason="", area_tab=300.0, axis_true=axis, azimuth_true=az, tilt_horiz=12.0 if ew else 25.0,
+                         ew_pair=ew, az_sure=True, ridge_sym=0.9 if ew else 0.2, pitch=8.0, slope_facing_deg=0.0)); w += 1
+    out = GW.keep_central_construction(pd.DataFrame(rows), 100, (250.0, 250.0))
+    assert out.ok.tolist() == [True, True, True, False, False, False] and set(out.reason[3:]) == {"anderer Park (Bauweise)"}

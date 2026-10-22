@@ -38,11 +38,11 @@ PAPER = os.path.expanduser("~/Work/pv_sim2real")
 OUT_FLEET = os.path.join(PAPER, "results", "geo_reports_v2")
 OUT_TRIANEL = os.path.join(PAPER, "results", "geo_reports_trianel")
 plt.rcParams.update({"figure.dpi": 80, "font.size": 9})
-SHORT = {"g_pattern": "M", "g_contrast": "K", "g_flank": "F", "g_ridge": "H", "g_rows": "R", "g_est": "S", "zu wenig Tischzellen": "-", "anderer Park": "A",
+SHORT = {"g_pattern": "M", "g_contrast": "K", "g_flank": "F", "g_ridge": "H", "g_rows": "R", "g_est": "S", "zu wenig Tischzellen": "-", "anderer Park": "A", "anderer Park (Bauweise)": "B",
          "zu wenig Oberfläche": "O", "kein Profil": "P", "isoliert": "I"}
 SHORT_TXT = ("M = kein Reihenmuster, K = Kontrast < 0.5 m, F = Flanke außerhalb 1.5 m … 0.75·Pitch, H = First außerhalb 0.8–4.5 m, "
              "R = < 2 Reihen, S = Schätzer weichen ab (3° Punktwolke / 5° Raster), O = zu wenig Oberfläche, P = kein Profil, "
-             "I = isoliert, A = anderer Park (Kastenmodus)")
+             "I = isoliert, A = anderer Park, B = anderer Park mit anderer Bauweise (Kastenmodus)")
 
 
 # ------------------------------------------------------------------------------------------------ helpers

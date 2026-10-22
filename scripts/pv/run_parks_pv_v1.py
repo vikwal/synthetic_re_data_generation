@@ -49,6 +49,48 @@ def load_selection(only=None) -> pd.DataFrame:
     return sel.reset_index(drop=True)
 
 
+def site_tables(r, osm: dict, pvg: dict, terr: pd.DataFrame, row_axis: pd.DataFrame, seed: int) -> tuple:
+    """One park of stage `sites` (factored out 2026-10-22 so that parks_pv_v2 can build added parks the same way):
+    (array rows, site row, register view row, parameter row, horizon dict)."""
+    rng = G.park_rng(r.park_id, seed)
+    par = P.park_parameters(r)
+    ax = float(row_axis.loc[r.park_id, "row_axis_deg"]) if r.park_id in row_axis.index and row_axis.loc[r.park_id, "n_elongated"] >= 3 else None
+    nominal, deviation = G.nominal_arrays(r, rng, ax)
+    area_fb = float(r.area_ha) if np.isfinite(r.area_ha) and r.area_ha > 0 else par["kwp_dc"] / par["kwp_per_ha"]
+    poly, fp_src = G.footprint(r, osm.get(r.park_id, {}).get("elements", []), area_fb)
+    try:
+        arrays, tstats = G.terrain_arrays(poly, nominal, G.MAX_ARRAYS, seed=0)
+    except Exception as e:  # noqa: BLE001  (DEM tile boundary etc.)
+        print(r.park_id, "terrain failed, nominal arrays kept:", str(e)[:80], flush=True)
+        arrays, tstats = [dict(a, mount_tilt=a["tilt"], mount_azimuth=a["azimuth"]) for a in nominal], {}
+    hz = pvg.get(r.park_id) or {}
+    if len(hz) >= 24:
+        hz_src = "pvgis"
+    else:
+        hz = {str(k): float(v) for k, v in terrain.dem_horizon(r.lat, r.lon).items()}
+        hz_src = "dem"
+    arrays_rows = []
+    for a in arrays:
+        arrays_rows.append({"park_id": r.park_id, "array_id": a["name"], "tilt": round(a["tilt"], 2), "azimuth": round(a["azimuth"], 2),
+                            "share": round(a["share"], 5), "capacity_kwp": round(a["share"] * par["kwp_dc"], 1),
+                            "mount_tilt": round(a.get("mount_tilt", a["tilt"]), 2), "mount_azimuth": round(a.get("mount_azimuth", a["azimuth"]), 2),
+                            "source": a["source"], "module_era": par["era"], "gamma_pdc": par["gamma_pdc"], "dc_ac": par["dc_ac"],
+                            "gcr": par["gcr"], "commissioning_year": par["year"]})
+    t_mean = sum(a["tilt"] * a["share"] for a in arrays)
+    tilts, azs = np.array([a["tilt"] for a in arrays]), np.array([a["azimuth"] for a in arrays])
+    from pv import arrays as ARR
+    tm, am = ARR.mean_angles(tilts, azs, np.array([a["share"] for a in arrays]))
+    site = {"site_id": r.park_id, "lat": r.lat, "lon": r.lon, "altitude": terr.elevation.get(r.park_id, np.nan),
+            "slope": terr.slope.get(r.park_id, np.nan), "aspect": terr.aspect.get(r.park_id, np.nan),
+            "tpi5": terr.tpi5.get(r.park_id, np.nan), "tpi75": terr.tpi75.get(r.park_id, np.nan), "elev_std": terr.elev_std.get(r.park_id, np.nan),
+            "terrain_cls": r.terrain_cls, "footprint_src": fp_src, "footprint_ha": round(terrain.area_ha(poly), 2),
+            **{k: round(v, 3) for k, v in tstats.items()}, "n_arrays": len(arrays), "tilt_mean_true": round(float(tm), 2),
+            "azimuth_mean_true": round(float(am), 2), "tilt_capw_true": round(t_mean, 2),
+            "register_deviation": deviation or "", "row_axis_osm_deg": ax if ax is not None else np.nan, "horizon_src": hz_src, "horizon_max_deg": round(max(hz.values()), 2) if hz else np.nan,
+            "horizon_south_deg": round(float(hz.get("180.0", np.nan)), 2) if hz else np.nan}
+    return arrays_rows, site, G.register_view(r, arrays), {"park_id": r.park_id, **par}, hz
+
+
 def stage_sites(args):
     sel = load_selection(args.parks)
     osm = json.load(open(OSM_JSON)) if os.path.exists(OSM_JSON) else {}
@@ -58,44 +100,12 @@ def stage_sites(args):
     row_axis = pd.read_csv(rows_path).set_index("park_id") if os.path.exists(rows_path) else pd.DataFrame()
     arrays_rows, site_rows, view_rows, par_rows, horizons = [], [], [], [], {}
     for r in sel.itertuples():
-        rng = G.park_rng(r.park_id, args.seed)
-        par = P.park_parameters(r)
-        ax = float(row_axis.loc[r.park_id, "row_axis_deg"]) if r.park_id in row_axis.index and row_axis.loc[r.park_id, "n_elongated"] >= 3 else None
-        nominal, deviation = G.nominal_arrays(r, rng, ax)
-        area_fb = float(r.area_ha) if np.isfinite(r.area_ha) and r.area_ha > 0 else par["kwp_dc"] / par["kwp_per_ha"]
-        poly, fp_src = G.footprint(r, osm.get(r.park_id, {}).get("elements", []), area_fb)
-        try:
-            arrays, tstats = G.terrain_arrays(poly, nominal, G.MAX_ARRAYS, seed=0)
-        except Exception as e:  # noqa: BLE001  (DEM tile boundary etc.)
-            print(r.park_id, "terrain failed, nominal arrays kept:", str(e)[:80], flush=True)
-            arrays, tstats = [dict(a, mount_tilt=a["tilt"], mount_azimuth=a["azimuth"]) for a in nominal], {}
-        hz = pvg.get(r.park_id) or {}
-        if len(hz) >= 24:
-            hz_src = "pvgis"
-        else:
-            hz = {str(k): float(v) for k, v in terrain.dem_horizon(r.lat, r.lon).items()}
-            hz_src = "dem"
+        a_rows, site, view, par, hz = site_tables(r, osm, pvg, terr, row_axis, args.seed)
+        arrays_rows += a_rows
+        site_rows.append(site)
+        view_rows.append(view)
+        par_rows.append(par)
         horizons[r.park_id] = hz
-        for a in arrays:
-            arrays_rows.append({"park_id": r.park_id, "array_id": a["name"], "tilt": round(a["tilt"], 2), "azimuth": round(a["azimuth"], 2),
-                                "share": round(a["share"], 5), "capacity_kwp": round(a["share"] * par["kwp_dc"], 1),
-                                "mount_tilt": round(a.get("mount_tilt", a["tilt"]), 2), "mount_azimuth": round(a.get("mount_azimuth", a["azimuth"]), 2),
-                                "source": a["source"], "module_era": par["era"], "gamma_pdc": par["gamma_pdc"], "dc_ac": par["dc_ac"],
-                                "gcr": par["gcr"], "commissioning_year": par["year"]})
-        t_mean = sum(a["tilt"] * a["share"] for a in arrays)
-        tilts, azs = np.array([a["tilt"] for a in arrays]), np.array([a["azimuth"] for a in arrays])
-        from pv import arrays as ARR
-        tm, am = ARR.mean_angles(tilts, azs, np.array([a["share"] for a in arrays]))
-        site_rows.append({"site_id": r.park_id, "lat": r.lat, "lon": r.lon, "altitude": terr.elevation.get(r.park_id, np.nan),
-                          "slope": terr.slope.get(r.park_id, np.nan), "aspect": terr.aspect.get(r.park_id, np.nan),
-                          "tpi5": terr.tpi5.get(r.park_id, np.nan), "tpi75": terr.tpi75.get(r.park_id, np.nan), "elev_std": terr.elev_std.get(r.park_id, np.nan),
-                          "terrain_cls": r.terrain_cls, "footprint_src": fp_src, "footprint_ha": round(terrain.area_ha(poly), 2),
-                          **{k: round(v, 3) for k, v in tstats.items()}, "n_arrays": len(arrays), "tilt_mean_true": round(float(tm), 2),
-                          "azimuth_mean_true": round(float(am), 2), "tilt_capw_true": round(t_mean, 2),
-                          "register_deviation": deviation or "", "row_axis_osm_deg": ax if ax is not None else np.nan, "horizon_src": hz_src, "horizon_max_deg": round(max(hz.values()), 2) if hz else np.nan,
-                          "horizon_south_deg": round(float(hz.get("180.0", np.nan)), 2) if hz else np.nan})
-        view_rows.append(G.register_view(r, arrays))
-        par_rows.append({"park_id": r.park_id, **par})
     pd.DataFrame(arrays_rows).to_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"), index=False)
     pd.DataFrame(site_rows).to_csv(os.path.join(paths.DATA_DIR, "sites.csv"), index=False)
     pd.DataFrame(view_rows).to_csv(os.path.join(paths.DATA_DIR, "pv_masterdata_view.csv"), index=False)

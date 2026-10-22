@@ -170,7 +170,7 @@ def fetch_mv(lat: float, lon: float, out_dir: str, products=("dop20", "dom1", "d
     out = {}
     for prod in products:
         keys = [f"_33_{e * 2}_{n * 2}_2" for e, n in tiles_for(lat, lon, 33, margin_m, size_m=2000.0)]
-        local = {k: sorted(glob.glob(os.path.join(out_dir, "mv", prod, f"*{k}*"))) for k in keys}
+        local = {k: sorted(f for f in glob.glob(os.path.join(out_dir, "mv", prod, f"*{k}*")) if not f.endswith(".part")) for k in keys}   # unfinished downloads do not count
         if all(local.values()):
             out[prod] = [v[0] for v in local.values()]
             continue

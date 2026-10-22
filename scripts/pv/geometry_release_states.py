@@ -227,6 +227,13 @@ def evaluate(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def v1_arrays() -> pd.DataFrame:
+    """parks_pv_v1 arrays plus the v1-equivalent arrays of parks added in selection v2 (run_parks_pv_v2.py added)."""
+    a = pd.read_csv(os.path.join(REPO, "data", "parks_pv_v1", "pv_arrays.csv"), dtype={"park_id": str})
+    add = os.path.join(REPO, "data", "parks_pv_v2", "added_v1_arrays.csv")
+    return pd.concat([a, pd.read_csv(add, dtype={"park_id": str})], ignore_index=True) if os.path.exists(add) else a
+
+
 def v1_nominal(arrays_v1: pd.DataFrame, park_id: str) -> list:
     """Nominal mounts of parks_pv_v1 (pv_arrays.csv): one entry per nominal array (array_id prefix before the
     terrain cluster suffix), share summed, mount angles relative to the ground."""
@@ -244,7 +251,8 @@ def fallback_arrays(r, tiles: dict, zone: int, arrays_v1: pd.DataFrame, osm: dic
     disc), so that v1 and v2 differ only in the terrain model (GLO-30 -> DGM1); without DGM1 the v1 arrays unchanged."""
     nominal = v1_nominal(arrays_v1, r.park_id)
     if nominal and tiles.get("dgm1"):
-        par = pd.read_csv(os.path.join(paths.DATA_DIR, "park_params.csv"), dtype={"park_id": str}).set_index("park_id").loc[r.park_id]
+        par = pd.concat([pd.read_csv(os.path.join(REPO, "data", d, f), dtype={"park_id": str}) for d, f in (("parks_pv_v1", "park_params.csv"), ("parks_pv_v2", "added_v1_params.csv"))
+                         if os.path.exists(os.path.join(REPO, "data", d, f))]).set_index("park_id").loc[r.park_id]
         area_fb = float(r.area_ha) if pd.notna(r.area_ha) and r.area_ha > 0 else float(par.kwp_dc) / float(par.kwp_per_ha)
         poly_ll, _ = PG.footprint(r, (osm.get(r.park_id) or {}).get("elements", []), area_fb)
         g = GW.analysis_grid(GT.to_utm(poly_ll, zone), GW.RES, inner_m=0.0)
@@ -299,6 +307,7 @@ def main():
     ap.add_argument("--suffix", default="_v2")
     ap.add_argument("--reevaluate", action="store_true", help="recompute classes and the best source from the stored CSV only")
     ap.add_argument("--arrays-only", action="store_true", help="recompute <state><suffix>_arrays.csv from the stored run (overwrites it)")
+    ap.add_argument("--append", action="store_true", help="add the --parks to an existing run of this suffix (rows of these parks replaced)")
     a = ap.parse_args()
     code, zone = STATE[a.state]
     out_csv = os.path.join(paths.DATA_DIR, f"geodata_release_{a.state.lower()}{a.suffix}.csv")
@@ -314,7 +323,7 @@ def main():
         df = pd.read_csv(out_csv, dtype={"pv": str})
         sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}); sel = sel[sel.bundesland == a.state]
         osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
-        arrays_v1 = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"), dtype={"park_id": str})
+        arrays_v1 = v1_arrays()
         rows_a = []
         for r in sel.itertuples():
             try:
@@ -327,14 +336,14 @@ def main():
         pd.DataFrame(rows_a).to_csv(arr_csv, index=False)
         print("written", arr_csv, pd.DataFrame(rows_a).groupby("park_id").source.first().value_counts().to_dict())
         return
-    if not a.fetch_only and (os.path.exists(out_csv) or os.path.exists(arr_csv)):
+    if not a.fetch_only and not a.append and (os.path.exists(out_csv) or os.path.exists(arr_csv)):
         raise SystemExit(f"{out_csv} exists - results are versioned, choose another --suffix")
     sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str})
     sel = sel[sel.bundesland == a.state]
     if a.parks:
         sel = sel[sel.park_id.isin(a.parks.split(","))]
     osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
-    arrays_v1 = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"), dtype={"park_id": str})
+    arrays_v1 = v1_arrays()
     outd_root = os.path.join(REPO, "results", "pv", f"geodata_release{a.suffix}")
     rows, arr_rows = [], []
     for r in sel.itertuples():
@@ -360,9 +369,15 @@ def main():
     if a.fetch_only:
         return
     df = evaluate(pd.DataFrame(rows))
+    ar = pd.DataFrame(arr_rows)
+    if a.append and os.path.exists(out_csv):                      # merge with the earlier rows of this suffix
+        old = pd.read_csv(out_csv, dtype={"pv": str})
+        df = evaluate(pd.concat([old[~old.pv.isin(df.pv)], df], ignore_index=True)[[c for c in old.columns.union(df.columns) if c not in DERIVED]])
+        old_a = pd.read_csv(arr_csv, dtype={"park_id": str})
+        ar = pd.concat([old_a[~old_a.park_id.isin(ar.park_id)], ar], ignore_index=True)
     os.makedirs(paths.DATA_DIR, exist_ok=True)
     df.to_csv(out_csv, index=False)
-    pd.DataFrame(arr_rows).to_csv(arr_csv, index=False)
+    ar.to_csv(arr_csv, index=False)
     summary(df, a.state)
     print("written", out_csv, arr_csv)
 

@@ -36,6 +36,11 @@ def main():
     pts_path = os.path.join(a.out, "cams_points.csv")
     if os.path.exists(pts_path):
         pts = pd.read_csv(pts_path)
+        new = sel[~sel.park_id.isin(pts.park_id)]                 # parks added to a later selection (v2): append their points
+        if len(new):
+            pts = pd.concat([pts, CP.point_table(new[["park_id", "lat", "lon"]])], ignore_index=True)
+            pts.to_csv(pts_path, index=False)
+            print("added points of", len(new), "parks", flush=True)
     else:
         pts = CP.point_table(sel[["park_id", "lat", "lon"]])
         pts.to_csv(pts_path, index=False)
