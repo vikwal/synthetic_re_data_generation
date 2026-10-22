@@ -84,6 +84,32 @@ def fetch_tiles(state: str, lat: float, lon: float, year: int, landkreis: str = 
     raise last
 
 
+OVERRIDES = os.path.join(REPO, "configs", "pv", "geodata_overrides.csv")
+
+
+def footprint_override(r, poly, fences, pt) -> tuple:
+    """Per-park exception to the OSM outline (configs/pv/geodata_overrides.csv: park_id, rule, reason), 2026-10-22: the union of
+    all plants within 400 m took in neighbouring parks at two parks (module area 45 and 17 m2/kWp). Rules:
+    nearest_fence = only the plant nearest the register point; capacity_disc = that plant cut by a disc around the point
+    with 1.3 x the fenced area expected from the capacity and the era density (parks_pv.params). Generalisation open."""
+    if poly is None or not os.path.exists(OVERRIDES):
+        return poly, ""
+    ov = pd.read_csv(OVERRIDES, dtype={"park_id": str}).set_index("park_id")
+    if r.park_id not in ov.index:
+        return poly, ""
+    rule = ov.loc[r.park_id, "rule"]
+    near = fences[fences.dist_m <= FENCE_MAX_M].sort_values(["dist_m", "area_ha"])
+    p0 = near.geom.iloc[0]
+    if rule == "nearest_fence":
+        return p0, rule
+    if rule == "capacity_disc":
+        from parks_pv.params import DENSITY_KWP_HA, DENSITY_YEARS      # era density (the MaStR area can be implausible: 2071 kWp/ha)
+        area_m2 = 1.3 * float(r.dc_kwp) / float(np.interp(int(r.year), DENSITY_YEARS, DENSITY_KWP_HA)) * 1e4
+        cut = p0.intersection(pt.buffer(np.sqrt(area_m2 / np.pi)))
+        return (cut if cut.area > 2000 else p0), rule
+    raise ValueError(f"unknown footprint rule {rule!r} for {r.park_id}")
+
+
 def fetch_margin(r, osm: dict, zone: int) -> float:
     """Half side (m) of the square around the register point that the tiles must cover: the OSM outline (+ 25 m, the
     analysis grid adds 20 m) or, without an outline, the largest box of measure_box; at least 300 m."""
@@ -148,6 +174,7 @@ def measure(r, tiles: dict, osm: dict, zone: int, outd: str) -> tuple:
     to_m = Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform
     pt = Point(*to_m(float(r.lon), float(r.lat)))
     poly, fences = GW.osm_footprint((osm.get(r.park_id) or {}).get("elements", []), [pt], to_m, FENCE_MAX_M)
+    poly, rule = footprint_override(r, poly, fences, pt)
     rows, outs = [], {}
     os.makedirs(outd, exist_ok=True)
     srcs = sources_from(tiles)
@@ -160,7 +187,7 @@ def measure(r, tiles: dict, osm: dict, zone: int, outd: str) -> tuple:
                 R = rasters(tiles, name, paths_, g["bounds"], zone, float(r.lat), float(r.lon))
                 pitch0 = ortho_pitch(tiles, g["bounds"], g["inside"], zone)
                 o = GW.measure_park(R["hag"], R["dgm"], g["inside"], R["conv"], name, pitch0, GW.RES, r.orientation_class)
-                fp = dict(footprint="osm", footprint_ha=round(poly.area / 1e4, 2), n_fences=int((fences.dist_m <= FENCE_MAX_M).sum()))
+                fp = dict(footprint="osm" + (f":{rule}" if rule else ""), footprint_ha=round(poly.area / 1e4, 2), n_fences=int((fences.dist_m <= FENCE_MAX_M).sum()))
                 inside = g["inside"]
             else:
                 def load(bounds, name=name, paths_=paths_):
