@@ -1,4 +1,6 @@
-"""Module geometry of the Trianel parks from open state geodata (all states): row axis and pitch from the
+"""LEGACY (2026-10-22): block method; the Trianel parks are measured by scripts/pv/geometry_trianel_windows.py.
+
+Module geometry of the Trianel parks from open state geodata (all states): row axis and pitch from the
 orthophoto (2D spectrum + window map, true-north corrected), tilt from every available surface source
 (laser DOM1 raster, LAZ point cloud, image-based bDOM/DOM20) via folded profile + flank plane fit.
 

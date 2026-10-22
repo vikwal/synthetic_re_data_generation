@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 """Synthetic twins of the six metered Trianel parks with the best chain we have, on a 30-min (or hourly) step.
 
-Geometry cascade (2026-10-16): laser surface model (point cloud / DOM1: pv1, pv3, pv5, pv7 incl. the east-west
-pair) -> image-based model gives only the row azimuth, the tilt comes from the register (pv2: bDOM azimuth, register
-tilt; image-based tilts are 2-3 deg too flat) -> register (pv6, 0.4 MW, not resolvable at 1 m). Chain = parks_pv_v1
+Geometry (2026-10-22): arrays of the window method (geometry_trianel_windows.py ->
+reports/figs_pv_generator/geodata_arrays_trianel_windows_v6.csv, all six metered parks incl. the bDOM park pv2 and the
+east-west pair of pv7) -> register for parks missing in the table. The cascade of 2026-10-16 (laser surface model ->
+image azimuth + register tilt -> register) is reproduced with --laser-csv (+ the image CSV). Chain = parks_pv_v1
 production chain: corrected CAMS (cams_bc xgb_v5, 30-min product), PVGIS horizon, inter-row shading at the MaStR
 GCR, PVWatts with era gamma and IAM, era aging, portfolio loss defaults (no meter calibration), ERA5 snow
 depth_linear. Meters are written next to the twins on the same step (confidential directory outside git).
 
     synthre/bin/python scripts/pv/trianel_twins.py --step 30min [--pv pv1,pv7]
 Inputs: trianel_benchmark/inputs (cams, cams_corrected, osm/pvgis_horizon.json, mastr, era5_snow_full),
-        reports/figs_pv_generator/geodata_arrays_trianel_surf_{laser,image}.csv
+        reports/figs_pv_generator/geodata_arrays_trianel_windows_v6.csv (legacy: geodata_arrays_trianel_surf_{laser,image}.csv)
 Output: ${DATA_ROOT}/synthetic/solar/trianel_twins_<step>/{synth_<pv>.parquet, meter_<pv>.parquet, manifest_<pv>.json,
         parks.csv, sites_confidential.csv}
 """
@@ -52,11 +53,12 @@ def meters(parks: pd.DataFrame, step: str) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-def geometry(pv: str, p: pd.Series, laser: pd.DataFrame, image: pd.DataFrame) -> tuple:
-    """(arrays, source) by the cascade: laser planes -> image azimuth + register tilt -> register."""
+def geometry(pv: str, p: pd.Series, laser: pd.DataFrame, image: pd.DataFrame, label: str = "geodata") -> tuple:
+    """(arrays, source) by the cascade: measured arrays (window method; legacy: laser planes) -> image azimuth +
+    register tilt (legacy only) -> register."""
     if pv in laser.park_id.values:
         g = laser[laser.park_id == pv]
-        return [{"name": str(a.array_id), "tilt": float(a.tilt), "azimuth": float(a.azimuth), "share": float(a.share)} for a in g.itertuples()], f"laser:{g.source.iloc[0]}"
+        return [{"name": str(a.array_id), "tilt": float(a.tilt), "azimuth": float(a.azimuth), "share": float(a.share)} for a in g.itertuples()], f"{label}:{g.source.iloc[0]}"
     if pv in image.park_id.values:
         g = image[image.park_id == pv]
         az = float(np.average(g.azimuth, weights=g.share))
@@ -71,7 +73,8 @@ def main():
     ap.add_argument("--model-tag", default="xgb_v5")
     ap.add_argument("--out", default=None)
     ap.add_argument("--register-ac", action="store_true", help="DC/AC from MaStR (else 1.10), never from the meter (D2)")
-    ap.add_argument("--laser-csv", default=None, help="laser arrays CSV (default reports/figs_pv_generator/geodata_arrays_trianel_surf_laser.csv); 2026-10-21: v3 after the spectrum fix")
+    ap.add_argument("--geodata-csv", default=os.path.join(FIGS, "geodata_arrays_trianel_windows_v6.csv"), help="arrays of the window method (default v6, 2026-10-22)")
+    ap.add_argument("--laser-csv", default=None, help="LEGACY cascade of 2026-10-16: laser arrays CSV (e.g. geodata_arrays_trianel_surf_laser_v3.csv) + image CSV")
     a = ap.parse_args()
     suffix = "regac_" if a.register_ac else ""
     out_dir = a.out or f"{DATA_ROOT}/synthetic/solar/trianel_twins_{suffix}{a.step}"
@@ -82,14 +85,18 @@ def main():
     facts = tc.mastr_facts(parks, os.path.join(BENCH, "mastr", "mastr_candidates.csv"), os.path.join(BENCH, "mastr", "mastr_xml_units.json"))
     par = tc.park_parameters(parks, facts, met_h, use_meter_ac=not a.register_ac)
     met = meters(parks, a.step)
-    laser = pd.read_csv(a.laser_csv or os.path.join(FIGS, "geodata_arrays_trianel_surf_laser.csv"))
-    image = pd.read_csv(os.path.join(FIGS, "geodata_arrays_trianel_surf_image.csv"))
+    if a.laser_csv:
+        laser, label = pd.read_csv(a.laser_csv), "laser"
+        image = pd.read_csv(os.path.join(FIGS, "geodata_arrays_trianel_surf_image.csv"))
+    else:
+        laser, label = pd.read_csv(a.geodata_csv), "windows"
+        image = pd.DataFrame(columns=["park_id", "azimuth", "share", "source"])
     conn = era5_db.connect()
     rows, sites = [], []
     pvs = [pv for pv in parks.index if pv in met and met[pv].notna().sum() > 1000 and (a.pv is None or pv in a.pv.split(","))]
     for pv in pvs:
         p = parks.loc[pv]
-        arrays, geo_src = geometry(pv, p, laser, image)
+        arrays, geo_src = geometry(pv, p, laser, image, label)
         cfg = tc.base_config(pv, p, par.loc[pv], arrays=arrays, variant="PR")
         cfg["losses"] = dict(LOSSES)
         cfg["aging"]["enabled"] = True

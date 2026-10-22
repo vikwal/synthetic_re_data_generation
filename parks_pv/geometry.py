@@ -143,6 +143,30 @@ def terrain_arrays(poly, nominal: list, k_total: int = MAX_ARRAYS, seed: int = 0
     return out, stats
 
 
+def terrain_arrays_grid(nominal: list, dgm: np.ndarray, inside: np.ndarray, res: float, conv: float, k_total: int = MAX_ARRAYS,
+                        seed: int = 0) -> tuple:
+    """terrain_arrays on the state DGM1 (pv.terrain.terrain_table_grid, 10 m cells) instead of GLO-30 (2026-10-22).
+    nominal: dicts with name, tilt, azimuth, share, source (the mount angles relative to the ground)."""
+    k_each = max(1, k_total // len(nominal))
+    out, stats = [], {}
+    for a in nominal:
+        t = terrain.terrain_table_grid(dgm, inside, res, conv, a["tilt"], a["azimuth"])
+        if t.empty:
+            out.append(dict(a, mount_tilt=a["tilt"], mount_azimuth=a["azimuth"]))
+            continue
+        cl = arr.cluster_arrays(t["tilt_eff"].values, t["az_eff"].values, t["area_m2"].values, k_each, seed=seed)
+        for j, c in enumerate(cl):
+            out.append({"name": f"{a['name']}_{j}", "tilt": c.tilt, "azimuth": c.azimuth, "share": a["share"] * c.share,
+                        "source": a.get("source", ""), "mount_tilt": a["tilt"], "mount_azimuth": a["azimuth"]})
+        if not stats:
+            stats = {"n_cells": int(len(t)), "slope_mean": float(t.slope.mean()), "slope_p90": float(t.slope.quantile(0.9)),
+                     "slope_max": float(t.slope.max()), "tilt_eff_std": float(t.tilt_eff.std()), "az_eff_std": float(t.az_eff.std())}
+    tot = sum(a["share"] for a in out)
+    for a in out:
+        a["share"] /= tot
+    return out, stats
+
+
 def register_view(sel_row, arrays: list) -> dict:
     """What a register delivers for this park: MaStR fields as registered (classes, secondary orientation only
     where MaStR has it, power limit, counts) plus the true mean tilt rounded to 5 deg - the deviating

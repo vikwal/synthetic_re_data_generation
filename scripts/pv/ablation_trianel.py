@@ -41,9 +41,23 @@ def scale_fit(y, p, m):
     return float(np.dot(x, t) / np.dot(x, x)) if np.dot(x, x) > 0 else np.nan
 
 
-def geometry(pv, p, facts, par, osm, k=4):
-    """master (single array from the master data), terrain (clusters around the master angles), footprint source."""
+def geometry(pv, p, facts, par, osm, k=4, terrain_dem="dgm1"):
+    """master (single array from the master data), terrain (clusters around the master angles), footprint source.
+    terrain_dem 'dgm1' (default since 2026-10-22): state DGM1 on the window-method footprint of the park
+    (geometry_trianel_windows.prepare: OSM ways and relations, 10 m cells); 'glo30': the GLO-30 DSM on the OSM plant
+    near the master-data point (the ladders up to v4)."""
     master = [{"name": "a0", "tilt": float(p["tilt_master"]), "azimuth": float(p["az_master"]), "share": 1.0}]
+    if terrain_dem == "dgm1":
+        import geometry_trianel_windows as TW
+        from parks_pv.geometry import terrain_arrays_grid
+        try:
+            P = TW.prepare(pv, with_rgb=False)
+        except Exception as ex:                       # no geodata in the cache (pv4): GLO-30 below
+            print(pv, "no DGM1 terrain:", type(ex).__name__, str(ex)[:80], flush=True)
+            P = {"dgm": np.full(1, np.nan)}
+        if np.isfinite(P["dgm"]).any():
+            terr, _ = terrain_arrays_grid([dict(master[0], name="a0", source="master")], P["dgm"], P["inside"], P["RES"], P["conv"], k_total=k)
+            return master, [{"name": a["name"], "tilt": a["tilt"], "azimuth": a["azimuth"], "share": a["share"]} for a in terr], f"dgm1:{P['fp_src']}"
     els = osm.get(pv, {}).get("elements", [])
     poly = terrain.pick_plant_near(els, p["lat"], p["lon"], 2.5) if els else None
     src = "osm"
@@ -82,7 +96,8 @@ def main():
     ap.add_argument("--snow-dir", required=True)
     ap.add_argument("--snow-cache", required=True)
     ap.add_argument("--extras-dir", default=os.path.expanduser("~/Work/FL_Contribution/reports/figs_pv_generator"))
-    ap.add_argument("--geodata-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share from geometry_from_geodata_trianel")
+    ap.add_argument("--geodata-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share; since 2026-10-22 from geometry_trianel_windows.py (geodata_arrays_trianel_windows_v6.csv)")
+    ap.add_argument("--terrain-dem", choices=["dgm1", "glo30"], default="dgm1", help="terrain of the 'full' rung: state DGM1 (default since 2026-10-22) or GLO-30 (ladders up to v4)")
     ap.add_argument("--base-arrays", default=None, help="CSV park_id,array_id,tilt,azimuth,share: replaces the master-data (+terrain) geometry as the base of every ladder rung")
     ap.add_argument("--estimate-windows", nargs="*", type=int, default=[30, 90, 365], help="meter history (days from start) for the power-based angle estimate")
     ap.add_argument("--geometry-only", action="store_true", help="only the geometry rungs (faster)")
@@ -118,7 +133,7 @@ def main():
         hz = tc.load_horizon(args.horizon_json, pv)
         y = meter[pv].reindex(idx)
         cap_w = float(par.loc[pv, "kwp_dc"]) * 1000.0
-        master, terr, fp_src = geometry(pv, p, facts, par, osm)
+        master, terr, fp_src = geometry(pv, p, facts, par, osm, terrain_dem=args.terrain_dem)
         terr_master = terr
         if args.base_arrays and os.path.exists(args.base_arrays):
             ba = pd.read_csv(args.base_arrays); ba = ba[ba.park_id == pv]

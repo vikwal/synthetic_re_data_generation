@@ -1,63 +1,47 @@
 #!/usr/bin/env python
-"""Measured module geometry of the release parks (parks_pv_v1 selection) from open state geodata, laser first:
-Bavaria = LAZ point cloud (geodaten.bayern.de) + DOP20 + DGM1 (+ DOM20 image for comparison); Niedersachsen
-(DOM1 laser via STAC, newest survey after commissioning), Brandenburg (ALS LAZ where covered, bDOM image otherwise),
-Mecklenburg-Vorpommern (DOM1 laser XYZ) via pv.geodata_states.
-Per park: pv.geodata_park.measure_park (same pipeline that resolved the Trianel parks, incl. the east-west pair of
-pv7), then quality gates and the comparison with the MaStR orientation and tilt classes (evaluate()).
+"""Measured module geometry of the release parks (parks_pv_v1 selection) from open state geodata by the window
+method (pv.geodata_windows, 2026-10-22; the block method of 2026-10-19 is geometry_release_states_legacy.py).
 
-    synthre/bin/python scripts/pv/geometry_release_states.py --state Bayern [--parks ID,ID] [--fetch-only]
-    synthre/bin/python scripts/pv/geometry_release_states.py --state Bayern --reevaluate   # gates only, from the CSV
-Outputs: data/parks_pv_v1/geodata_release_<state>.csv (one row per park and surface source, with gates and class
-         agreement), geodata_release_<state>_rows.csv (row-axis peaks and blocks),
-         results/pv/geodata_release/<park>_hag_<source>.png (height above ground + folded profile, no imagery).
+Per park: tiles of the state (DOP20, DGM1, surface sources: LAZ point cloud, laser DOM1, image bDOM / DOM20) ->
+footprint = OSM solar plants (ways and relations) within 400 m of the register point, else a 300-m box grown while
+accepted windows touch its edge (E4b) -> per surface source: height above ground -> windows -> groups -> arrays and
+park acceptance (E4d) -> comparison of the main group with the MaStR orientation and tilt classes (or_agree,
+tilt_agree, tilt_agree_tol as before). Arrays for the generator per park: the measured arrays of the best accepted
+source (laser first, survey after commissioning or undated), else the nominal mounts of parks_pv_v1 (pv_arrays.csv)
+re-terrained on the state DGM1 (parks_pv.geometry.terrain_arrays_grid), else the v1 arrays as they are.
+
+    synthre/bin/python scripts/pv/geometry_release_states.py --state Bayern [--parks ID,ID] [--fetch-only] [--suffix _v2]
+    synthre/bin/python scripts/pv/geometry_release_states.py --state Bayern --reevaluate   # classes/gates from the CSV
+Outputs (never overwritten; a different --suffix makes a new version):
+    data/parks_pv_v1/geodata_release_<state><suffix>.csv          one row per park and surface source
+    data/parks_pv_v1/geodata_release_<state><suffix>_arrays.csv   generator arrays per park (measured or fallback)
+    results/pv/geodata_release<suffix>/<park>/{windows,groups,arrays}_<source>.csv, park_<source>.json, windows_<source>.png
 Tiles are cached under ${DATA_ROOT}/synthetic/solar/parks_pv_v1/inputs/geodata/."""
 import argparse
 import json
 import os
-import re
 import sys
 import traceback
 
 import numpy as np
 import pandas as pd
-from shapely.geometry import Point, Polygon
-from shapely.ops import unary_union
+from shapely.geometry import Point
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO)
-from parks_pv import paths  # noqa: E402
-from pv import geodata_bayern as GB, geodata_park as GP, geodata_states as GS, geodata_tiles as GT  # noqa: E402
+from parks_pv import geometry as PG, paths  # noqa: E402
+from pv import geodata_bayern as GB, geodata_states as GS, geodata_tiles as GT, geodata_windows as GW  # noqa: E402
 from pv.plausibility import orientation_class, tilt_class  # noqa: E402
 
 GEO = os.path.join(paths.INPUT_DIR, "geodata")
-OUTD = os.path.join(REPO, "results", "pv", "geodata_release")
 STATE = {"Niedersachsen": ("ni", 32), "Brandenburg": ("bb", 33), "Mecklenburg-Vorpommern": ("mv", 33), "Bayern": ("by", 32)}
 SOURCE_RANK = {"laz": 0, "dom1_laser": 0, "bdom_image": 1, "dom20_image": 2}
 LASER = ("laz", "dom1_laser")
-# gates, from the Trianel runs (pv1/pv3/pv5/pv7 laser ok; pv6 with 3 tables and pv7 DOM20 with contrast 0.10 wrong)
-GATES = {"fold_contrast": 0.5, "n_tables": 5, "flank_m": 1.5, "h_ridge": (0.8, 4.5), "estimator_agree_deg": 3.0}
-EW_AZ_TOL_DEG = 35.0    # flank direction of an east-west pair within 35 deg of east or west
-TILT_TOL_DEG = 2.0      # laser vs power-based tilt at the Trianel parks: within 2 deg
+FENCE_MAX_M = 400.0
+TILT_TOL_DEG = 2.0
 CLASS_BOUNDS = {"< 20 Grad": (-90.0, 20.0), "20 - 40 Grad": (20.0, 40.0), "40 - 60 Grad": (40.0, 60.0), "> 60 Grad": (60.0, 90.0)}
-DERIVED = ("ew_measured", "tilt_measured", "az_measured", "estimator_diff_deg", "or_cls_measured", "tilt_cls_measured",
-           "surface_year", "survey_date_known", "gates_passed", "accept", "laser", "source_rank", "or_agree", "tilt_agree",
-           "tilt_agree_tol", "best")
-
-
-def footprint(park_id: str, lat: float, lon: float, kw: float, zone: int, osm: dict) -> tuple:
-    """(polygon in CRS[zone], source): OSM plant polygons within 400 m of the register point, else a disc."""
-    p = Point(*GT.Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform(lon, lat))
-    plants = []
-    for e in (osm.get(park_id) or {}).get("elements", []):
-        if e.get("type") == "way" and (e.get("tags") or {}).get("power") == "plant" and len(e.get("geometry", [])) >= 4:
-            poly = GT.to_utm(Polygon([(g["lon"], g["lat"]) for g in e["geometry"]]), zone).buffer(0)
-            if poly.distance(p) <= 400:
-                plants.append(poly)
-    if plants:
-        return unary_union(plants), "osm"
-    radius = np.sqrt(max(kw, 300.0) / 600.0 * 1e4 / np.pi) * 1.3 + 60.0
-    return p.buffer(radius), "disc"
+DERIVED = ("ew_measured", "tilt_measured", "az_measured", "or_cls_measured", "tilt_cls_measured", "gate_after_build", "survey_date_known",
+           "accept", "laser", "source_rank", "or_agree", "tilt_agree", "tilt_agree_tol", "best")
 
 
 def fetch_tiles(state: str, lat: float, lon: float, year: int, attempts: int = 3) -> dict:
@@ -100,82 +84,157 @@ def sources_from(tiles: dict) -> list:
     return src
 
 
-def surface_year(row: pd.Series) -> float:
-    """Acquisition year of the surface source (LAZ header creation dates or STAC datetimes), else NaN."""
-    ys = [int(y) for y in re.findall(r"(20\d\d)-\d\d-\d\d", str(row.get("dates", "")))]
-    return float(min(ys)) if ys else np.nan
+def rasters(tiles: dict, name: str, paths_: list, bounds: tuple, zone: int, lat: float, lon: float) -> dict:
+    """Height above ground and the terrain of one surface source on the grid of bounds (0.5 m)."""
+    S = GW.surface_from(name, paths_, bounds, zone, GW.RES, dates=tiles.get("dom1_dates") if name == "dom1_laser" else None)
+    dgm = GT.mosaic(tiles["dgm1"], bounds, GW.RES, zone)[0].astype(np.float32) if tiles.get("dgm1") else None
+    if dgm is None or not np.isfinite(dgm).any():                 # no DGM1: laser ground (LAZ) or a surface percentile (rasters)
+        ground = S["ground"] if S["ground"] is not None else GT.ground_from_surface(S["surf"], GW.RES)
+        dgm, dgm_src = np.asarray(ground, np.float32), "laser_ground" if S["ground"] is not None else "surface_percentile"
+    else:
+        dgm_src = "dgm1"
+    hag = GW.height_above_ground(S["surf"], dgm, S["ground"])
+    return dict(hag=hag, dgm=dgm, dgm_src=dgm_src, source=name, survey_year=S["survey_year"], survey_dates=S["survey_dates"],
+                conv=GT.meridian_convergence(lat, lon, zone))
 
 
-def _col(df: pd.DataFrame, name: str, default=np.nan) -> pd.Series:
-    return df[name] if name in df.columns else pd.Series(default, index=df.index)
+def ortho_pitch(tiles: dict, bounds: tuple, inside: np.ndarray, zone: int) -> float:
+    if not tiles.get("dop20"):
+        return np.nan
+    rgb = GT.mosaic(tiles["dop20"], bounds, GW.RES, zone, bands=[1, 2, 3])
+    return GW.orthophoto_axis(rgb, inside, GW.RES)["pitch0"]
+
+
+def measure(r, tiles: dict, osm: dict, zone: int, outd: str) -> tuple:
+    """(rows per surface source, {source: window result}, footprint info) for one park."""
+    from pyproj import Transformer
+    to_m = Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform
+    pt = Point(*to_m(float(r.lon), float(r.lat)))
+    poly, fences = GW.osm_footprint((osm.get(r.park_id) or {}).get("elements", []), [pt], to_m, FENCE_MAX_M)
+    rows, outs = [], {}
+    os.makedirs(outd, exist_ok=True)
+    srcs = sources_from(tiles)
+    if not srcs:
+        return [dict(pv=r.park_id, source=None, status="failed", status_reason="keine Oberflächenquelle")], {}, dict(footprint="none")
+    for name, paths_ in srcs:
+        try:
+            if poly is not None:
+                g = GW.analysis_grid(poly, GW.RES)
+                R = rasters(tiles, name, paths_, g["bounds"], zone, float(r.lat), float(r.lon))
+                pitch0 = ortho_pitch(tiles, g["bounds"], g["inside"], zone)
+                o = GW.measure_park(R["hag"], R["dgm"], g["inside"], R["conv"], name, pitch0, GW.RES, r.orientation_class)
+                fp = dict(footprint="osm", footprint_ha=round(poly.area / 1e4, 2), n_fences=int((fences.dist_m <= FENCE_MAX_M).sum()))
+                inside = g["inside"]
+            else:
+                def load(bounds, name=name, paths_=paths_):
+                    R_ = rasters(tiles, name, paths_, bounds, zone, float(r.lat), float(r.lon))
+                    R_["pitch0"] = ortho_pitch(tiles, bounds, np.ones(R_["hag"].shape, bool), zone)
+                    return R_
+                o = GW.measure_box(load, (pt.x, pt.y), float(r.dc_kwp), register_orientation=r.orientation_class)
+                R = o["rasters"]
+                inside = np.ones(R["hag"].shape, bool)
+                fp = dict(footprint="box", footprint_ha=round((o["park"]["box_side_m"] ** 2) / 1e4, 2), n_fences=0)
+            o["dgm"], o["inside"], o["conv"] = R["dgm"], inside, R["conv"]
+            outs[name] = o
+            o["win"].to_csv(os.path.join(outd, f"windows_{name}.csv"), index=False)
+            o["G"].to_csv(os.path.join(outd, f"groups_{name}.csv"), index=False)
+            o["arrays"].to_csv(os.path.join(outd, f"arrays_{name}.csv"), index=False)
+            park = dict(o["park"], survey_year=R["survey_year"], survey_dates=R["survey_dates"], dgm_src=R["dgm_src"], **fp)
+            json.dump(park, open(os.path.join(outd, f"park_{name}.json"), "w"), indent=1, default=str)
+            try:
+                GW.plot_park(o, R["hag"], os.path.join(outd, f"windows_{name}.png"), f"{r.park_id}: {name}, Befliegung {R['survey_year']}, {park['status']}")
+            except Exception as ex:                                    # a figure must never fail the measurement
+                print("  fig error", r.park_id, name, ex, flush=True)
+            G0 = o["G"].iloc[0] if len(o["G"]) else None
+            A0 = o["arrays"][o["arrays"].group == 0] if len(o["arrays"]) else o["arrays"]
+            rows.append(dict(pv=r.park_id, source=name, survey_year=R["survey_year"], survey_dates=str(R["survey_dates"])[:200], dgm_src=R["dgm_src"],
+                             **fp, **{k: v for k, v in park.items() if k not in ("source", "survey_year", "survey_dates", "dgm_src", "footprint", "footprint_ha", "n_fences", "box_steps")},
+                             g0_tilt=G0.tilt_horiz if G0 is not None else np.nan, g0_tilt_p10=G0.tilt_p10 if G0 is not None else np.nan,
+                             g0_tilt_p90=G0.tilt_p90 if G0 is not None else np.nan, g0_azimuth=float(A0.azimuth.iloc[0]) if len(A0) else np.nan,
+                             g0_az_source=A0.az_source.iloc[0] if len(A0) else "", g0_ew=bool(G0.ew) if G0 is not None else False,
+                             g0_pitch=G0.pitch if G0 is not None else np.nan, g0_share=G0.share if G0 is not None else np.nan,
+                             g0_n_windows=int(G0.n_windows) if G0 is not None else 0, g0_n_sure=int(G0.n_sure) if G0 is not None else 0,
+                             arrays=str([(round(a.tilt, 1), round(a.azimuth), round(a.share, 2), a.az_source) for a in o["arrays"].itertuples()])))
+        except Exception as e:
+            traceback.print_exc()
+            rows.append(dict(pv=r.park_id, source=name, status="failed", status_reason=f"{type(e).__name__}: {str(e)[:100]}"))
+    return rows, outs, dict(poly=poly)
 
 
 def evaluate(df: pd.DataFrame) -> pd.DataFrame:
-    """Measured geometry per source row, quality gates and the comparison with the register classes.
-    East-west pair (two flanks, symmetric ridge): tilt = mean of the two flank tilts of the folded profile (the plane
-    fit sees one flank only), orientation class Ost-West. Single face: tilt = median table plane, cross-checked against
-    the profile tilt (two independent estimators within 3 deg)."""
+    """Register comparison of the main group and the choice of the best source per park. A measured park needs
+    status accepted and a survey after the commissioning year (unknown survey date: flagged, not rejected).
+    or_agree is only defined where the azimuth was measured (an azimuth taken from the register class agrees by
+    construction)."""
     df = df.copy()
-    ok = _col(df, "ok", False).fillna(False).astype(bool)
-    az = _col(df, "azimuth_true").astype(float)
-    # an east-west pair has symmetric flanks that face east and west; symmetric north/south flanks are not one
-    ew_dir = ((az % 180.0) - 90.0).abs() <= EW_AZ_TOL_DEG
-    two = (_col(df, "two_flank", False).fillna(False).astype(bool) & (_col(df, "ridge_sym", 0.0).fillna(0.0) >= 0.6) & ew_dir)
-    tl, tr, tp, tpl = (_col(df, c).astype(float) for c in ("tilt_left", "tilt_right", "tilt_profile", "tilt_plane_median"))
-    df["ew_measured"] = two
-    df["tilt_measured"] = np.where(two, 0.5 * (tl + tr), tpl)
-    df["az_measured"] = az
-    # tilt against the horizontal (2026-10-21): hag-based tilt + terrain slope in the facing direction
-    tlh, trh, tph = (_col(df, c).astype(float) for c in ("tilt_left_horiz", "tilt_right_horiz", "tilt_plane_horiz"))
-    df["tilt_measured_horiz"] = np.where(two, 0.5 * (tlh + trh), tph)
-    df["slope_facing_deg"] = np.degrees(np.arctan(_col(df, "slope_facing").astype(float)))
-    df["estimator_diff_deg"] = np.where(two, (tl - tr).abs(), (tp - tpl).abs())
-    df["or_cls_measured"] = [("Ost-West" if e else (orientation_class(a) if np.isfinite(a) else ""))
-                             for e, a in zip(two, df["az_measured"])]
-    df["tilt_cls_measured"] = [tilt_class(t) if np.isfinite(t) else "" for t in df["tilt_measured"]]
-    sy = df.apply(surface_year, axis=1)
-    df["surface_year"] = sy
+    col = lambda c, d=np.nan: df[c] if c in df.columns else pd.Series(d, index=df.index)
+    df["ew_measured"] = col("g0_ew", False).fillna(False).astype(bool)
+    df["tilt_measured"] = col("g0_tilt").astype(float)
+    df["az_measured"] = col("g0_azimuth").astype(float)
+    df["or_cls_measured"] = [("Ost-West" if e else (orientation_class(a) if np.isfinite(a) else "")) for e, a in zip(df.ew_measured, df.az_measured)]
+    df["tilt_cls_measured"] = [tilt_class(t) if np.isfinite(t) else "" for t in df.tilt_measured]
+    sy = col("survey_year").astype(float)
     df["survey_date_known"] = sy.notna()
-    lo, hi = GATES["h_ridge"]
-    gates = {"gate_ok": ok,
-             "gate_contrast": _col(df, "fold_contrast").astype(float) >= GATES["fold_contrast"],
-             "gate_tables": _col(df, "n_tables", 0).fillna(0) >= GATES["n_tables"],
-             "gate_flank": _col(df, "flank_m").astype(float) >= GATES["flank_m"],
-             "gate_ridge": _col(df, "h_ridge").astype(float).between(lo, hi),
-             "gate_estimators": pd.Series(df["estimator_diff_deg"] <= GATES["estimator_agree_deg"], index=df.index),
-             # unknown survey date: flagged (survey_date_known), not rejected
-             "gate_after_build": (sy >= _col(df, "year_built").astype(float)) | sy.isna()}
-    for k, v in gates.items():
-        df[k] = v.fillna(False).astype(bool)
-    df["gates_passed"] = df[list(gates)].sum(axis=1)
-    df["accept"] = df[list(gates)].all(axis=1)
-    df["laser"] = _col(df, "source", "").isin(LASER)
-    df["source_rank"] = _col(df, "source", "").map(SOURCE_RANK).fillna(9)
-    reg_t = _col(df, "tilt_class_reg", "")
-    df["or_agree"] = df["or_cls_measured"] == _col(df, "orientation_class_reg", "")
-    df["tilt_agree"] = df["tilt_cls_measured"] == reg_t
-    # tolerant tilt agreement: a measurement within TILT_TOL_DEG of the registered class counts as agreeing
+    df["gate_after_build"] = (sy >= col("year_built").astype(float)) | sy.isna()
+    df["accept"] = (col("status", "") == "accepted") & df.gate_after_build
+    df["laser"] = col("source", "").isin(LASER)
+    df["source_rank"] = col("source", "").map(SOURCE_RANK).fillna(9)
+    az_measured = col("g0_az_source", "").isin(["measured", "axis"])
+    df["or_agree"] = np.where(az_measured, df.or_cls_measured == col("orientation_class_reg", ""), np.nan)
+    reg_t = col("tilt_class_reg", "")
+    df["tilt_agree"] = df.tilt_cls_measured == reg_t
     df["tilt_agree_tol"] = [bool(np.isfinite(t) and c in CLASS_BOUNDS and CLASS_BOUNDS[c][0] - TILT_TOL_DEG <= t < CLASS_BOUNDS[c][1] + TILT_TOL_DEG)
-                            for t, c in zip(df["tilt_measured"], reg_t)]
-    best = df[df.accept & df.laser].sort_values(["pv", "source_rank"]).drop_duplicates("pv")
+                            for t, c in zip(df.tilt_measured, reg_t)]
+    best = df[df.accept].sort_values(["pv", "source_rank"]).drop_duplicates("pv")
     df["best"] = df.index.isin(best.index)
     return df
 
 
+def v1_nominal(arrays_v1: pd.DataFrame, park_id: str) -> list:
+    """Nominal mounts of parks_pv_v1 (pv_arrays.csv): one entry per nominal array (array_id prefix before the
+    terrain cluster suffix), share summed, mount angles relative to the ground."""
+    a = arrays_v1[arrays_v1.park_id == park_id]
+    out = []
+    for nom, g in a.groupby(a.array_id.str.rsplit("_", n=1).str[0], sort=False):
+        out.append(dict(name=nom, tilt=float(g.mount_tilt.iloc[0]), azimuth=float(g.mount_azimuth.iloc[0]), share=float(g.share.sum()),
+                        source=str(g.source.iloc[0])))
+    return out
+
+
+def park_arrays(r, df_park: pd.DataFrame, outs: dict, arrays_v1: pd.DataFrame) -> list:
+    """Generator arrays of one park: measured (best accepted source) or v1 nominal mounts re-terrained on DGM1."""
+    best = df_park[df_park.best]
+    if len(best):
+        src = best.source.iloc[0]
+        return [dict(park_id=r.park_id, array_id=f"g{int(a.group)}_{k}", tilt=round(a.tilt, 2), azimuth=round(a.azimuth, 2), share=round(a.share, 5),
+                     source=f"windows:{src}", az_source=a.az_source, note=a.note, mount_tilt=np.nan, mount_azimuth=np.nan)
+                for k, a in enumerate(outs[src]["arrays"].itertuples())]
+    nominal = v1_nominal(arrays_v1, r.park_id)
+    o = next((x for x in outs.values() if x.get("dgm") is not None), None)
+    if nominal and o is not None and np.isfinite(o["dgm"]).any():
+        arr_, _ = PG.terrain_arrays_grid(nominal, o["dgm"], o["inside"], GW.RES, o["conv"])
+        src = "register_v1+dgm1"
+    else:
+        a = arrays_v1[arrays_v1.park_id == r.park_id]
+        arr_ = [dict(name=x.array_id, tilt=x.tilt, azimuth=x.azimuth, share=x.share, mount_tilt=x.mount_tilt, mount_azimuth=x.mount_azimuth) for x in a.itertuples()]
+        src = "register_v1"
+    return [dict(park_id=r.park_id, array_id=a["name"], tilt=round(a["tilt"], 2), azimuth=round(a["azimuth"], 2), share=round(a["share"], 5),
+                 source=src, az_source="register", note="", mount_tilt=round(a.get("mount_tilt", np.nan), 2), mount_azimuth=round(a.get("mount_azimuth", np.nan), 2))
+            for a in arr_]
+
+
 def summary(df: pd.DataFrame, label: str) -> None:
     pd.set_option("display.width", 250)
-    laser = df[df.laser]
-    after = laser[laser.survey_date_known & laser.gate_after_build].pv.nunique()
-    unknown = laser[~laser.survey_date_known].pv.nunique()
-    print(f"\n{label}: {df.pv.nunique()} parks; laser source at {laser.pv.nunique()}; survey after build at {after} "
-          f"(survey date unknown at {unknown}); accepted laser measurement at {int(df.best.sum())}")
+    print(f"\n{label}: {df.pv.nunique()} parks; accepted at {df[df.accept].pv.nunique()} (laser {df[df.accept & df.laser].pv.nunique()}); "
+          f"status per source {df.status.value_counts().to_dict()}")
     b = df[df.best]
     if len(b):
-        print(f"orientation class agrees {int(b.or_agree.sum())}/{len(b)}; tilt class agrees {int(b.tilt_agree.sum())}/{len(b)} "
-              f"(with +-{TILT_TOL_DEG:.0f} deg tolerance {int(b.tilt_agree_tol.sum())}/{len(b)})")
-        cols = ["pv", "source", "orientation_class_reg", "or_cls_measured", "tilt_class_reg", "tilt_measured", "az_measured",
-                "ew_measured", "estimator_diff_deg", "fold_contrast", "n_tables", "surface_year", "year_built"]
-        print(b[cols].round(2).to_string(index=False))
+        om = b[pd.notna(b.or_agree)]
+        print(f"orientation class agrees {int(om.or_agree.astype(bool).sum())}/{len(om)} (measured azimuth); tilt class {int(b.tilt_agree.sum())}/{len(b)} "
+              f"(+-{TILT_TOL_DEG:.0f} deg: {int(b.tilt_agree_tol.sum())}/{len(b)})")
+        cols = ["pv", "source", "footprint", "n_ok", "tab_share_accepted", "orientation_class_reg", "or_cls_measured", "tilt_class_reg", "tilt_measured",
+                "tilt_ends_med", "az_measured", "g0_az_source", "ew_measured", "survey_year", "year_built"]
+        print(b[[c for c in cols if c in b.columns]].round(2).to_string(index=False))
 
 
 def main():
@@ -183,25 +242,28 @@ def main():
     ap.add_argument("--state", default="Bayern", choices=list(STATE))
     ap.add_argument("--parks", default=None, help="comma-separated park ids (default: all of the state)")
     ap.add_argument("--fetch-only", action="store_true")
-    ap.add_argument("--surface-only", action="store_true")
-    ap.add_argument("--suffix", default="")
-    ap.add_argument("--reevaluate", action="store_true", help="recompute gates and classes from the stored CSV only")
+    ap.add_argument("--suffix", default="_v2")
+    ap.add_argument("--reevaluate", action="store_true", help="recompute classes and the best source from the stored CSV only")
     a = ap.parse_args()
     code, zone = STATE[a.state]
     out_csv = os.path.join(paths.DATA_DIR, f"geodata_release_{a.state.lower()}{a.suffix}.csv")
+    arr_csv = out_csv.replace(".csv", "_arrays.csv")
     if a.reevaluate:
         raw = pd.read_csv(out_csv)
-        raw = raw[[c for c in raw.columns if not c.startswith("gate_") and c not in DERIVED]]
-        df = evaluate(raw)
+        df = evaluate(raw[[c for c in raw.columns if c not in DERIVED]])
         df.to_csv(out_csv, index=False)
         summary(df, a.state)
         return
+    if not a.fetch_only and (os.path.exists(out_csv) or os.path.exists(arr_csv)):
+        raise SystemExit(f"{out_csv} exists - results are versioned, choose another --suffix")
     sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str})
     sel = sel[sel.bundesland == a.state]
     if a.parks:
         sel = sel[sel.park_id.isin(a.parks.split(","))]
     osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
-    out, rows = [], []
+    arrays_v1 = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"), dtype={"park_id": str})
+    outd_root = os.path.join(REPO, "results", "pv", f"geodata_release{a.suffix}")
+    rows, arr_rows = [], []
     for r in sel.itertuples():
         print(f"== {r.park_id} {a.state} {r.dc_kwp:.0f} kWp {r.year} {r.orientation_class} / {r.tilt_class}", flush=True)
         try:
@@ -209,29 +271,24 @@ def main():
             if a.fetch_only:
                 print("  tiles:", {k: len(v) for k, v in tiles.items()}, flush=True)
                 continue
-            poly, fp_src = footprint(r.park_id, float(r.lat), float(r.lon), float(r.dc_kwp), zone, osm)
-            o, rr = GP.measure_park(r.park_id, poly, fp_src, zone, float(r.lat), float(r.lon), float(r.dc_kwp), int(r.year),
-                                    tiles.get("dop20", []), tiles.get("dgm1", []), sources_from(tiles), a.surface_only, OUTD, code)
-            for x in o:
-                x.update(orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp))
-                if x.get("source") == "dom1_laser" and tiles.get("dom1_dates"):
-                    x["dates"] = str(sorted(tiles["dom1_dates"].values()))
-            out += o
-            rows += rr
-            print("  ", [(x.get("source"), x.get("ok"), x.get("tilt_plane_median"), x.get("azimuth_true"), x.get("two_flank"),
-                          x.get("fold_contrast"), x.get("n_tables"), x.get("reason")) for x in o], flush=True)
+            o, outs, _ = measure(r, tiles, osm, zone, os.path.join(outd_root, r.park_id))
         except Exception as e:
             traceback.print_exc()
-            out.append(dict(pv=r.park_id, state_code=code, source=None, ok=False, reason=f"{type(e).__name__}: {str(e)[:100]}",
-                            orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp),
-                            year_built=int(r.year)))
+            o, outs = [dict(pv=r.park_id, source=None, status="failed", status_reason=f"{type(e).__name__}: {str(e)[:100]}")], {}
+        for x in o:
+            x.update(state_code=code, orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp), year_built=int(r.year))
+        dfp = evaluate(pd.DataFrame(o))
+        arr_rows += park_arrays(r, dfp, outs, arrays_v1)
+        rows += o
+        print("  ", [(x.get("source"), x.get("status"), x.get("n_ok"), round(x.get("g0_tilt", np.nan), 1), x.get("arrays"), x.get("status_reason")) for x in o], flush=True)
     if a.fetch_only:
         return
-    df = evaluate(pd.DataFrame(out))
+    df = evaluate(pd.DataFrame(rows))
     os.makedirs(paths.DATA_DIR, exist_ok=True)
     df.to_csv(out_csv, index=False)
-    pd.DataFrame(rows).to_csv(os.path.join(paths.DATA_DIR, f"geodata_release_{a.state.lower()}{a.suffix}_rows.csv"), index=False)
+    pd.DataFrame(arr_rows).to_csv(arr_csv, index=False)
     summary(df, a.state)
+    print("written", out_csv, arr_csv)
 
 
 if __name__ == "__main__":

@@ -146,13 +146,19 @@ def _mv_dataset_links(prod: str) -> list:
 
 
 def fetch_mv(lat: float, lon: float, out_dir: str, products=("dop20", "dom1", "dgm1"), margin_m: float = 300.0) -> dict:
-    """MV: 2 km tiles in EPSG:25833 from the Atom dataset feeds; tile keys are even km values."""
+    """MV: 2 km tiles in EPSG:25833 from the Atom dataset feeds; tile keys are even km values. Cache first: the feed
+    is only read when a tile is missing locally (2026-10-22, the feed answered 503 for cached parks)."""
+    import glob
     out = {}
     for prod in products:
+        keys = [f"_33_{e * 2}_{n * 2}_2" for e, n in tiles_for(lat, lon, 33, margin_m, size_m=2000.0)]
+        local = {k: sorted(glob.glob(os.path.join(out_dir, "mv", prod, f"*{k}*"))) for k in keys}
+        if all(local.values()):
+            out[prod] = [v[0] for v in local.values()]
+            continue
         links = {name: url for name, url, _ in _mv_dataset_links(prod)}
         paths = []
-        for e, n in tiles_for(lat, lon, 33, margin_m, size_m=2000.0):
-            key = f"_33_{e * 2}_{n * 2}_2"
+        for key in keys:
             cand = [nm for nm in links if key in nm]
             if not cand:
                 continue

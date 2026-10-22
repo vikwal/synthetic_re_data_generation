@@ -1,4 +1,9 @@
-"""Park geometry from open geodata tiles of any German state: orthophoto -> row axis, pitch and blocks
+"""Raster I/O and the orthophoto spectrum are shared with the window method (pv.geodata_windows: mosaic,
+dsm_from_laz, row_axis_from_image, ground_from_surface, meridian_convergence). LEGACY since 2026-10-22, used only by
+the block method (pv.geodata_park): pitch_from_surface, footprint_from_windows, footprint_from_hag, refine_fold,
+tilt_from_surface.
+
+Park geometry from open geodata tiles of any German state: orthophoto -> row axis, pitch and blocks
 (2D spectrum, windowed local axes), surface model (laser DOM1 raster, LAZ point cloud or image-based DOM) minus
 terrain -> tilt per table via folded cross-row profile and flank plane fit. All rasters are mosaicked on the fly
 into the park's UTM zone; results are expressed with true-north azimuths (meridian convergence corrected).
@@ -183,7 +188,7 @@ def ground_from_surface(surf: np.ndarray, res: float, window_m: float = 25.0) ->
 
 
 def pitch_from_surface(hag: np.ndarray, inside: np.ndarray, res: float, axis_grid_deg: float, lo_m: float = 4.0, hi_m: float = 20.0) -> tuple:
-    """Row pitch from the surface itself: median height above ground along the across-row coordinate (0.25 m bins),
+    """LEGACY (block method, 2026-10-22). Row pitch from the surface itself: median height above ground along the across-row coordinate (0.25 m bins),
     autocorrelation, first strong peak between lo_m and hi_m. Returns (pitch_m, peak_corr)."""
     H, W = hag.shape; jj, ii = np.meshgrid(np.arange(W), np.arange(H)); X = (jj + 0.5) * res; Y = (H - ii - 0.5) * res
     a = np.radians(axis_grid_deg); s = X * np.cos(a) - Y * np.sin(a)
@@ -206,7 +211,7 @@ def pitch_from_surface(hag: np.ndarray, inside: np.ndarray, res: float, axis_gri
 
 
 def footprint_from_windows(windows: np.ndarray, axis_grid_deg: float, res_img: float, bounds: tuple, tol_deg: float = 8.0, buffer_m: float = 25.0):
-    """Hull of the window centres whose local axis matches the row axis: a data-driven footprint for parks without an
+    """LEGACY (block method, 2026-10-22). Hull of the window centres whose local axis matches the row axis: a data-driven footprint for parks without an
     OSM outline. windows rows: (col_m, row_m, axis, pitch, share) in 1 m image coordinates (row from top)."""
     from shapely.geometry import MultiPoint
     if len(windows) == 0:
@@ -221,7 +226,7 @@ def footprint_from_windows(windows: np.ndarray, axis_grid_deg: float, res_img: f
 
 def footprint_from_hag(hag: np.ndarray, res: float, bounds: tuple, expected_m2: float, point_xy: tuple, pitch_m: float = 10.0,
                        h_lo: float = 0.4, h_hi: float = 4.5, area_tol=(0.25, 4.0)):
-    """Table-block footprint from the height above ground: cells between h_lo and h_hi, closed over about one pitch
+    """LEGACY (block method, 2026-10-22). Table-block footprint from the height above ground: cells between h_lo and h_hi, closed over about one pitch
     (fills the gaps between rows), connected components; keep components whose area is within area_tol x
     expected_m2 (expected block area incl. gaps), nearest first. Returns a shapely polygon in bounds' CRS or None."""
     from scipy import ndimage
@@ -262,7 +267,7 @@ def _fold_contrast(s_vals, h_vals, pitch, bw=0.25):
 
 
 def refine_fold(hag: np.ndarray, inside: np.ndarray, res: float, axis0_deg: float, pitch0_m: float, d_axis: float = 4.0, d_pitch: float = 0.12) -> tuple:
-    """Refine row axis (grid deg) and pitch on the surface itself by maximising the contrast of the folded
+    """LEGACY (block method, 2026-10-22). Refine row axis (grid deg) and pitch on the surface itself by maximising the contrast of the folded
     mean profile (coarse-to-fine grid search). Returns (axis_deg, pitch_m, contrast_m)."""
     H, W = hag.shape; jj, ii = np.meshgrid(np.arange(W), np.arange(H)); X = (jj + 0.5) * res; Y = (H - ii - 0.5) * res
     ok = inside & np.isfinite(hag) & (hag > -0.5) & (hag < 6)
@@ -288,7 +293,7 @@ def refine_fold(hag: np.ndarray, inside: np.ndarray, res: float, axis0_deg: floa
 
 # -------------------------------------------------------------------------------------------------- tilt
 def tilt_from_surface(hag: np.ndarray, inside: np.ndarray, res: float, axis_grid_deg: float, pitch_m: float, min_h: float = 0.45) -> dict:
-    """Folded cross-row profile and flank plane fit per table. hag = height above ground (H,W) at res m, with NaN
+    """LEGACY (block method, 2026-10-22). Folded cross-row profile and flank plane fit per table. hag = height above ground (H,W) at res m, with NaN
     outside / no data. Row axis in grid-north degrees. Returns tilt estimates, the profile, flank width, side."""
     H, W = hag.shape; jj, ii = np.meshgrid(np.arange(W), np.arange(H)); X = (jj + 0.5) * res; Y = (H - ii - 0.5) * res
     a = np.radians(axis_grid_deg); n_across = np.array([np.cos(a), -np.sin(a)])

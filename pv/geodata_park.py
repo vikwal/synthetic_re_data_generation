@@ -1,4 +1,7 @@
-"""One park through the geodata geometry pipeline of scripts/pv/geometry_trianel_states.py, with the inputs
+"""LEGACY (2026-10-22): block method, replaced by pv.geodata_windows (window method). Kept to reproduce the
+results up to 2026-10-21 (geometry_release_states_legacy.py, geometry_trianel_override.py, analysis/fig_geodata.py).
+
+One park through the geodata geometry pipeline of scripts/pv/geometry_trianel_states.py, with the inputs
 (footprint, tile paths per product) passed in instead of looked up: orthophoto -> row axis, pitch and blocks;
 each surface source (laser DOM1 raster, LAZ point cloud, image-based bDOM / DOM20) minus terrain -> height above
 ground -> folded cross-row profile and flank plane fit (pv.geodata_tiles). Used by the release batch

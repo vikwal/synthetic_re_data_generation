@@ -66,6 +66,28 @@ def terrain_table(poly, mount_tilt: float, mount_azimuth: float) -> pd.DataFrame
                          "tilt_eff": t_eff, "az_eff": a_eff, "area_m2": cell_m2}).dropna()
 
 
+def terrain_table_grid(dgm: np.ndarray, inside: np.ndarray, res: float, conv: float, mount_tilt: float, mount_azimuth: float,
+                       cell_m: float = 10.0) -> pd.DataFrame:
+    """terrain_table on a state DGM1 (2026-10-22) instead of GLO-30: dgm and inside on a north-up UTM grid of `res` m
+    (pv.geodata_windows.analysis_grid), block-averaged to cell_m cells (keeps the slope of the parcel, drops the
+    micro-relief of the 1 m model); slope and aspect per cell (aspect = downslope direction, grid compass + meridian
+    convergence = true), effective angles of rows mounted with (mount_tilt, mount_azimuth) relative to the ground.
+    Cells with less than half of their area inside the outline are dropped; area_m2 = inside area of the cell."""
+    k = max(int(round(cell_m / res)), 1)
+    Hc, Wc = (dgm.shape[0] // k) * k, (dgm.shape[1] // k) * k
+    z = dgm[:Hc, :Wc].reshape(Hc // k, k, Wc // k, k)
+    zc = np.nanmean(z, axis=(1, 3)) if np.isfinite(z).any() else np.full((Hc // k, Wc // k), np.nan)
+    fin = inside[:Hc, :Wc].reshape(Hc // k, k, Wc // k, k).mean(axis=(1, 3))
+    dzdy, dzdx = np.gradient(zc, k * res)                  # rows go south: flip the sign of d/d(row)
+    dzdy = -dzdy
+    slope = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
+    aspect = (np.degrees(np.arctan2(-dzdx, -dzdy)) + conv) % 360.0
+    m = (fin >= 0.5) & np.isfinite(slope)
+    t_eff, a_eff = arr.effective_angles(slope[m], aspect[m], mount_tilt, mount_azimuth)
+    return pd.DataFrame({"elev": zc[m], "slope": slope[m], "aspect": aspect[m], "tilt_eff": t_eff, "az_eff": a_eff,
+                         "area_m2": fin[m] * (k * res) ** 2})
+
+
 def dem_horizon(lat: float, lon: float, max_km: float = 25.0, step_m: float = 90.0, az_step: float = 7.5,
                 mosaic: str = MOSAIC_90) -> pd.Series:
     """Horizon elevation (deg) by azimuth from the 90 m mosaic by ray marching (Earth curvature included)."""

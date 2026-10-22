@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""Laser geometry of Trianel parks at CORRECTED coordinates (2026-10-20): pv6 = two MaStR locations whose DC capacity
+"""LEGACY (2026-10-22): block method; the Trianel parks are measured by scripts/pv/geometry_trianel_windows.py.
+
+Laser geometry of Trianel parks at CORRECTED coordinates (2026-10-20): pv6 = two MaStR locations whose DC capacity
 matches the master data (see inputs/mastr/mastr_match.csv; names and coordinates are confidential and stay out of the
 code), whose Trianel coordinate lies 2.6-3.4 km away on an empty field; pv1 at its (rounded) Trianel coordinate with a
 larger footprint. Uses the release
