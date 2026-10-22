@@ -201,7 +201,7 @@ def measure(r, tiles: dict, osm: dict, zone: int, outd: str) -> tuple:
             G0 = o["G"].iloc[0] if len(o["G"]) else None
             A0 = o["arrays"][o["arrays"].group == 0] if len(o["arrays"]) else o["arrays"]
             rows.append(dict(pv=r.park_id, source=name, survey_year=R["survey_year"], survey_dates=str(R["survey_dates"])[:200], dgm_src=R["dgm_src"],
-                             **fp, **{k: v for k, v in park.items() if k not in ("source", "survey_year", "survey_dates", "dgm_src", "footprint", "footprint_ha", "n_fences", "box_steps")},
+                             **fp, **{k: v for k, v in park.items() if k not in ("source", "survey_year", "survey_dates", "dgm_src", "footprint", "footprint_ha", "n_fences", "n_fences_used", "box_steps")},
                              g0_tilt=G0.tilt_horiz if G0 is not None else np.nan, g0_tilt_p10=G0.tilt_p10 if G0 is not None else np.nan,
                              g0_tilt_p90=G0.tilt_p90 if G0 is not None else np.nan, g0_azimuth=float(A0.azimuth.iloc[0]) if len(A0) else np.nan,
                              g0_az_source=A0.az_source.iloc[0] if len(A0) else "", g0_ew=bool(G0.ew) if G0 is not None else False,

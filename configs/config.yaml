@@ -30,7 +30,7 @@ write:
   write: True
   threshold: 1 # 5 % missing values
   clean_pv: True
-  clean_wind: True
+  clean_wind: False   # nur Solar/PV neu ziehen
   delete_before_clean: True
   get_wind_nwp: True  # Set to True to process wind NWP data
   get_solar_nwp: False  # Set to True to process solar NWP data

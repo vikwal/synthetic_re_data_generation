@@ -139,7 +139,9 @@ def main():
         pv_features.insert(0, 'station_id')
         for df in frames:
             station_id = df.station_id.iloc[0]
-            file_name = f'Station_{station_id}.csv'
+            # .parquet, nicht .csv: geschrieben wird mit to_parquet, und die
+            # Abnehmer (forecasting_framework) lesen Station_<id>.parquet.
+            file_name = f'Station_{station_id}.parquet'
             if not station_id in drop_pv_stations:
                 df[pv_features].to_parquet(os.path.join(solar_dir, file_name))
     if config['write']['clean_wind']:
