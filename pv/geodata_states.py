@@ -22,9 +22,10 @@ Added 2026-10-22 (phase 2a; portals checked that day):
                   DOM1 (laser), DGM1, DOP20 (JPG + jgw) as zip per municipality in a folder per district, 1 km tiles
                   EPSG:25832 read by range requests; flight date per tile from Metadaten_DGM-DOM_<month>.xlsx; the point
                   cloud only by shop order; dl-de/zero-2-0 (fetch_he).
-  Sachsen         GeoCloud shares of the batch download / Produktdownload app (geocloud.landesvermessung.sachsen.de/
-                  public.php/dav/files/<share>/<prod>_33<E>_<N>_2_sn_<fmt>.zip), 2 km tiles EPSG:25833, LSC (LAZ), DGM1,
-                  DOM1, DOP20; dl-de/by-2-0. On 2026-10-22 every share answered 404 -> files by hand (fetch_sn).
+  Sachsen         links per tile from the ArcGIS service of the Produktdownload app (geodienste.sachsen.de ...
+                  rest_geosn_downloadlinks/MapServer/<layer>/query?where=Kachel='<E><N>'), files on the GeoCloud
+                  (share ids change; the morning of 2026-10-22 all shares answered 404, in the afternoon they worked),
+                  2 km tiles EPSG:25833, LSC (LAZ), DGM1, DOM1, DOP20; dl-de/by-2-0 (fetch_sn).
   Thüringen       TLBG, CC BY 4.0, 1 km tiles EPSG:25832 (LAZ, DGM1, DOP20). On 2026-10-22 geoportal.geoportal-th.de
                   served a maintenance page and geoportal.thueringen.de a bot challenge -> files by hand (fetch_th reads
                   the cache only).
@@ -433,33 +434,41 @@ def _he_dates(out_dir: str) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------------- Sachsen
-SN_CLOUD = "https://geocloud.landesvermessung.sachsen.de/public.php/dav/files/{share}/{name}"
-SN_PRODUCTS = {"laser": ("EpkzyJHScGb5ndd", "lsc_33{e}_{n}_2_sn_laz.zip"),
-               "dgm1": ("JCcXyifaNdLDnxZ", "dgm1_33{e}_{n}_2_sn_tiff.zip"),
-               "dom1": ("S6wwnFwX7882sZm", "dom1_33{e}_{n}_2_sn_tiff.zip"),
-               "dop20": ("QQFLq6nkoSnqB5g", "dop20rgb_33{e}_{n}_2_sn_tiff.zip")}
+SN_LINKS = "https://geodienste.sachsen.de/ags-relay/ArcGISServer/guest/arcgis/rest/services/geosn/rest_geosn_downloadlinks/MapServer"
+SN_LAYERS = {"laser": 1, "dom1": 4, "dgm1": 6, "dop20": 7}       # LSC, DOM1, DGM1, DOP_RGB
 
 
 def fetch_sn(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "dgm1", "dom1"), margin_m: float = 300.0) -> dict:
-    """Sachsen (geodaten.sachsen.de, GeoCloud shares of the batch download / Produktdownload app; dl-de/by-2-0):
-    2 km tiles in EPSG:25833, named <prod>_33<E km>_<N km>_2_sn_<fmt>.zip with even E/N; the point cloud (LSC) as LAZ
-    inside the zip. Share ids from https://www.geodaten.sachsen.de/batch-download-4719.html (2026-10-22). On
-    2026-10-22 every share answered 404 ("Page not found"), so the files can also be placed by hand into
-    <out_dir>/sn/<prod>/ (zip as downloaded); cached files are used first."""
+    """Sachsen (geodaten.sachsen.de, dl-de/by-2-0): 2 km tiles in EPSG:25833, tile number <E km><N km> (lower left,
+    even km). The download links and the date per tile ("Stand") come from the ArcGIS service behind the Produktdownload
+    app (rest_geosn_downloadlinks, one layer per product); the GeoCloud share ids in the links change (LSC on
+    2026-10-22: rqcqdt8QMcLFUvC instead of the id on the batch page), so they are never hard-coded. Zips are kept as
+    downloaded; the point cloud (LAZ inside the zip) is extracted next to it."""
+    import urllib.parse
     out = {}
     for prod in products:
-        share, pat = SN_PRODUCTS[prod]
-        paths = []
+        paths, dates = [], {}
         for e, n in tiles_for(lat, lon, 33, margin_m, size_m=2000.0):
-            name = pat.format(e=e * 2, n=n * 2)
-            p = os.path.join(out_dir, "sn", prod, name)
-            if not os.path.exists(p):
-                _curl(SN_CLOUD.format(share=share, name=name), p)
-            if prod == "laser":                                   # LAZ inside the zip -> extract next to it
-                paths += _extract_members(p, [""], os.path.join(out_dir, "sn", prod), (".laz",))
+            tile = f"{e * 2}{n * 2}"
+            q = urllib.parse.urlencode(dict(where=f"Kachel='{tile}'", outFields="Download,Stand", returnGeometry="false", f="json"))
+            feats = _get_json(f"{SN_LINKS}/{SN_LAYERS[prod]}/query?{q}").get("features", [])
+            if not feats:
+                continue
+            url, stand = feats[0]["attributes"]["Download"], feats[0]["attributes"].get("Stand")
+            try:
+                p = _curl(url, os.path.join(out_dir, "sn", prod, os.path.basename(url)))
+            except RuntimeError as ex:                              # 2026-10-22: the LSC share answered 503 (NotFound) for every tile
+                print("  Sachsen", prod, "not available:", ex, flush=True)
+                continue
+            if prod == "laser":
+                got = _extract_members(p, [""], os.path.join(out_dir, "sn", prod), (".laz",))
+                paths += got
+                dates.update({os.path.basename(g): stand for g in got})
             else:
                 paths.append(p)
+                dates[os.path.basename(p)] = stand
         out[prod] = paths
+        out[prod + "_dates"] = dates
     return out
 
 
