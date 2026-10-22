@@ -39,10 +39,11 @@ OUT_FLEET = os.path.join(PAPER, "results", "geo_reports_v2")
 OUT_TRIANEL = os.path.join(PAPER, "results", "geo_reports_trianel")
 plt.rcParams.update({"figure.dpi": 80, "font.size": 9})
 SHORT = {"g_pattern": "M", "g_contrast": "K", "g_flank": "F", "g_ridge": "H", "g_rows": "R", "g_est": "S", "zu wenig Tischzellen": "-", "anderer Park": "A", "anderer Park (Bauweise)": "B",
+         "anderer Park (Fläche)": "C",
          "zu wenig Oberfläche": "O", "kein Profil": "P", "isoliert": "I"}
 SHORT_TXT = ("M = kein Reihenmuster, K = Kontrast < 0.5 m, F = Flanke außerhalb 1.5 m … 0.75·Pitch, H = First außerhalb 0.8–4.5 m, "
              "R = < 2 Reihen, S = Schätzer weichen ab (3° Punktwolke / 5° Raster), O = zu wenig Oberfläche, P = kein Profil, "
-             "I = isoliert, A = anderer Park, B = anderer Park mit anderer Bauweise (Kastenmodus)")
+             "I = isoliert, A = anderer Park, B = anderer Park mit anderer Bauweise (Kastenmodus), C = jenseits der Fläche zur Leistung")
 
 
 # ------------------------------------------------------------------------------------------------ helpers
@@ -354,7 +355,7 @@ def fleet_report(pid: str, suffix: str, out_dir: str) -> dict:
         H, W = int(round(2 * half / GW.RES)), int(round(2 * half / GW.RES))
         inside = np.ones((H, W), bool)
     else:
-        poly, _ = GW.osm_footprint((osm.get(pid) or {}).get("elements", []), [pt], to_m, R.FENCE_MAX_M)
+        poly, _, _ = R.footprint(r, osm, to_m, pt)
         g = GW.analysis_grid(poly, GW.RES); bounds, H, inside = g["bounds"], g["H"], g["inside"]
     ras = R.rasters(tiles, src, dict(R.sources_from(tiles))[src], bounds, zone, float(r.lat), float(r.lon))
     rgb = GT.mosaic(tiles["dop20"], bounds, GW.RES, zone, bands=[1, 2, 3]) if tiles.get("dop20") else None

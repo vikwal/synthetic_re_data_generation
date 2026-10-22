@@ -77,7 +77,9 @@ def prepare(pv: str, res: float = GW.RES, with_rgb: bool = True) -> dict:
     P.update(to_m=to_m, pt_tri=pt_tri, pt_reg=pt_reg, conv=conv)
     # 0d OSM footprint
     osm = json.load(open(os.path.join(B, "osm", "trianel_pv_osm.json")))[pv]
-    poly, fences = GW.osm_footprint(osm.get("elements", []), [pt_tri, pt_reg], to_m, FENCE_MAX_M)
+    _, fences = GW.osm_footprint(osm.get("elements", []), [pt_tri, pt_reg], to_m, FENCE_MAX_M)
+    from parks_pv.params import DENSITY_KWP_HA, DENSITY_YEARS       # main-park separation (a), as in geometry_release_states.footprint
+    poly, _, _ = GW.select_fences(fences, P["kw_master"] / float(np.interp(year_built, DENSITY_YEARS, DENSITY_KWP_HA)) * 1e4, FENCE_MAX_M)
     far = pt_reg is not None and len(mm) and float(mm.iloc[0].d_km) > 0.5           # the Trianel point is far off -> register point
     old_raster = os.path.join(GEO, f"{pv}_rasters.tif")
     if poly is not None:
@@ -134,7 +136,8 @@ def _laz_touches(path: str, bounds: tuple) -> bool:
 def run(pv: str, P: dict = None, outd: str = OUTD, figure: bool = True) -> dict:
     """Window method on the prepared inputs; writes the per-park outputs (no coordinates in the CSVs)."""
     P = P or prepare(pv, with_rgb=False)
-    out = GW.measure_park(P["hag"], P["dgm"], P["inside"], P["conv"], P["source"], P["pitch0"], P["RES"], P["register_orientation"])
+    out = GW.measure_park(P["hag"], P["dgm"], P["inside"], P["conv"], P["source"], P["pitch0"], P["RES"], P["register_orientation"],
+                          kwp=P["kw_master"], centre_xy=(P["park_pt"].x - P["minx"], P["park_pt"].y - P["miny"]))
     os.makedirs(outd, exist_ok=True)
     out["win"].to_csv(os.path.join(outd, f"{pv}_windows.csv"), index=False)
     out["G"].to_csv(os.path.join(outd, f"{pv}_groups.csv"), index=False)

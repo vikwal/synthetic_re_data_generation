@@ -221,3 +221,22 @@ def test_box_keeps_central_construction():
                          ew_pair=ew, az_sure=True, ridge_sym=0.9 if ew else 0.2, pitch=8.0, slope_facing_deg=0.0)); w += 1
     out = GW.keep_central_construction(pd.DataFrame(rows), 100, (250.0, 250.0))
     assert out.ok.tolist() == [True, True, True, False, False, False] and set(out.reason[3:]) == {"anderer Park (Bauweise)"}
+
+
+def test_select_fences_by_capacity():
+    from shapely.geometry import box
+    fences = pd.DataFrame(dict(geom=[box(0, 0, 100, 100), box(150, 0, 250, 100), box(400, 0, 700, 300)], dist_m=[0.0, 50.0, 300.0], area_ha=[1.0, 1.0, 9.0]))
+    poly, used, n = GW.select_fences(fences, 15000.0, 400.0)       # 1.5 x 15000 = 22500 m2: the first two plants fit, the third not
+    assert (used, n) == (2, 3) and abs(poly.area - 20000.0) < 1e-6
+
+
+def test_trim_to_capacity():
+    # two groups: a near south group and a far group of another construction; capacity fits the near one only
+    rows, w = [], 0
+    for j, (axis, az, tilt) in enumerate([(90.0, 180.0, 25.0)] * 4 + [(60.0, 150.0, 15.0)] * 4):
+        rows.append(dict(w=w, i0=0, j0=100 * j, x=50.0 + 100 * j, y=50.0, f_tab=0.4, ok=True, reason="", area_tab=500.0, axis_true=axis, azimuth_true=az,
+                         tilt_horiz=tilt, ew_pair=False, az_sure=True, ridge_sym=0.2, pitch=8.0, slope_facing_deg=0.0)); w += 1
+    out, action = GW.trim_to_capacity(pd.DataFrame(rows), kwp=300.0, centre_xy=(50.0, 50.0), tab_share=1.0)   # 4000 m2 / 300 kWp = 13.3 > 12
+    assert out.ok.tolist() == [True] * 4 + [False] * 4 and action
+    same, action = GW.trim_to_capacity(pd.DataFrame(rows), kwp=1000.0, centre_xy=(50.0, 50.0), tab_share=1.0)  # 4 m2/kWp: nothing to do
+    assert same.ok.all() and action == ""

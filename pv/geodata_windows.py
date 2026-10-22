@@ -52,6 +52,7 @@ SPLINTER = dict(n=3, share=0.05)
 PARK_ACCEPT = dict(n_ok=2, tab_share=0.40)   # 2026-10-22 decision 1 (B): >= 2 windows (was 5) as long as they cover >= 40 % of the table cells
 PARK_ACCEPT_BOX = dict(n_ok=5, tab_share=0.40)   # box mode keeps 5: without an outline a few windows at the box edge can be another park (SEL968423559874)
 BOX = dict(size_m=300.0, step_m=50.0, area_factor=3.0)
+MAIN_PARK = dict(fence_factor=1.5, m2_high=12.0, m2_trim=8.0)   # separation from neighbouring plants (2026-10-22): see select_fences, trim_to_capacity
 AZ_CENTRE = {"Süd": 180.0, "Süd-West": 225.0, "Süd-Ost": 135.0, "Ost": 90.0, "West": 270.0, "Nord": 0.0,
              "Nord-Ost": 45.0, "Nord-West": 315.0}   # = pv.plausibility.AZ_CENTRE (copied to keep this module light)
 
@@ -335,6 +336,65 @@ def keep_central_construction(win: pd.DataFrame, nw: int, centre_ij: tuple) -> p
     return win
 
 
+def select_fences(fences: pd.DataFrame, expected_fenced_m2: float, max_dist_m: float) -> tuple:
+    """(a) of the main-park separation (2026-10-22): OSM plants within max_dist_m sorted by distance to the register
+    point; the nearest one always, further ones only while their union stays <= MAIN_PARK['fence_factor'] x the fenced
+    area expected from the capacity (caller: capacity / era density). Returns (polygon or None, n_used, n_near)."""
+    from shapely.ops import unary_union
+    near = fences[fences.dist_m <= max_dist_m].sort_values(["dist_m", "area_ha"]) if len(fences) else fences
+    if not len(near):
+        return None, 0, 0
+    lim = MAIN_PARK["fence_factor"] * expected_fenced_m2
+    poly, used = near.geom.iloc[0], 1
+    for g in near.geom.iloc[1:]:
+        u = unary_union([poly, g])
+        if u.area <= lim:
+            poly, used = u, used + 1
+    return poly, used, len(near)
+
+
+def plan_area_m2(win: pd.DataFrame, tab_share: float) -> float:
+    """Module plan area of the park: table area of the accepted windows scaled by their share of the table cells."""
+    ok = win[win.ok.astype(bool)] if len(win) else win
+    return float(ok.area_tab.sum()) / max(float(tab_share), 1e-6) if len(ok) else 0.0
+
+
+def trim_to_capacity(win: pd.DataFrame, kwp: float, centre_xy: tuple, tab_share: float) -> tuple:
+    """(b) of the main-park separation (2026-10-22): when the module plan area exceeds MAIN_PARK['m2_high'] m2 per kWp of
+    the register capacity, whole groups are dropped, farthest group (mean window distance to the register point,
+    centre_xy in local metres) first, until it fits; if one group is left and still too large, its farthest accepted
+    windows are dropped down to MAIN_PARK['m2_trim'] m2/kWp (at least 2 windows stay). Dropped windows get the reason
+    "anderer Park (Fläche)". Returns (window table, action text)."""
+    if not len(win) or plan_area_m2(win, tab_share) / kwp <= MAIN_PARK["m2_high"]:
+        return win, ""
+    win = win.copy()
+    cx, cy = centre_xy
+    G = group_windows(win)
+    gws = {int(g.group): [int(x) for x in str(g.windows).split()] for g in G.itertuples()}
+    xy = win.set_index("w")[["x", "y"]]
+    dist = {k: float(np.mean([np.hypot(xy.loc[w_, "x"] - cx, xy.loc[w_, "y"] - cy) for w_ in ws])) for k, ws in gws.items()}
+    action = []
+    for k in sorted(dist, key=dist.get, reverse=True):
+        alive = [g for g in gws if win[win.w.isin(gws[g])].ok.astype(bool).any()]
+        if plan_area_m2(win, tab_share) / kwp <= MAIN_PARK["m2_high"] or len(alive) <= 1:
+            break
+        m = win.w.isin(gws[k])
+        win.loc[m, "ok"] = False
+        win.loc[m, "reason"] = "anderer Park (Fläche)"
+        action.append(f"group {k}")
+    if plan_area_m2(win, tab_share) / kwp > MAIN_PARK["m2_high"]:
+        acc = win[win.ok.astype(bool)].assign(d=lambda t: np.hypot(t.x - cx, t.y - cy)).sort_values("d", ascending=False)
+        n = 0
+        for k, r in acc.iterrows():
+            if plan_area_m2(win, tab_share) / kwp <= MAIN_PARK["m2_trim"] or win.ok.astype(bool).sum() <= 2:
+                break
+            win.at[k, "ok"] = False
+            win.at[k, "reason"] = "anderer Park (Fläche)"
+            n += 1
+        action.append(f"{n} windows trimmed")
+    return win, "; ".join(action)
+
+
 # ------------------------------------------------------------------------------------------------ W5 grouping
 def rejected_flag(win: pd.DataFrame, nw: int, box: bool = False) -> dict:
     """Share of the table cells in rejected windows and the largest 4-connected block of rejected table windows.
@@ -495,16 +555,24 @@ def park_status(win: pd.DataFrame, G: pd.DataFrame, flag: dict, box: bool = Fals
 
 
 def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: float, source: str, pitch0: float = np.nan,
-                 res: float = RES, register_orientation: str = None, box: bool = False, win_m: float = None) -> dict:
+                 res: float = RES, register_orientation: str = None, box: bool = False, win_m: float = None, kwp: float = None,
+                 centre_xy: tuple = None) -> dict:
     """Window method for one park on prepared rasters. Returns dict(win, G, arrays, park, nw, win_m):
     win = window table (every variable of every window), G = groups, arrays = generator input, park = acceptance,
-    flags and summary values."""
+    flags and summary values. With kwp (register capacity) the main park is separated from neighbouring plants by
+    trim_to_capacity around centre_xy (register point in local metres; default the grid centre, as in the box)."""
     win, nw, win_m = measure_windows(hag, dgm, inside, conv, source, pitch0, res, win_m)
     if box and len(win):
         win = drop_isolated(win, nw)
         win = keep_central_component(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))   # the box is centred on the register point
     if box and len(win) and win.ok.astype(bool).any():
         win = keep_central_construction(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))
+    trim, m2_kwp = "", np.nan
+    if kwp and len(win) and win.ok.astype(bool).any():
+        f0 = rejected_flag(win, nw, box)
+        cxy = centre_xy if centre_xy is not None else (hag.shape[1] * res / 2, hag.shape[0] * res / 2)
+        m2_kwp = plan_area_m2(win, 1.0 - f0["rej_tab_frac"]) / float(kwp)
+        win, trim = trim_to_capacity(win, float(kwp), cxy, 1.0 - f0["rej_tab_frac"])
     flag = rejected_flag(win, nw, box) if len(win) else dict(n_tab_windows=0, rej_tab_frac=0.0, rej_cluster_windows=0, rej_cluster_frac=0.0, warn_rejected=False)
     G = group_windows(win)
     arrays = arrays_from_groups(G, register_orientation)
@@ -519,7 +587,8 @@ def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: flo
                 n_groups=int(len(G)), az_undetermined=bool(G.az_undetermined.any()) if len(G) else False,
                 az_conflict=bool(arrays.az_conflict.any()) if len(arrays) else False,
                 slope_cover_min=float(ok.slope_cover.min()) if len(ok) else np.nan,
-                n_splinter=int(G.attrs.get("n_splinter", 0)), n_cut=int(G.attrs.get("n_cut", 0)))
+                n_splinter=int(G.attrs.get("n_splinter", 0)), n_cut=int(G.attrs.get("n_cut", 0)),
+                m2_per_kwp=m2_kwp, m2_per_kwp_after=plan_area_m2(win, park["tab_share_accepted"]) / float(kwp) if kwp else np.nan, trim=trim)
     return dict(win=win, G=G, arrays=arrays, park=park, nw=nw, win_m=win_m)
 
 
@@ -535,7 +604,7 @@ def measure_box(load, centre_xy: tuple, kw: float, source_pref=None, register_or
         bounds = (cx - half, cy - half, cx + half, cy + half)
         r = load(bounds)
         inside = np.ones(r["hag"].shape, bool)
-        out = measure_park(r["hag"], r["dgm"], inside, r["conv"], r["source"], r.get("pitch0", np.nan), res, register_orientation, box=True)
+        out = measure_park(r["hag"], r["dgm"], inside, r["conv"], r["source"], r.get("pitch0", np.nan), res, register_orientation, box=True, kwp=kw)
         win, nw = out["win"], out["nw"]
         H, W = r["hag"].shape
         n_i, n_j = H // nw, W // nw
