@@ -450,11 +450,24 @@ def fetch_sn(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "
         paths, dates = [], {}
         for e, n in tiles_for(lat, lon, 33, margin_m, size_m=2000.0):
             tile = f"{e * 2}{n * 2}"
+            import glob
+            cached = sorted(f for f in glob.glob(os.path.join(out_dir, "sn", prod, f"*_33{e * 2}_{n * 2}_2_sn_*.zip")) if not f.endswith(".part"))
+            stand_path = os.path.join(out_dir, "sn", "_stand.json")          # "Stand" (date) per downloaded zip, kept for the cache path
+            stands = json.load(open(stand_path)) if os.path.exists(stand_path) else {}
+            if cached and os.path.basename(cached[0]) in stands:      # cache first (2026-10-22: the link service timed out for cached tiles)
+                p = cached[0]
+                got = _extract_members(p, [""], os.path.join(out_dir, "sn", prod), (".laz",)) if prod == "laser" else [p]
+                paths += got
+                dates.update({os.path.basename(g): stands[os.path.basename(p)] for g in got})
+                continue
             q = urllib.parse.urlencode(dict(where=f"Kachel='{tile}'", outFields="Download,Stand", returnGeometry="false", f="json"))
             feats = _get_json(f"{SN_LINKS}/{SN_LAYERS[prod]}/query?{q}").get("features", [])
             if not feats:
                 continue
             url, stand = feats[0]["attributes"]["Download"], feats[0]["attributes"].get("Stand")
+            stands[os.path.basename(url)] = stand
+            os.makedirs(os.path.dirname(stand_path), exist_ok=True)
+            json.dump(stands, open(stand_path, "w"))
             try:
                 p = _curl(url, os.path.join(out_dir, "sn", prod, os.path.basename(url)))
             except RuntimeError as ex:                              # 2026-10-22: the LSC share answered 503 (NotFound) for every tile
