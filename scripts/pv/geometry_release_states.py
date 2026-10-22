@@ -238,26 +238,43 @@ def v1_nominal(arrays_v1: pd.DataFrame, park_id: str) -> list:
     return out
 
 
-def park_arrays(r, df_park: pd.DataFrame, outs: dict, arrays_v1: pd.DataFrame) -> list:
-    """Generator arrays of one park: measured (best accepted source) or v1 nominal mounts re-terrained on DGM1."""
+def fallback_arrays(r, tiles: dict, zone: int, arrays_v1: pd.DataFrame, osm: dict) -> tuple:
+    """(arrays, source) of a park without an accepted measurement: the nominal mounts of parks_pv_v1 re-terrained on the
+    state DGM1 over the v1 footprint (parks_pv.geometry.footprint: OSM plant within 2.5 km, else the MaStR area as a
+    disc), so that v1 and v2 differ only in the terrain model (GLO-30 -> DGM1); without DGM1 the v1 arrays unchanged."""
+    nominal = v1_nominal(arrays_v1, r.park_id)
+    if nominal and tiles.get("dgm1"):
+        par = pd.read_csv(os.path.join(paths.DATA_DIR, "park_params.csv"), dtype={"park_id": str}).set_index("park_id").loc[r.park_id]
+        area_fb = float(r.area_ha) if pd.notna(r.area_ha) and r.area_ha > 0 else float(par.kwp_dc) / float(par.kwp_per_ha)
+        poly_ll, _ = PG.footprint(r, (osm.get(r.park_id) or {}).get("elements", []), area_fb)
+        g = GW.analysis_grid(GT.to_utm(poly_ll, zone), GW.RES, inner_m=0.0)
+        m_ = GT.mosaic(tiles["dgm1"], g["bounds"], GW.RES, zone)           # None when no DGM1 tile touches the v1 footprint
+        dgm = m_[0].astype(np.float32) if m_ is not None else None
+        if dgm is not None and np.isfinite(dgm[g["inside"]]).mean() > 0.5:
+            arr_, _ = PG.terrain_arrays_grid(nominal, dgm, g["inside"], GW.RES, GT.meridian_convergence(float(r.lat), float(r.lon), zone))
+            return arr_, "register_v1+dgm1"
+    a = arrays_v1[arrays_v1.park_id == r.park_id]
+    return [dict(name=x.array_id, tilt=x.tilt, azimuth=x.azimuth, share=x.share, mount_tilt=x.mount_tilt, mount_azimuth=x.mount_azimuth)
+            for x in a.itertuples()], "register_v1"
+
+
+def park_arrays(r, df_park: pd.DataFrame, outs: dict, arrays_v1: pd.DataFrame, tiles: dict = None, zone: int = None, osm: dict = None) -> list:
+    """Generator arrays of one park: measured (best accepted source, read from the stored arrays CSV of the park) or
+    the fallback above."""
     best = df_park[df_park.best]
     if len(best):
         src = best.source.iloc[0]
+        A = outs[src]["arrays"] if src in outs else pd.read_csv(os.path.join(REPO, "results", "pv", f"geodata_release{SUFFIX[0]}", r.park_id, f"arrays_{src}.csv"))
         return [dict(park_id=r.park_id, array_id=f"g{int(a.group)}_{k}", tilt=round(a.tilt, 2), azimuth=round(a.azimuth, 2), share=round(a.share, 5),
-                     source=f"windows:{src}", az_source=a.az_source, note=a.note, mount_tilt=np.nan, mount_azimuth=np.nan)
-                for k, a in enumerate(outs[src]["arrays"].itertuples())]
-    nominal = v1_nominal(arrays_v1, r.park_id)
-    o = next((x for x in outs.values() if x.get("dgm") is not None), None)
-    if nominal and o is not None and np.isfinite(o["dgm"]).any():
-        arr_, _ = PG.terrain_arrays_grid(nominal, o["dgm"], o["inside"], GW.RES, o["conv"])
-        src = "register_v1+dgm1"
-    else:
-        a = arrays_v1[arrays_v1.park_id == r.park_id]
-        arr_ = [dict(name=x.array_id, tilt=x.tilt, azimuth=x.azimuth, share=x.share, mount_tilt=x.mount_tilt, mount_azimuth=x.mount_azimuth) for x in a.itertuples()]
-        src = "register_v1"
+                     source=f"windows:{src}", az_source=a.az_source, note=a.note if pd.notna(a.note) else "", mount_tilt=np.nan, mount_azimuth=np.nan)
+                for k, a in enumerate(A.itertuples())]
+    arr_, src = fallback_arrays(r, tiles or {}, zone, arrays_v1, osm or {})
     return [dict(park_id=r.park_id, array_id=a["name"], tilt=round(a["tilt"], 2), azimuth=round(a["azimuth"], 2), share=round(a["share"], 5),
                  source=src, az_source="register", note="", mount_tilt=round(a.get("mount_tilt", np.nan), 2), mount_azimuth=round(a.get("mount_azimuth", np.nan), 2))
             for a in arr_]
+
+
+SUFFIX = ["_v2"]
 
 
 def summary(df: pd.DataFrame, label: str) -> None:
@@ -281,6 +298,7 @@ def main():
     ap.add_argument("--fetch-only", action="store_true")
     ap.add_argument("--suffix", default="_v2")
     ap.add_argument("--reevaluate", action="store_true", help="recompute classes and the best source from the stored CSV only")
+    ap.add_argument("--arrays-only", action="store_true", help="recompute <state><suffix>_arrays.csv from the stored run (overwrites it)")
     a = ap.parse_args()
     code, zone = STATE[a.state]
     out_csv = os.path.join(paths.DATA_DIR, f"geodata_release_{a.state.lower()}{a.suffix}.csv")
@@ -290,6 +308,24 @@ def main():
         df = evaluate(raw[[c for c in raw.columns if c not in DERIVED]])
         df.to_csv(out_csv, index=False)
         summary(df, a.state)
+        return
+    SUFFIX[0] = a.suffix
+    if a.arrays_only:                                         # recompute the generator arrays from the stored run (cached tiles), measurement unchanged
+        df = pd.read_csv(out_csv, dtype={"pv": str})
+        sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}); sel = sel[sel.bundesland == a.state]
+        osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
+        arrays_v1 = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"), dtype={"park_id": str})
+        rows_a = []
+        for r in sel.itertuples():
+            try:
+                tiles = fetch_tiles(a.state, float(r.lat), float(r.lon), int(r.year), r.landkreis, municipality(r.unit_ids) if a.state == "Hessen" else None,
+                                    margin_m=fetch_margin(r, osm, zone))
+            except Exception as ex:
+                print("  tiles", r.park_id, type(ex).__name__, flush=True)
+                tiles = {}
+            rows_a += park_arrays(r, df[df.pv == r.park_id], {}, arrays_v1, tiles, zone, osm)
+        pd.DataFrame(rows_a).to_csv(arr_csv, index=False)
+        print("written", arr_csv, pd.DataFrame(rows_a).groupby("park_id").source.first().value_counts().to_dict())
         return
     if not a.fetch_only and (os.path.exists(out_csv) or os.path.exists(arr_csv)):
         raise SystemExit(f"{out_csv} exists - results are versioned, choose another --suffix")
@@ -303,6 +339,7 @@ def main():
     rows, arr_rows = [], []
     for r in sel.itertuples():
         print(f"== {r.park_id} {a.state} {r.dc_kwp:.0f} kWp {r.year} {r.orientation_class} / {r.tilt_class}", flush=True)
+        tiles = {}
         try:
             margin = fetch_margin(r, osm, zone)
             tiles = fetch_tiles(a.state, float(r.lat), float(r.lon), int(r.year), r.landkreis, municipality(r.unit_ids) if a.state == "Hessen" else None,
@@ -317,7 +354,7 @@ def main():
         for x in o:
             x.update(state_code=code, orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp), year_built=int(r.year))
         dfp = evaluate(pd.DataFrame(o))
-        arr_rows += park_arrays(r, dfp, outs, arrays_v1)
+        arr_rows += park_arrays(r, dfp, outs, arrays_v1, tiles, zone, osm)
         rows += o
         print("  ", [(x.get("source"), x.get("status"), x.get("n_ok"), round(x.get("g0_tilt", np.nan), 1), x.get("arrays"), x.get("status_reason")) for x in o], flush=True)
     if a.fetch_only:
