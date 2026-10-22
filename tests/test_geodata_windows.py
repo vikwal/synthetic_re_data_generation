@@ -196,3 +196,10 @@ def test_end_point_estimator_kept():
     ok = out["win"][out["win"].ok]
     assert abs(ok.tilt_horiz.median() - 20.0) < 0.3                  # line fit
     assert ok.tilt_horiz_ends.median() < ok.tilt_horiz.median()       # end points underestimate on this geometry
+
+
+def test_keep_central_component():
+    # two blocks of accepted windows; the one around the centre (window 2,2 of a 5x5 grid of nw=100) is kept
+    rows = [dict(w=k, i0=i * 100, j0=j * 100, ok=True, reason="") for k, (i, j) in enumerate([(2, 2), (2, 1), (1, 2), (0, 4), (1, 4)])]
+    out = GW.keep_central_component(pd.DataFrame(rows), 100, (250.0, 250.0))
+    assert out.ok.tolist() == [True, True, True, False, False] and set(out.reason[3:]) == {"anderer Park"}

@@ -11,12 +11,29 @@ Verified 2026-10-16 (see STATUS 2026-10-16 "Recherche Laser-Oberflächendaten"):
                   (EPSG:25833, CC BY 4.0): dom1_33_<E>_<N>_2_xyz.zip, dop20rgb_33_<E>_<N>_2_mv.tif, dgm1 ...
   Bayern          laser point cloud https://geodaten.bayern.de/odd_data/laser/<E>_<N>.laz (1 km, EPSG:25832, CC BY 4.0);
                   DOP20/DOM20/DGM1 see pv.geodata_bayern
-  Sachsen-Anhalt  tile download and WCS are browser-bound (403/500 for scripted access); not implemented here.
+  Sachsen-Anhalt  DOP20 2 km tiles direct (gfds_webshare/sec-download/LVermGeo/DOP20/32<E><N>.tif); DOM1 and DGM1 by HTTP
+                  range reads out of the statewide zips (Online-Bereitstellung-LVermGeo/{DOM/DOM1,DGM/DGM1}_<1..4>.zip,
+                  ~12 GB each), names dom1_32_<E>_<N>_2_st_<year>.tif (fetch_st, 2026-10-22). The point cloud is not open.
+Added 2026-10-22 (phase 2a; portals checked that day):
+  Nordrhein-W.    https://www.opengeodata.nrw.de/produkte/geobasis/{hm/3dm_l_las/3dm_l_las, hm/dgm1_tiff/dgm1_tiff,
+                  hm/dom1_tiff/dom1_tiff, lusat/akt/dop/dop_jp2_f10}/ with XML indexes; 1 km tiles EPSG:25832, LAZ 4-10
+                  points/m2, DOP10 RGBI as JPEG2000; dl-de/zero-2-0 (fetch_nw).
+  Hessen          gds.hessen.de Downloadcenter, REST API /INTERSHOP/rest/WFS/HLBG-Geodaten-Site/-/downloadcenter?path=...;
+                  DOM1 (laser), DGM1, DOP20 (JPG + jgw) as zip per municipality in a folder per district, 1 km tiles
+                  EPSG:25832 read by range requests; flight date per tile from Metadaten_DGM-DOM_<month>.xlsx; the point
+                  cloud only by shop order; dl-de/zero-2-0 (fetch_he).
+  Sachsen         GeoCloud shares of the batch download / Produktdownload app (geocloud.landesvermessung.sachsen.de/
+                  public.php/dav/files/<share>/<prod>_33<E>_<N>_2_sn_<fmt>.zip), 2 km tiles EPSG:25833, LSC (LAZ), DGM1,
+                  DOM1, DOP20; dl-de/by-2-0. On 2026-10-22 every share answered 404 -> files by hand (fetch_sn).
+  Thüringen       TLBG, CC BY 4.0, 1 km tiles EPSG:25832 (LAZ, DGM1, DOP20). On 2026-10-22 geoportal.geoportal-th.de
+                  served a maintenance page and geoportal.thueringen.de a bot challenge -> files by hand (fetch_th reads
+                  the cache only).
 Licences: attribution required (GeoBasis-DE / <Landesamt>, year)."""
 import json
 import os
 import re
 import subprocess
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -189,7 +206,10 @@ def fetch_st_dop(lat: float, lon: float, out_dir: str, margin_m: float = 300.0) 
     (found via the INSPIRE OI coverage GML; the tile selector itself is browser-bound)."""
     paths = []
     for e, n in tiles_for(lat, lon, 32, margin_m, size_m=2000.0):
-        paths.append(_curl(ST_DOP20.format(e=e * 2, n=n * 2), os.path.join(out_dir, "st", "dop20", f"dop20_32{e * 2:03d}{n * 2:04d}.tif"), ua="Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0"))
+        try:
+            paths.append(_curl(ST_DOP20.format(e=e * 2, n=n * 2), os.path.join(out_dir, "st", "dop20", f"dop20_32{e * 2:03d}{n * 2:04d}.tif"), ua="Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0"))
+        except RuntimeError as ex:                          # some tiles are missing on the server (404, 2026-10-22): the orthophoto only gives pitch0
+            print("  ST DOP20 missing:", ex, flush=True)
     return {"dop20": paths}
 
 
@@ -197,9 +217,16 @@ class _RemoteFile:
     """Seekable read-only HTTP file (Range requests) so that zipfile can list a remote archive."""
     def __init__(self, url):
         self.url, self.pos = url, 0
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            self.size = int(r.headers["Content-Length"])
+        try:
+            req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                self.size = int(r.headers["Content-Length"])
+        except urllib.error.HTTPError as ex:              # HEAD not allowed (Hessen): size from the Content-Range of a 1-byte GET
+            if ex.code != 405:
+                raise
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-0"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                self.size = int(r.headers["Content-Range"].split("/")[-1])
     def seek(self, off, whence=0):
         self.pos = (off, self.pos + off, self.size + off)[whence]; return self.pos
     def tell(self): return self.pos
@@ -254,3 +281,212 @@ def fetch_st_dom1(lat: float, lon: float, out_dir: str, margin_m: float = 300.0,
         if len(paths) >= len(want):
             break
     return {product.lower(): paths, product.lower() + "_dates": dates}
+
+
+def fetch_st(lat: float, lon: float, out_dir: str, margin_m: float = 300.0) -> dict:
+    """Sachsen-Anhalt complete (2026-10-22, decision E6): DOP20 tiles + DOM1 and DGM1 from the statewide zips."""
+    out = fetch_st_dop(lat, lon, out_dir, margin_m)
+    out.update(fetch_st_dom1(lat, lon, out_dir, margin_m, "DOM1"))
+    out.update(fetch_st_dom1(lat, lon, out_dir, margin_m, "DGM1"))
+    return out
+
+
+def _extract_members(zip_path_or_url: str, want: list, dest: str, suffixes=(".tif",)) -> list:
+    """Extract the members whose name contains one of the tokens in `want` and ends with one of `suffixes` from a
+    local zip or (via HTTP range reads) a remote one; companion world files (.tfw/.jgw) are taken along."""
+    import zipfile
+    src = _RemoteFile(zip_path_or_url) if zip_path_or_url.startswith("http") else zip_path_or_url
+    out = []
+    with zipfile.ZipFile(src) as z:
+        names = z.namelist()
+        hit = [nm for nm in names if any(w in os.path.basename(nm) for w in want) and nm.lower().endswith(tuple(suffixes))]
+        world = [nm for nm in names if os.path.splitext(nm)[0] in {os.path.splitext(h)[0] for h in hit} and nm.lower().endswith((".tfw", ".jgw", ".j2w", ".aux.xml", ".prj"))]
+        for nm in hit + world:
+            p = os.path.join(dest, os.path.basename(nm))
+            if not os.path.exists(p):
+                os.makedirs(dest, exist_ok=True)
+                with z.open(nm) as s, open(p + ".part", "wb") as d:
+                    d.write(s.read())
+                os.replace(p + ".part", p)
+            if nm in hit:
+                out.append(p)
+    return out
+
+
+# ------------------------------------------------------------------------------------------ Nordrhein-Westfalen
+NW_BASE = "https://www.opengeodata.nrw.de/produkte/geobasis/"
+NW_PRODUCTS = {"laser": ("hm/3dm_l_las/3dm_l_las/", "3dm_32_{e}_{n}_1_nw"),          # LAZ 1 km, 4-10 points/m2 (3D-Messdaten)
+               "dgm1": ("hm/dgm1_tiff/dgm1_tiff/", "dgm1_32_{e}_{n}_1_nw"),          # GeoTIFF, year in the name
+               "dom1": ("hm/dom1_tiff/dom1_tiff/", "dom1_32_{e}_{n}_1_nw"),
+               "dop20": ("lusat/akt/dop/dop_jp2_f10/", "dop10rgbi_32_{e}_{n}_1_nw")}  # DOP10 RGBI as JPEG2000 (key dop20 for the pipeline)
+
+
+def _nw_listing(prod: str, out_dir: str, max_age_days: float = 30.0) -> list:
+    """File names of one NRW product from the XML index of its directory (cached for max_age_days)."""
+    import time
+    path = os.path.join(out_dir, "nw", f"_index_{prod}.xml")
+    if not os.path.exists(path) or time.time() - os.path.getmtime(path) > max_age_days * 86400:
+        _curl(NW_BASE + NW_PRODUCTS[prod][0], path + ".new", timeout=600)
+        os.replace(path + ".new", path)
+    return [f.get("name") for f in ET.parse(path).getroot().iter("file")]
+
+
+def fetch_nw(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "dgm1", "dom1"), margin_m: float = 300.0) -> dict:
+    """Nordrhein-Westfalen (opengeodata.nrw.de, dl-de/zero-2-0): directory indexes as XML, 1 km tiles in EPSG:25832,
+    files named <prod>_32_<E km>_<N km>_1_nw[_<year>].<ext>; the newest file per tile is taken (the name carries
+    the year for DGM1/DOM1/DOP; the point cloud year comes from the GPS time of the points)."""
+    out = {}
+    for prod in products:
+        names = _nw_listing(prod, out_dir)
+        paths = []
+        for e, n in tiles_for(lat, lon, 32, margin_m):
+            stem = NW_PRODUCTS[prod][1].format(e=e, n=n)
+            cand = sorted(nm for nm in names if nm.startswith(stem + "_") or nm.startswith(stem + "."))
+            if cand:
+                paths.append(_curl(NW_BASE + NW_PRODUCTS[prod][0] + cand[-1], os.path.join(out_dir, "nw", prod, cand[-1])))
+        out[prod] = paths
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------- Hessen
+HE_REST = "https://gds.hessen.de/INTERSHOP/rest/WFS/HLBG-Geodaten-Site/-/downloadcenter"
+HE_HOST = "https://gds.hessen.de"
+HE_PRODUCTS = {"dom1": ("3D-Daten/Digitales Oberflächenmodell (DOM1)", "_32_{e}_{n}_1_he", (".tif",)),
+               "dgm1": ("3D-Daten/Digitales Geländemodell (DGM1)", "_32_{e}_{n}_1_he", (".tif",)),
+               "dop20": ("Luftbildinformationen/Digitale Orthophotos DOP20", "_32_{e}_{n}_1_he", (".jpg", ".tif"))}
+
+
+def _he_norm(s: str) -> str:
+    s = re.sub(r"\s*-\s*(DOM1|DGM1|DOP20?)\s*$", "", s, flags=re.I)
+    return re.sub(r"[\s_\-()]", "", s).lower().replace("ß", "ss")
+
+
+def _he_list(path: str) -> dict:
+    """{package name: download path} of one downloadcenter folder (all pages)."""
+    import urllib.parse
+    out, page = {}, 1
+    while True:
+        d = _get_json(f"{HE_REST}?path={urllib.parse.quote_plus(path)}&page={page}")
+        sr = d["searchresult"]
+        for x in sr.get("downloads", []):
+            out[x["name"]] = x["downloadLink"]["uri"]
+        if page * sr["paging"]["pageSize"] >= sr["paging"]["total"]:
+            return out
+        page += 1
+
+
+def fetch_he(lat: float, lon: float, out_dir: str, landkreis: str, gemeinde: str = None, products=("dop20", "dom1", "dgm1"),
+             margin_m: float = 300.0) -> dict:
+    """Hessen (gds.hessen.de Downloadcenter, dl-de/zero-2-0): DOM1 (laser), DGM1 and DOP20 as zip packages per
+    municipality inside a folder per district, 1 km tiles in EPSG:25832 (GeoTIFF/JPG + world file). The REST API
+    behind the downloadcenter lists the packages; the tiles covering the park are read out of the packages by HTTP
+    range requests (the park's municipality first, then the other packages of the district until all tiles are found).
+    The point cloud is not in the downloadcenter (shop order only)."""
+    import urllib.parse
+    out = {}
+    for prod in products:
+        folder, tok, suf = HE_PRODUCTS[prod]
+        want_keys = tiles_for(lat, lon, 32, margin_m)
+        want = [tok.format(e=e, n=n) for e, n in want_keys]
+        dest = os.path.join(out_dir, "he", prod)
+        have = [p for p in (sorted(os.listdir(dest)) if os.path.isdir(dest) else []) if any(w in p for w in want) and p.lower().endswith(suf)]
+        if len({w for w in want for p in have if w in p}) == len(want):
+            out[prod] = [os.path.join(dest, p) for p in have]
+            continue
+        d = _get_json(f"{HE_REST}?path={urllib.parse.quote_plus(folder)}&navigation=all")
+        kreise = []                                               # the navigation is a flat list; districts = one level below the product folder
+        for nd in d["navigation"]:
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(nd.get("uri", "")).query).get("path", [""])[0]
+            if q.startswith(folder + "/") and "/" not in q[len(folder) + 1:]:
+                kreise.append(dict(name=q[len(folder) + 1:]))
+        kname = next((c["name"] for c in kreise if _he_norm(landkreis) in _he_norm(c["name"]) or _he_norm(c["name"]).endswith(_he_norm(landkreis))), None)
+        if kname is None:
+            raise RuntimeError(f"Hessen {prod}: district {landkreis!r} not found among {[c['name'] for c in kreise]}")
+        pk = _he_list(f"{folder}/{kname}")
+        order = sorted(pk, key=lambda nm: 0 if gemeinde and _he_norm(nm) == _he_norm(gemeinde) else 1)
+        found = []
+        for nm in order:
+            got = _extract_members(HE_HOST + urllib.parse.quote(pk[nm]), [w for w in want if not any(w in os.path.basename(f) for f in found)], dest, suf)
+            found += got
+            if len({w for w in want for p in found if w in os.path.basename(p)}) == len(want):
+                break
+        out[prod] = sorted(set(found))
+    if "dom1" in out:                                             # acquisition dates per tile from the metadata list of the downloadcenter
+        try:
+            dates = _he_dates(out_dir)
+            out["dom1_dates"] = {os.path.basename(p): dates.get(re.search(r"_32_(\d{3})_(\d{4})_", os.path.basename(p)).group(1) +
+                                                                   re.search(r"_32_(\d{3})_(\d{4})_", os.path.basename(p)).group(2)) for p in out["dom1"]}
+        except Exception as ex:
+            print("  Hessen metadata list not read:", type(ex).__name__, str(ex)[:80], flush=True)
+    return out
+
+
+HE_META = "https://gds.hessen.de/INTERSHOP/static/WFS/HLBG-Geodaten-Site/-/HLBG-Geodaten/de_DE/Downloadcenter/Daten/3D-Daten/Metadaten_DGM-DOM_August-2026.xlsx"
+
+
+def _he_dates(out_dir: str) -> dict:
+    """{'<E km><N km>': 'YYYY-MM-DD'} flight date of the laser survey per 1 km tile (DGM1/DOM1 metadata list)."""
+    import pandas as pd
+    p = _curl(HE_META, os.path.join(out_dir, "he", "_metadaten_dgm_dom.xlsx"), timeout=600)
+    x = pd.read_excel(p, header=1)
+    return {str(k): str(v)[:10] for k, v in zip(x["Kachelname"], x["Bildflugdatum"])}
+
+
+# ---------------------------------------------------------------------------------------------------- Sachsen
+SN_CLOUD = "https://geocloud.landesvermessung.sachsen.de/public.php/dav/files/{share}/{name}"
+SN_PRODUCTS = {"laser": ("EpkzyJHScGb5ndd", "lsc_33{e}_{n}_2_sn_laz.zip"),
+               "dgm1": ("JCcXyifaNdLDnxZ", "dgm1_33{e}_{n}_2_sn_tiff.zip"),
+               "dom1": ("S6wwnFwX7882sZm", "dom1_33{e}_{n}_2_sn_tiff.zip"),
+               "dop20": ("QQFLq6nkoSnqB5g", "dop20rgb_33{e}_{n}_2_sn_tiff.zip")}
+
+
+def fetch_sn(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "dgm1", "dom1"), margin_m: float = 300.0) -> dict:
+    """Sachsen (geodaten.sachsen.de, GeoCloud shares of the batch download / Produktdownload app; dl-de/by-2-0):
+    2 km tiles in EPSG:25833, named <prod>_33<E km>_<N km>_2_sn_<fmt>.zip with even E/N; the point cloud (LSC) as LAZ
+    inside the zip. Share ids from https://www.geodaten.sachsen.de/batch-download-4719.html (2026-10-22). On
+    2026-10-22 every share answered 404 ("Page not found"), so the files can also be placed by hand into
+    <out_dir>/sn/<prod>/ (zip as downloaded); cached files are used first."""
+    out = {}
+    for prod in products:
+        share, pat = SN_PRODUCTS[prod]
+        paths = []
+        for e, n in tiles_for(lat, lon, 33, margin_m, size_m=2000.0):
+            name = pat.format(e=e * 2, n=n * 2)
+            p = os.path.join(out_dir, "sn", prod, name)
+            if not os.path.exists(p):
+                _curl(SN_CLOUD.format(share=share, name=name), p)
+            if prod == "laser":                                   # LAZ inside the zip -> extract next to it
+                paths += _extract_members(p, [""], os.path.join(out_dir, "sn", prod), (".laz",))
+            else:
+                paths.append(p)
+        out[prod] = paths
+    return out
+
+
+# -------------------------------------------------------------------------------------------------- Thüringen
+def fetch_th(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "dgm1"), margin_m: float = 300.0) -> dict:
+    """Thüringen (TLBG, CC BY 4.0; 1 km tiles in EPSG:25832, LAZ, DGM1, DOP20): on 2026-10-22 the old download
+    services (geoportal.geoportal-th.de Atom feeds and gaialight download apps) answered with a maintenance page and
+    the new portal geoportal.thueringen.de sits behind a bot protection, so nothing is fetched here. The tiles are
+    downloaded by hand and placed into <out_dir>/th/{laser,dgm1,dop20}/ (unzipped or zipped); this function picks the
+    files whose name contains _<E km>_<N km>_ of the needed tiles and raises with the list of the missing ones."""
+    out, missing = {}, []
+    for prod in products:
+        dest = os.path.join(out_dir, "th", prod)
+        files = sorted(os.listdir(dest)) if os.path.isdir(dest) else []
+        paths = []
+        for e, n in tiles_for(lat, lon, 32, margin_m):
+            hit = [f for f in files if re.search(rf"_{e}_{n}(_|\.)", f) or f"_32{e}_{n}" in f or f"_32_{e}_{n}" in f]
+            if not hit:
+                missing.append(f"{prod} {e}_{n}")
+                continue
+            for f in hit:
+                p = os.path.join(dest, f)
+                if f.lower().endswith(".zip") and prod == "laser":
+                    paths += _extract_members(p, [""], dest, (".laz", ".las"))
+                else:
+                    paths.append(p)
+        out[prod] = sorted(set(paths))
+    if missing:
+        raise RuntimeError("Thüringen: tiles missing in the cache (download by hand): " + ", ".join(missing))
+    return out

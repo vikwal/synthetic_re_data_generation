@@ -276,12 +276,47 @@ def drop_isolated(win: pd.DataFrame, nw: int) -> pd.DataFrame:
     return win
 
 
+def keep_central_component(win: pd.DataFrame, nw: int, centre_ij: tuple) -> pd.DataFrame:
+    """Box mode (2026-10-22): the box can hold neighbouring parks. Accepted windows form 8-connected components; only
+    the component nearest the register point (window centre distance) is kept, the others get reason "anderer Park"."""
+    win = win.copy()
+    acc = {(int(r.i0) // nw, int(r.j0) // nw): k for k, r in win[win.ok.astype(bool)].iterrows()}
+    if not acc:
+        return win
+    seen, comps = set(), []
+    for c0 in acc:
+        if c0 in seen:
+            continue
+        stack, comp = [c0], []
+        seen.add(c0)
+        while stack:
+            c = stack.pop(); comp.append(c)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    n_ = (c[0] + di, c[1] + dj)
+                    if n_ in acc and n_ not in seen:
+                        seen.add(n_); stack.append(n_)
+        comps.append(comp)
+    ci, cj = centre_ij
+    dist = lambda comp: min(((c[0] + 0.5) * nw - ci) ** 2 + ((c[1] + 0.5) * nw - cj) ** 2 for c in comp)
+    keep = set(min(comps, key=dist))
+    for c, k in acc.items():
+        if c not in keep:
+            win.at[k, "ok"] = False
+            win.at[k, "reason"] = "anderer Park"
+    return win
+
+
 # ------------------------------------------------------------------------------------------------ W5 grouping
-def rejected_flag(win: pd.DataFrame, nw: int) -> dict:
+def rejected_flag(win: pd.DataFrame, nw: int, box: bool = False) -> dict:
     """Share of the table cells in rejected windows and the largest 4-connected block of rejected table windows.
     The shares assume that rejected windows look like accepted ones; a large connected rejected block can hold
-    another construction -> flag (not a rejection)."""
-    tabw_ = win[win.f_tab >= F_TAB_MIN]; rej_ = tabw_[~tabw_.ok.astype(bool)]
+    another construction -> flag (not a rejection). Box mode (no outline, 2026-10-22): only windows with a row pattern
+    count as table windows, because the box also holds hedges, trees and buildings in the 0.4-4.5 m band."""
+    tabw_ = win[win.f_tab >= F_TAB_MIN]
+    if box and "g_pattern" in tabw_:
+        tabw_ = tabw_[tabw_.g_pattern.fillna(False).astype(bool)]
+    rej_ = tabw_[~tabw_.ok.astype(bool)]
     rej_tab_frac = float(rej_.f_tab.sum() / max(tabw_.f_tab.sum(), 1e-9))
     gi_ = {(int(r_.i0) // nw, int(r_.j0) // nw): float(r_.f_tab) for r_ in rej_.itertuples()}; seen_, clusters_ = set(), []
     for k0_ in gi_:
@@ -421,7 +456,10 @@ def park_status(win: pd.DataFrame, G: pd.DataFrame, flag: dict) -> dict:
                                     f"Tischanteil angenommen {tab_share:.0%} (< {PARK_ACCEPT['tab_share']:.0%})" if tab_share < PARK_ACCEPT["tab_share"] else "",
                                     "keine Gruppe" if not len(G) else "") if x)
         status = "failed"
-    return dict(status=status, status_reason=why, n_windows=int(len(win)), n_ok=n_ok, tab_share_accepted=tab_share)
+    # information only (2026-10-22): small parks reach few windows; would a relaxed minimum of 2 windows accept them?
+    accept_relaxed = bool(status == "accepted" or (n_ok >= 2 and tab_share >= PARK_ACCEPT["tab_share"] and len(G)))
+    return dict(status=status, status_reason=why, n_windows=int(len(win)), n_ok=n_ok, n_tab_windows=int(flag["n_tab_windows"]),
+                tab_share_accepted=tab_share, accept_relaxed=accept_relaxed)
 
 
 def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: float, source: str, pitch0: float = np.nan,
@@ -432,7 +470,8 @@ def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: flo
     win, nw, win_m = measure_windows(hag, dgm, inside, conv, source, pitch0, res, win_m)
     if box and len(win):
         win = drop_isolated(win, nw)
-    flag = rejected_flag(win, nw) if len(win) else dict(n_tab_windows=0, rej_tab_frac=0.0, rej_cluster_windows=0, rej_cluster_frac=0.0, warn_rejected=False)
+        win = keep_central_component(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))   # the box is centred on the register point
+    flag = rejected_flag(win, nw, box) if len(win) else dict(n_tab_windows=0, rej_tab_frac=0.0, rej_cluster_windows=0, rej_cluster_frac=0.0, warn_rejected=False)
     G = group_windows(win)
     arrays = arrays_from_groups(G, register_orientation)
     park = park_status(win, G, flag)

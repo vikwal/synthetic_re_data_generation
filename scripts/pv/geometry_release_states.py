@@ -34,8 +34,9 @@ from pv import geodata_bayern as GB, geodata_states as GS, geodata_tiles as GT, 
 from pv.plausibility import orientation_class, tilt_class  # noqa: E402
 
 GEO = os.path.join(paths.INPUT_DIR, "geodata")
-STATE = {"Niedersachsen": ("ni", 32), "Brandenburg": ("bb", 33), "Mecklenburg-Vorpommern": ("mv", 33), "Bayern": ("by", 32)}
-SOURCE_RANK = {"laz": 0, "dom1_laser": 0, "bdom_image": 1, "dom20_image": 2}
+STATE = {"Niedersachsen": ("ni", 32), "Brandenburg": ("bb", 33), "Mecklenburg-Vorpommern": ("mv", 33), "Bayern": ("by", 32),
+         "Nordrhein-Westfalen": ("nw", 32), "Hessen": ("he", 32), "Sachsen": ("sn", 33), "Thüringen": ("th", 32), "Sachsen-Anhalt": ("st", 32)}
+SOURCE_RANK = {"laz": 0, "dom1_laser": 1, "bdom_image": 2, "dom20_image": 3}     # point cloud before DOM1 before image models (2026-10-22)
 LASER = ("laz", "dom1_laser")
 FENCE_MAX_M = 400.0
 TILT_TOL_DEG = 2.0
@@ -44,31 +45,67 @@ DERIVED = ("ew_measured", "tilt_measured", "az_measured", "or_cls_measured", "ti
            "accept", "laser", "source_rank", "or_agree", "tilt_agree", "tilt_agree_tol", "best")
 
 
-def fetch_tiles(state: str, lat: float, lon: float, year: int, attempts: int = 3) -> dict:
+def fetch_tiles(state: str, lat: float, lon: float, year: int, landkreis: str = None, gemeinde: str = None, attempts: int = 3,
+                margin_m: float = 300.0) -> dict:
     """{product: [paths]} with products dop20, dgm1 and the surface sources. NI takes the newest survey after the
-    commissioning year and returns its dates; BB adds the image-based bDOM where ALS tiles are missing."""
+    commissioning year and returns its dates; BB adds the image-based bDOM where ALS tiles are missing; Hessen needs the
+    district and municipality (packages per municipality); Thüringen reads the hand-filled cache only."""
     last = None
     for k in range(attempts):
         try:
             if state == "Bayern":
                 out = {"dop20": [], "dgm1": [], "dom20": []}
-                for e, n in GB.tiles_for(lat, lon):
+                for e, n in GS.tiles_for(lat, lon, 32, margin_m):        # full tile range (GB.tiles_for skips middle tiles)
                     for prod in ("dop20", "dgm1", "dom20"):
                         try:
                             out[prod].append(GB.fetch(prod, e, n, os.path.join(GEO, "bayern")))
                         except Exception as ex:
                             print(f"  {prod} {e}_{n}: {type(ex).__name__}", flush=True)
-                out.update(GS.fetch_by_laser(lat, lon, GEO))
+                out.update(GS.fetch_by_laser(lat, lon, GEO, margin_m))
                 return out
             if state == "Niedersachsen":
-                return GS.fetch_ni(lat, lon, GEO, after=f"{year}-01-01")
+                return GS.fetch_ni(lat, lon, GEO, after=f"{year}-01-01", margin_m=margin_m)
             if state == "Brandenburg":
-                return GS.fetch_bb(lat, lon, GEO, products=("dop20", "als", "bdom", "dgm1"))
-            return GS.FETCHERS[state](lat, lon, GEO)
+                return GS.fetch_bb(lat, lon, GEO, products=("dop20", "als", "bdom", "dgm1"), margin_m=margin_m)
+            if state == "Nordrhein-Westfalen":
+                return GS.fetch_nw(lat, lon, GEO, margin_m=margin_m)
+            if state == "Hessen":
+                return GS.fetch_he(lat, lon, GEO, landkreis, gemeinde, margin_m=margin_m)
+            if state == "Sachsen":
+                return GS.fetch_sn(lat, lon, GEO, margin_m=margin_m)
+            if state == "Thüringen":
+                return GS.fetch_th(lat, lon, GEO, margin_m=margin_m)
+            if state == "Sachsen-Anhalt":
+                return GS.fetch_st(lat, lon, GEO, margin_m=margin_m)
+            return GS.FETCHERS[state](lat, lon, GEO, margin_m=margin_m)
         except RuntimeError as ex:                  # truncated transfers (curl 18) are retried
             last = ex
             print(f"  fetch attempt {k + 1} failed: {ex}", flush=True)
     raise last
+
+
+def fetch_margin(r, osm: dict, zone: int) -> float:
+    """Half side (m) of the square around the register point that the tiles must cover: the OSM outline (+ 25 m, the
+    analysis grid adds 20 m) or, without an outline, the largest box of measure_box; at least 300 m."""
+    from pyproj import Transformer
+    to_m = Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform
+    x, y = to_m(float(r.lon), float(r.lat))
+    poly, _ = GW.osm_footprint((osm.get(r.park_id) or {}).get("elements", []), [Point(x, y)], to_m, FENCE_MAX_M)
+    if poly is not None:
+        minx, miny, maxx, maxy = poly.buffer(25).bounds
+        m = max(x - minx, maxx - x, y - miny, maxy - y)
+    else:
+        m = max(np.sqrt(GW.BOX["area_factor"] * float(r.dc_kwp) * 5.0 * 2.2), GW.BOX["size_m"]) / 2 + GW.BOX["step_m"] + 25
+    return float(max(m, 300.0))
+
+
+def municipality(unit_ids: str) -> str:
+    """Municipality of the park's MaStR units (most frequent), for the Hessen packages."""
+    global _UNITS
+    if "_UNITS" not in globals():
+        _UNITS = pd.read_parquet(os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet"), columns=["EinheitMastrNummer", "Gemeinde"]).set_index("EinheitMastrNummer")
+    g = _UNITS.reindex(str(unit_ids).split(";")).Gemeinde.dropna()
+    return g.mode().iloc[0] if len(g) else None
 
 
 def sources_from(tiles: dict) -> list:
@@ -94,7 +131,7 @@ def rasters(tiles: dict, name: str, paths_: list, bounds: tuple, zone: int, lat:
     else:
         dgm_src = "dgm1"
     hag = GW.height_above_ground(S["surf"], dgm, S["ground"])
-    return dict(hag=hag, dgm=dgm, dgm_src=dgm_src, source=name, survey_year=S["survey_year"], survey_dates=S["survey_dates"],
+    return dict(hag=hag, dgm=dgm, dgm_src=dgm_src, surf=S["surf"], source=name, survey_year=S["survey_year"], survey_dates=S["survey_dates"],
                 conv=GT.meridian_convergence(lat, lon, zone))
 
 
@@ -267,7 +304,9 @@ def main():
     for r in sel.itertuples():
         print(f"== {r.park_id} {a.state} {r.dc_kwp:.0f} kWp {r.year} {r.orientation_class} / {r.tilt_class}", flush=True)
         try:
-            tiles = fetch_tiles(a.state, float(r.lat), float(r.lon), int(r.year))
+            margin = fetch_margin(r, osm, zone)
+            tiles = fetch_tiles(a.state, float(r.lat), float(r.lon), int(r.year), r.landkreis, municipality(r.unit_ids) if a.state == "Hessen" else None,
+                                margin_m=margin)
             if a.fetch_only:
                 print("  tiles:", {k: len(v) for k, v in tiles.items()}, flush=True)
                 continue
