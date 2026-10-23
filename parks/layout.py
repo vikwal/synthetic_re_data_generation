@@ -20,6 +20,7 @@ import pandas as pd
 from pyproj import Transformer
 
 from parks import era5_db
+from utils import overrides as OVR
 
 GROUP_KEY = ["lib_name", "hub_height", "commissioning_year", "rated_kw", "era5_cell_id"]
 LAYOUT_COLS = ["park_id", "park_name", "client", "cls", "turbine_id", "operator", "manufacturer",
@@ -66,6 +67,9 @@ def build_turbine_table(selection: pd.DataFrame, turbines: pd.DataFrame,
         "osm_status": o["status"].values,
         "d_osm_m": o["d_osm_m"].astype(float).values,
     })
+    out = OVR.from_env(out, "wind")                               # dashboard overrides, only with WIND_OVERRIDES set
+    out["lib_name"] = out["model"]                                # a changed power curve (model) is the library name
+    out["commissioning_year"] = pd.to_datetime(out["commissioning_date"]).dt.year.values
     out["rated_cap_kw"] = np.minimum(out["rated_kw"], out["lib_name"].map(curve_max_kw))
     out["x_utm32"], out["y_utm32"] = _TF.transform(out["longitude"].values, out["latitude"].values)
     return out

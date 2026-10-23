@@ -31,6 +31,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, REPO)
 from parks_pv import assemble as A, geometry as G, metadata as M, params as P, paths  # noqa: E402
 from pv import terrain  # noqa: E402
+from utils import overrides as OVR  # noqa: E402
 
 START, END = "2023-07-24", "2026-08-01"          # release window [start, end)
 CORR_DIR = paths.CORR_DIR
@@ -44,6 +45,7 @@ HORIZON_OUT = os.path.join(paths.INPUT_DIR, "horizons_used.json")
 
 def load_selection(only=None) -> pd.DataFrame:
     sel = pd.read_csv(paths.SELECTION).dropna(subset=["park_id"])
+    sel = OVR.from_env(sel, "pv")                                 # dashboard overrides, only with PV_OVERRIDES set
     if only:
         sel = sel[sel.park_id.isin(only)]
     return sel.reset_index(drop=True)

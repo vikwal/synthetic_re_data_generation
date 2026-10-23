@@ -337,7 +337,11 @@ def short_page(pid: str, r: pd.Series, row: dict, out_dir: str) -> None:
     row["mb"] = round(os.path.getsize(path) / 1e6, 1)
 
 
-def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -> dict:
+def fleet_context(pid: str, suffix: str, rasters: bool = True) -> dict:
+    """Everything the report and the dashboard need of one fleet park: register row, measurement (windows, groups,
+    arrays, park dict, source rows) and, with rasters=True, the analysis grid (bounds in the state UTM zone, H, inside),
+    the rasters of the chosen source (hag, dgm, surf), the DOP20 mosaic and the orthophoto rows.
+    C["kind"]: "register" (no fetcher / no run), "failed" (no measurement files) or "measured"."""
     import geometry_release_states as R
     from parks_pv import paths
     from pyproj import Transformer
@@ -346,31 +350,26 @@ def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -
     r = sel.loc[pid].copy()
     r["park_id"] = pid                                            # fetch_margin and municipality use r.park_id
     state = r.bundesland
-    row = dict(park_id=pid, state=state, dc_kwp=float(r.dc_kwp), year=int(r.year), orientation_class=r.orientation_class, tilt_class=r.tilt_class)
+    C = dict(pid=pid, r=r, state=state)
     csv = os.path.join(paths.DATA_DIR, f"geodata_release_{state.lower()}{suffix}.csv")
     rd = os.path.join(REPO, "results", "pv", f"geodata_release{suffix}", pid)
     if state not in R.STATE or not os.path.exists(csv):
-        row.update(status="register", source="", note="kein Abrufer für das Land / kein Lauf")
-        if synthesis:
-            short_page(pid, r, row, out_dir)
-        return row
+        return dict(C, kind="register", note="kein Abrufer für das Land / kein Lauf")
     df = pd.read_csv(csv, dtype={"pv": str}); dp = df[df.pv == pid]
     best = dp[dp.best] if "best" in dp else dp.iloc[:0]
     pick = best if len(best) else dp.sort_values("source_rank") if len(dp) else dp
     if not len(pick) or pd.isna(pick.source.iloc[0]) or not os.path.exists(os.path.join(rd, f"windows_{pick.source.iloc[0]}.csv")):
-        row.update(status="failed", source="", note=str(dp.status_reason.iloc[0]) if len(dp) else "")
-        if synthesis:
-            short_page(pid, r, row, out_dir)
-        return row
+        return dict(C, kind="failed", note=str(dp.status_reason.iloc[0]) if len(dp) else "", dp=dp)
     src = pick.source.iloc[0]
-    win = read_csv0(os.path.join(rd, f"windows_{src}.csv")); G = read_csv0(os.path.join(rd, f"groups_{src}.csv")); arrays = read_csv0(os.path.join(rd, f"arrays_{src}.csv"))
-    park = json.load(open(os.path.join(rd, f"park_{src}.json")))
+    C.update(kind="measured", dp=dp, pick=pick, src=src, win=read_csv0(os.path.join(rd, f"windows_{src}.csv")),
+             G=read_csv0(os.path.join(rd, f"groups_{src}.csv")), arrays=read_csv0(os.path.join(rd, f"arrays_{src}.csv")),
+             park=json.load(open(os.path.join(rd, f"park_{src}.json"))))
+    park = C["park"]
     code, zone = R.STATE[state]
     osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
-    tiles = R.fetch_tiles(state, float(r.lat), float(r.lon), int(r.year), r.landkreis, R.municipality(r.unit_ids) if state == "Hessen" else None,
-                          margin_m=R.fetch_margin(r, osm, zone))
     to_m = Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform
     pt = Point(*to_m(float(r.lon), float(r.lat)))
+    poly = None
     if park.get("box"):
         half = float(park["box_side_m"]) / 2
         bounds = (pt.x - half, pt.y - half, pt.x + half, pt.y + half)
@@ -379,9 +378,29 @@ def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -
     else:
         poly, _, _ = R.footprint(r, osm, to_m, pt)
         g = GW.analysis_grid(poly, GW.RES); bounds, H, inside = g["bounds"], g["H"], g["inside"]
+    C.update(zone=zone, crs=GT.CRS[zone], pt=pt, poly=poly, bounds=bounds, H=H, inside=inside)
+    if not rasters:
+        return C
+    tiles = R.fetch_tiles(state, float(r.lat), float(r.lon), int(r.year), r.landkreis, R.municipality(r.unit_ids) if state == "Hessen" else None,
+                          margin_m=R.fetch_margin(r, osm, zone))
     ras = R.rasters(tiles, src, dict(R.sources_from(tiles))[src], bounds, zone, float(r.lat), float(r.lon))
     rgb = GT.mosaic(tiles["dop20"], bounds, GW.RES, zone, bands=[1, 2, 3]) if tiles.get("dop20") else None
     ortho = GW.orthophoto_axis(rgb, inside, GW.RES)["rows"] if rgb is not None else None
+    C.update(ras=ras, rgb=rgb, ortho=ortho)
+    return C
+
+
+def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -> dict:
+    C = fleet_context(pid, suffix)
+    r, state = C["r"], C["state"]
+    row = dict(park_id=pid, state=state, dc_kwp=float(r.dc_kwp), year=int(r.year), orientation_class=r.orientation_class, tilt_class=r.tilt_class)
+    if C["kind"] != "measured":
+        row.update(status="register" if C["kind"] == "register" else "failed", source="", note=C["note"])
+        if synthesis:
+            short_page(pid, r, row, out_dir)
+        return row
+    src, win, G, arrays, park, pick, dp = C["src"], C["win"], C["G"], C["arrays"], C["park"], C["pick"], C["dp"]
+    ras, rgb, ortho, bounds, H, inside, pt = C["ras"], C["rgb"], C["ortho"], C["bounds"], C["H"], C["inside"], C["pt"]
     P = dict(hag=ras["hag"], dgm=ras["dgm"], surf=ras["surf"], inside=inside, rgb=rgb, conv=ras["conv"], RES=GW.RES, H=H,
              extent=[0, inside.shape[1] * GW.RES, 0, H * GW.RES], ortho_rows=ortho, source=src, survey_year=ras["survey_year"],
              survey_dates=ras["survey_dates"], title=f"{pid} – {state}, {r.dc_kwp:.0f} kWp, {r.year}",
