@@ -75,8 +75,9 @@ def full_years(idx: pd.DatetimeIndex) -> list:
 
 
 def inverter_unclipped(p_dc: pd.Series, pac0_w: float, eta_nom: float, eta_ref: float) -> pd.Series:
-    """pvlib PVWatts inverter efficiency curve without the AC cap (chain passes pdc0 = P_AC, cap = eta_nom * P_AC)."""
-    z = (p_dc / pac0_w).where(p_dc > 0)
+    """pvlib PVWatts inverter efficiency curve without the AC cap, as pv.inverter.ac_pvwatts calls it since 2026-10-23
+    (pdc0 = P_AC / eta_nom, cap at P_AC; releases before that used pdc0 = P_AC and a cap of eta_nom * P_AC)."""
+    z = (p_dc * eta_nom / pac0_w).where(p_dc > 0)
     eta = eta_nom / eta_ref * (-0.0162 * z - 0.0059 / z + 0.9858)
     return (eta * p_dc).fillna(0.0).clip(lower=0.0)
 
@@ -93,12 +94,15 @@ def loss_chain(S: dict) -> tuple:
     r0 = GEN.run(c0, drv, horizon=S["hz"])
     r1 = GEN.run(c1, drv, horizon=S["hz"]) if S["hz"] is not None else r0
     yrs = full_years(full.index)
-    sel = full.index.year.isin(yrs)
-    n = len(yrs)
+    if yrs:
+        sel, n = full.index.year.isin(yrs), len(yrs)
+    else:                                                         # series starts late (commissioning): scale to a year
+        sel = np.ones(len(full), bool)
+        n = len(full) * ((full.index[1] - full.index[0]) / pd.Timedelta("1h")) / 8766.0
     kwp, pac0 = S["kwp"], S["kw_ac"] * 1e3
     iv = cfg["inverter"]
     ac_u = inverter_unclipped(full["p_dc_w"], pac0, float(iv["eta_inv_nom"]), float(iv.get("eta_inv_ref", 0.9637)))
-    ac_c = np.minimum(ac_u, float(iv["eta_inv_nom"]) * pac0)
+    ac_c = np.minimum(ac_u, pac0)
     E = lambda s: float(s[sel].sum()) / 1e3 / n                                  # Wh/h steps -> kWh per year (hourly frames)
     step_h = (full.index[1] - full.index[0]) / pd.Timedelta("1h")
     rows = [("GHI (korrigiertes CAMS)", E(full["ghi"]) * step_h, "kWh/m²"),
@@ -118,6 +122,12 @@ def loss_chain(S: dict) -> tuple:
     t.loc[t.Einheit != t.Einheit.shift(1), "Änderung %"] = np.nan                # unit change POA -> DC: no ratio
     t["PR-Bezug"] = np.where(t.Einheit == "kWh/kWp", t.Wert / t.loc[3, "Wert"], np.nan)  # performance ratio vs shaded POA
     return t, dev, yrs, full
+
+
+def period_txt(yrs: list, df: pd.DataFrame) -> str:
+    if yrs:
+        return f"Mittel der vollen Kalenderjahre {', '.join(map(str, yrs))} (UTC)"
+    return f"Kein volles Kalenderjahr (Reihe ab {df.index[0]:%Y-%m-%d}): Summe über die ganze Reihe, auf ein Jahr hochgerechnet (saisonal verzerrt)"
 
 
 # ------------------------------------------------------------------------------------------------ figures
@@ -329,7 +339,7 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
     show = t.copy()
     show["Wert"] = show.Wert.round(1); show["Änderung %"] = show["Änderung %"].round(2); show["PR-Bezug"] = show["PR-Bezug"].round(3)
     parts += [f"<h2>{n}. Verlustkette</h2>",
-              f"<p class='note'>Mittel der vollen Kalenderjahre {', '.join(map(str, yrs))} (UTC). POA-Stufen durch Neurechnen der Kette mit "
+              f"<p class='note'>{period_txt(yrs, df)}. POA-Stufen durch Neurechnen der Kette mit "
               "abgeschalteter Horizont- bzw. Reihenverschattung; Wechselrichterstufen aus p_dc_w mit der PVWatts-Kennlinie. "
               "PR-Bezug = Energie je kWp / POA nach Reihenverschattung.</p>",
               PR.table(show.fillna("")), fig_losses(t)]
@@ -337,20 +347,25 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
 
     # yield
     y = []
-    for yr in yrs:
+    for yr in yrs or sorted(set(df.index.year)):                  # without a full year: the partial years
         e2 = float(df.power_park.loc[str(yr)].sum()) * S["step_h"] / 1e3
-        row = {"Jahr": yr, "Energie (MWh)": round(e2 / 1e3, 1), "kWh/kWp": round(e2 / S["kwp"]), "Volllaststunden AC": round(e2 / S["kw_ac"]),
-               "Kapazitätsfaktor AC": round(e2 / S["kw_ac"] / (8760 + 24 * (yr % 4 == 0)), 3)}
+        part = yr not in yrs
+        dy_ = df.loc[str(yr)].index
+        row = {"Jahr": f"{yr} (Teiljahr {dy_[0]:%m-%d} bis {dy_[-1]:%m-%d})" if part else yr, "Energie (MWh)": round(e2 / 1e3, 1), "kWh/kWp": round(e2 / S["kwp"]),
+               "Volllaststunden AC": round(e2 / S["kw_ac"]), "Kapazitätsfaktor AC": "–" if part else round(e2 / S["kw_ac"] / (8760 + 24 * (yr % 4 == 0)), 3)}
         if S["v1"] is not None:
-            e1 = float(S["v1"].loc[str(yr)].sum()) * S["step_h"] / 1e3
+            e1 = float(S["v1"].reindex(dy_).sum()) * S["step_h"] / 1e3          # same hours as v2 (v2 starts at commissioning)
             row.update({"v1 kWh/kWp": round(e1 / S["kwp"]), f"{S['name'][-2:]}/v1": round(e2 / e1, 4)})
         y.append(row)
     pk = df.power_park.max() / (S["kw_ac"] * 1e3)
+    hm_year = yrs[-1] if yrs else int(pd.Series(df.index.year).value_counts().idxmax())
     parts += [f"<h2>{n}. Ertrag</h2>", PR.table(pd.DataFrame(y)),
               f"<p class='note'>Höchste Stundenleistung {pk:.3f} · P_AC; Clipping-Stunden {100 * float((df.clipped > 0).mean()):.2f} % aller Stunden; "
-              f"Schneeverlust {100 * float(park.snow_loss_share):.2f} % der Energie (gesamter Zeitraum).</p>",
-              fig_monthly(S), f"<p class='note'>Leistung je Stunde und Tag ({yrs[-1] if yrs else ''}), normiert auf P_AC; Lücken im Winter = Schnee.</p>",
-              fig_heatmap(S, yrs[-1] if yrs else df.index.year[0])]
+              f"Schneeverlust {100 * float(park.snow_loss_share):.2f} % der Energie (gesamter Zeitraum). "
+              "v1 stammt aus der Kette vom 2026-10-16 (AC-Deckel 0,97 · P_AC, Reihe ab 2023-07-24, Alterung ab Jahresmitte); "
+              "das Verhältnis zu v1 enthält diese Kettenänderungen zusätzlich zur Geometrie.</p>",
+              fig_monthly(S), f"<p class='note'>Leistung je Stunde und Tag ({hm_year}), normiert auf P_AC; Lücken im Winter = Schnee.</p>",
+              fig_heatmap(S, hm_year)]
     n += 1
 
     # example weeks
@@ -368,8 +383,16 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
     parts += [f"<h2>{n}. Schnee-Modellierung</h2>",
               "<p>Release-Modell <b>depth_linear</b>: Bedeckung = clip(ERA5-Schneehöhe / 5 cm, 0, 1) je Stunde aus der nächsten ERA5-Zelle; "
               "Leistungsfaktor = 1 − pvlib dc_loss_nrel(Bedeckung, 100 Strings) ≈ 1 − Bedeckung; wirkt multiplikativ auf die AC-Leistung "
-              "(power_park = power_park_free · snow_factor). Kein Abrutschen, kein Abtauen über die Modultemperatur: der Park bleibt bedeckt, "
-              "solange ERA5 Schnee meldet. Die Variante depth_slide (Abrutschen nach Neigung und Temperatur) ist implementiert, aber nicht im Release (Entscheidung D7 offen).</p>",
+              "(power_park = power_park_free · snow_factor). Ab 5 cm ERA5-Schneehöhe gilt der Park als voll bedeckt, darunter anteilig.</p>"
+              "<ul><li><b>Warum so:</b> Marion (pvlib) braucht ≥ 1 cm Neuschnee pro Stunde, die ERA5 bei 31 km praktisch nie liefert. "
+              "Die 5 cm stammen aus der Leave-one-park-out-Kalibrierung an den Zählerparks (2026-10-19; gewählt 4–5 cm, nie unter 3 cm).</li>"
+              "<li><b>Durch die Zähler gestützt (Winter 2023/24):</b> Flache Zählerparks lieferten an sonnigen Frosttagen mit liegendem Schnee "
+              "nahezu null. Jede weichere Variante (Neuschnee-Trigger, Schmelzterm, Marion auf ERA5-Schneefall, DWD-0-cm-Gate) passte schlechter.</li>"
+              "<li><b>Nicht geprüft:</b> Die Verluste der Winter 2024/25 und 2025/26, weil die Zähler im Mai 2024 enden. ERA5 kann Schnee melden, wo die "
+              "nächste DWD-Station 0 cm hat. Ein solches Gate passt an den Zählern 2023/24 aber nicht und ist deshalb nicht eingebaut.</li>"
+              "<li><b>Alternative depth_slide (D7):</b> Abrutschen nach Neigung und Temperatur, ICON-D2 als zweiter Treiber. Sie macht die Bedeckung "
+              "nicht weicher, sondern länger (die 5-cm-Rampe bleibt Untergrenze) und erhöht die Verluste. An den Zählern passt sie etwas besser. "
+              "Die Wahl zwischen depth_linear und depth_slide ist offen (D7).</li></ul>",
               "<div style='display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start'>" + fig_snow_curve() + PR.table(wt) + "</div>",
               fig_snow_winters(S)]
     n += 1
@@ -377,8 +400,8 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
     # drivers
     d = S["drv"]
     dy = []
-    for yr in yrs:
-        s = d.loc[str(yr)]
+    for yr in yrs or sorted(set(df.index.year)):
+        s = d.reindex(df.loc[str(yr)].index)
         dy.append({"Jahr": yr, "GHI CAMS roh (kWh/m²)": round(float(s.ghi_cams_raw.sum()) * S["step_h"] / 1e3), "GHI korrigiert": round(float(s.ghi.sum()) * S["step_h"] / 1e3),
                    "GHI ERA5": round(float(s.ghi_era5.sum()) * S["step_h"] / 1e3), "T mittel (°C)": round(float(s.temp_air.mean()), 1),
                    "Wind mittel (m/s)": round(float(s.wind_speed.mean()), 1), "Albedo Mittel / max": f"{s.albedo.mean():.2f} / {s.albedo.max():.2f}",
