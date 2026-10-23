@@ -65,6 +65,7 @@ def load(pid: str, rel_dir: str = None) -> dict:
     p1 = pd.read_csv(os.path.join(V1_DIR, "parks.csv"), dtype={"park_id": str}).set_index("park_id")
     S["dev_v1"] = p1.register_deviation.get(pid) if pid in p1.index else None
     S["kwp"] = float(S["man"]["params"]["kwp_dc"])
+    S["snow_model"] = S["man"]["drivers"].get("snow_model", "depth_linear")
     S["kw_ac"] = float(S["man"]["params"]["ac_kw"])
     return S
 
@@ -87,12 +88,13 @@ def loss_chain(S: dict) -> tuple:
     Returns (stage table per kWp and year, max abs deviation of the rerun from the release in W)."""
     cfg = S["man"]["config"]
     drv = S["drv"]
-    full = GEN.run(copy.deepcopy(cfg), drv, horizon=S["hz"])
+    sm = S["snow_model"]
+    full = GEN.run(copy.deepcopy(cfg), drv, horizon=S["hz"], snow_model=sm)
     dev = float((full["power_park"] - S["df"]["power_park"].reindex(full.index)).abs().max())
     c0 = copy.deepcopy(cfg); c0["shading"] = {"horizon": False, "inter_row": False}
     c1 = copy.deepcopy(cfg); c1["shading"] = {"horizon": True, "inter_row": False}
-    r0 = GEN.run(c0, drv, horizon=S["hz"])
-    r1 = GEN.run(c1, drv, horizon=S["hz"]) if S["hz"] is not None else r0
+    r0 = GEN.run(c0, drv, horizon=S["hz"], snow_model=sm)
+    r1 = GEN.run(c1, drv, horizon=S["hz"], snow_model=sm) if S["hz"] is not None else r0
     yrs = full_years(full.index)
     if yrs:
         sel, n = full.index.year.isin(yrs), len(yrs)
@@ -219,8 +221,10 @@ def fig_week(S: dict, start: pd.Timestamp, title: str, snow: bool = False) -> st
     k = 1
     if snow:
         axs[1].plot(w.index, w.snow_depth_cm, color=C_GREY, lw=1.5, label="ERA5-Schneehöhe (cm)")
+        if "icon_snow_depth_cm" in S["drv"]:
+            axs[1].plot(w.index, S["drv"].icon_snow_depth_cm.reindex(w.index), color=C_V2, lw=1.2, ls="--", label="ICON-D2 h_snow (cm)")
         axs[1].plot(w.index, w.snow_coverage * 5, color=C_AQUA, lw=1.5, label="Bedeckung × 5")
-        axs[1].set_ylabel("cm"); axs[1].legend(fontsize=7, ncol=2, frameon=False, loc="upper right")
+        axs[1].set_ylabel("cm"); axs[1].legend(fontsize=7, ncol=3, frameon=False, loc="upper right")
         k = 2
     ac = S["kw_ac"] / 1e3
     axs[k].plot(w.index, w.power_park_free / 1e6, color=C_V1, lw=1.2, ls="--", label="ohne Schnee")
@@ -233,14 +237,14 @@ def fig_week(S: dict, start: pd.Timestamp, title: str, snow: bool = False) -> st
     return PR.png(fig)
 
 
-def fig_snow_curve() -> str:
+def fig_snow_curve(model: str = "depth_linear") -> str:
     from pv import snow
     d = np.linspace(0, 10, 101)
     cov = pd.Series(np.clip(d / GEN.SNOW_FULL_COVER_CM, 0, 1))
     fig, ax = plt.subplots(figsize=(3.6, 2.4))
     ax.plot(d, snow.loss_factor(cov).values, color=C_V2, lw=2)
-    ax.set_xlabel("ERA5-Schneehöhe (cm)"); ax.set_ylabel("Leistungsfaktor"); ax.set_ylim(-0.05, 1.05); ax.grid(alpha=0.25)
-    ax.set_title("depth_linear, 100 Strings", fontsize=9)
+    ax.set_xlabel("ERA5-Schneehöhe (cm)" if model == "depth_linear" else "max(ERA5, ICON) Schneehöhe (cm)"); ax.set_ylabel("Leistungsfaktor"); ax.set_ylim(-0.05, 1.05); ax.grid(alpha=0.25)
+    ax.set_title("depth_linear, 100 Strings" if model == "depth_linear" else "Rampe (Untergrenze), 100 Strings", fontsize=9)
     return PR.png(fig)
 
 
@@ -380,20 +384,32 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
 
     # snow
     wt = winters(df, S["step_h"])
-    parts += [f"<h2>{n}. Schnee-Modellierung</h2>",
-              "<p>Release-Modell <b>depth_linear</b>: Bedeckung = clip(ERA5-Schneehöhe / 5 cm, 0, 1) je Stunde aus der nächsten ERA5-Zelle; "
-              "Leistungsfaktor = 1 − pvlib dc_loss_nrel(Bedeckung, 100 Strings) ≈ 1 − Bedeckung; wirkt multiplikativ auf die AC-Leistung "
-              "(power_park = power_park_free · snow_factor). Ab 5 cm ERA5-Schneehöhe gilt der Park als voll bedeckt, darunter anteilig.</p>"
-              "<ul><li><b>Warum so:</b> Marion (pvlib) braucht ≥ 1 cm Neuschnee pro Stunde, die ERA5 bei 31 km praktisch nie liefert. "
-              "Die 5 cm stammen aus der Leave-one-park-out-Kalibrierung an den Zählerparks (2026-10-19; gewählt 4–5 cm, nie unter 3 cm).</li>"
-              "<li><b>Durch die Zähler gestützt (Winter 2023/24):</b> Flache Zählerparks lieferten an sonnigen Frosttagen mit liegendem Schnee "
+    model = S["snow_model"]
+    common = ("<li><b>Durch die Zähler gestützt (Winter 2023/24):</b> Flache Zählerparks lieferten an sonnigen Frosttagen mit liegendem Schnee "
               "nahezu null. Jede weichere Variante (Neuschnee-Trigger, Schmelzterm, Marion auf ERA5-Schneefall, DWD-0-cm-Gate) passte schlechter.</li>"
               "<li><b>Nicht geprüft:</b> Die Verluste der Winter 2024/25 und 2025/26, weil die Zähler im Mai 2024 enden. ERA5 kann Schnee melden, wo die "
-              "nächste DWD-Station 0 cm hat. Ein solches Gate passt an den Zählern 2023/24 aber nicht und ist deshalb nicht eingebaut.</li>"
-              "<li><b>Alternative depth_slide (D7):</b> Abrutschen nach Neigung und Temperatur, ICON-D2 als zweiter Treiber. Sie macht die Bedeckung "
-              "nicht weicher, sondern länger (die 5-cm-Rampe bleibt Untergrenze) und erhöht die Verluste. An den Zählern passt sie etwas besser. "
-              "Die Wahl zwischen depth_linear und depth_slide ist offen (D7).</li></ul>",
-              "<div style='display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start'>" + fig_snow_curve() + PR.table(wt) + "</div>",
+              "nächste DWD-Station 0 cm hat. Ein solches Gate passt an den Zählern 2023/24 aber nicht und ist deshalb nicht eingebaut.</li>")
+    why = ("<li><b>Warum die 5-cm-Rampe:</b> Marion (pvlib) braucht ≥ 1 cm Neuschnee pro Stunde, die ERA5 bei 31 km praktisch nie liefert. "
+           "Die 5 cm stammen aus der Leave-one-park-out-Kalibrierung an den Zählerparks (2026-10-19; gewählt 4–5 cm, nie unter 3 cm).</li>")
+    if model == "depth_slide":
+        sp = S["man"]["drivers"].get("snow_params", GEN.snow_params("depth_slide"))
+        ic = S["man"]["drivers"].get("icon_snow", {})
+        txt = ("<p>Release-Modell <b>depth_slide</b> (Entscheidung D7, 2026-10-23): Rampe = clip(max(ERA5-Schneehöhe, ICON-D2-h_snow des 09-UTC-Laufs "
+               f"je UTC-Tag) / {sp.get('d_full_cm', 5)} cm, 0, 1). Bedeckung_t = max(Rampe_t, Bedeckung_(t−1) − {sp.get('slide_per_h', 0.1)} · sin(Neigung) · Δt), "
+               f"solange T_Luft > −POA/{-sp.get('can_slide_coefficient', -80):.0f} (Abrutschen möglich), sonst max(Rampe_t, Bedeckung_(t−1)). "
+               f"Neigung = anteilsgewichtete Parkneigung ({GEN.park_tilt(S['man']['config']['arrays']):.1f}°). Leistungsfaktor = 1 − dc_loss_nrel(Bedeckung, 100 Strings), "
+               "multiplikativ auf die AC-Leistung. ICON-Abdeckung der Reihe: "
+               f"{100 * float(ic.get('icon_coverage', np.nan)):.1f} % der Tage.</p><ul>" + why +
+               "<li><b>Gegenüber depth_linear (v1):</b> Die Rampe ist eine Untergrenze; das Abrutschen verlängert die Bedeckung nur und ICON kommt als zweiter "
+               "Treiber dazu. Die Verluste sind deshalb höher, nicht niedriger. An den Zählern 2023/24 als einzige Variante besser "
+               "(Schneetage −21 % nRMSE, LOPO 5 von 6).</li>" + common + "</ul>")
+    else:
+        txt = ("<p>Release-Modell <b>depth_linear</b>: Bedeckung = clip(ERA5-Schneehöhe / 5 cm, 0, 1) je Stunde aus der nächsten ERA5-Zelle; "
+               "Leistungsfaktor = 1 − pvlib dc_loss_nrel(Bedeckung, 100 Strings) ≈ 1 − Bedeckung; wirkt multiplikativ auf die AC-Leistung "
+               "(power_park = power_park_free · snow_factor). Ab 5 cm ERA5-Schneehöhe gilt der Park als voll bedeckt, darunter anteilig.</p><ul>" + why + common +
+               "<li><b>depth_slide (D7):</b> verlängert die Bedeckung und erhöht die Verluste; seit 2026-10-23 Release-Modell von parks_pv_v2.</li></ul>")
+    parts += [f"<h2>{n}. Schnee-Modellierung</h2>", txt,
+              "<div style='display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start'>" + fig_snow_curve(model) + PR.table(wt) + "</div>",
               fig_snow_winters(S)]
     n += 1
 

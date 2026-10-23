@@ -17,6 +17,8 @@ their own directories, inputs and corrected CAMS shared with v1). v1 outputs are
     synthre/bin/python scripts/pv/run_parks_pv_v2.py tables
 """
 import argparse
+import glob
+import json
 import os
 import sys
 
@@ -121,11 +123,25 @@ def stage_sites(args):
           f"arrays/park {s.n_arrays.mean():.2f}; measured register deviations {(s.register_deviation.str.contains('geodata', na=False)).sum()}")
 
 
+SNOW_README = {
+    "depth_linear": "`depth_linear` (as v1): coverage = clip(ERA5 snow depth / 5 cm, 0, 1), factor = 1 - dc_loss_nrel(coverage, 100).",
+    "depth_slide": ("`depth_slide` (decision D7, 2026-10-23; model (e) of FL_Contribution/reports/pv_snow_fix_2026-10-19): ramp = "
+                    "clip(max(ERA5 snow depth, ICON-D2 09 UTC h_snow of the UTC day) / 5 cm, 0, 1); coverage_t = max(ramp_t, "
+                    "coverage_(t-1) - 0.1 sin(tilt) dt_h) while T_air > -POA/80, else max(ramp_t, coverage_(t-1)); tilt = "
+                    "share-weighted park tilt; factor = 1 - dc_loss_nrel(coverage, 100). The ramp is a lower bound, so the losses are "
+                    "higher than with depth_linear. Driver column `icon_snow_depth_cm` in work/chain/<park>_drivers.parquet, ICON coverage "
+                    "in the manifest (`drivers.icon_snow`). Checked against the meters only for winter 2023/24 (meters end 2024-05)."),
+}
+
+
 def write_readme():
     """Release README of v2 from the template; the counts per geometry source come from the written pv_arrays.csv."""
     src = pd.read_csv(os.path.join(paths.RELEASE_DIR, "pv_arrays.csv"), dtype={"park_id": str}).groupby("park_id").geometry_source.first()
     kind = src.str.split(":").str[0]
     txt = open(os.path.join(REPO, "parks_pv", "README_release_v2.md")).read()
+    man = sorted(glob.glob(os.path.join(paths.RELEASE_DIR, "manifest_*.json")))
+    model = json.load(open(man[0]))["drivers"].get("snow_model", "depth_linear") if man else "depth_linear"
+    txt = txt.replace("{snow}", SNOW_README[model])
     txt = txt.replace("{date}", f"{pd.Timestamp(os.path.getmtime(os.path.join(paths.RELEASE_DIR, 'pv_arrays.csv')), unit='s'):%Y-%m-%d}").replace("{n_windows}", str((kind == "windows").sum()))
     txt = txt.replace("{n_dgm1}", str((kind == "register_v1+dgm1").sum())).replace("{n_v1}", str(kind.str.startswith("register_v1").sum() - (kind == "register_v1+dgm1").sum()))
     open(os.path.join(paths.RELEASE_DIR, "README.md"), "w").write(txt)
@@ -141,7 +157,8 @@ def main():
     ap.add_argument("--model-tag", default="xgb_v5")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--step", default="30min")
-    ap.add_argument("--snow-model", default="depth_linear", choices=["depth_linear", "depth_slide"])
+    ap.add_argument("--snow-model", default="depth_slide", choices=["depth_linear", "depth_slide"],
+                    help="D7 (Viktor 2026-10-23): depth_slide is the release model of v2; depth_linear = v1 behaviour")
     a = ap.parse_args()
     assert paths.NAME == "parks_pv_v2", "set PV_RELEASE_NAME=parks_pv_v2"
     if a.parks:

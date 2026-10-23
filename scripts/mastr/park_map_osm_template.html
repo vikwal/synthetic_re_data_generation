@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Windpark-Auswahl v1 — Karte</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{--bg:#f5f6f3;--panel:#fff;--ink:#1b2320;--muted:#5c6862;--line:#d6dbd4;--hover:#d9480f;
+  --c0:#1f77b4;--c1:#2ca02c;--c2:#9467bd;--c3:#e6a100;--c4:#17a2b8;--c5:#b5651d;--c6:#e377c2;--c7:#555e59;--ch:#111}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Source Sans 3",system-ui,sans-serif;font-size:15px;line-height:1.4}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;grid-template-rows:auto minmax(0,1fr);gap:12px;padding:12px;box-sizing:border-box;height:100%}
+@media (max-width:860px){.wrap{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr) auto;height:auto}#map{height:70vh}}
+header{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 24px}
+h1{font-size:20px;margin:0;font-weight:700}.sub{color:var(--muted);margin:0;font-size:14px}
+#map{border:1px solid var(--line);border-radius:6px;min-height:400px}
+aside{display:flex;flex-direction:column;gap:12px;overflow:auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px;font-weight:600}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+.legend button{all:unset;display:flex;align-items:center;gap:7px;cursor:pointer;padding:3px 4px;border-radius:4px;font-size:14px}
+.legend button:hover{background:var(--line)}.legend button.off{opacity:.35}
+.dot{width:11px;height:11px;border-radius:50%;flex:none}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:14px}.kv dt{color:var(--muted)}.kv dd{margin:0;font-family:ui-monospace,monospace;font-size:13px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stats div{font-size:13px;color:var(--muted)}.stats b{display:block;font-size:20px;color:var(--ink)}
+.types{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap}
+.hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+label.chk{display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer;margin-top:6px}
+.leaflet-tooltip.tt{font-size:13px;line-height:1.35;max-width:300px;white-space:normal}.tt .m{font-family:ui-monospace,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Windpark-Auswahl v1</h1><p class="sub">90 reale Parks (MaStR-Lokationen) — 4 regionale (R) + 4 überregionale (N) Clients × 5 Klassen × 2 Parks + Hold-out; ab Zoom 12 Rotorkreise in Metern.</p></header>
+  <div id="map"></div>
+  <aside>
+    <div class="card"><h2>Bestand</h2><div class="stats" id="stats"></div></div>
+    <div class="card"><h2>Clients — klicken blendet aus</h2><div class="legend" id="legend"></div>
+      <label class="chk"><input type="checkbox" id="st"> DWD-Stationen (Wind-Standorte) zeigen</label>
+      <p class="hint">Hover: Turbinendetails, Park-Schwestern orange. Klick auf einen Park zoomt hin.</p></div>
+    <div class="card"><h2>Park</h2><dl class="kv" id="park"><dt>—</dt><dd>Turbine anfahren</dd></dl><div class="types" id="types"></div></div>
+  </aside>
+</div>
+<script>
+/*__DATA__*/
+const map=L.map('map',{preferCanvas:true}).setView([51.2,10.4],6);
+const bkg=L.tileLayer('https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_farbe/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png',{maxZoom:19,attribution:'&copy; GeoBasis-DE / BKG (basemap.de), dl-de/by-2-0'}).addTo(map);
+const bkgGrau=L.tileLayer('https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_grau/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png',{maxZoom:19,attribution:'&copy; GeoBasis-DE / BKG (basemap.de), dl-de/by-2-0'});
+const topplus=L.tileLayer('https://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/web/default/WEBMERCATOR/{z}/{y}/{x}.png',{maxZoom:18,attribution:'&copy; BKG TopPlusOpen, dl-de/by-2-0'});
+const osmde=L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap-Mitwirkende (FOSSGIS e.V.)'});
+const esriStreet=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri'});
+const esriTopo=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri'});
+const esriSat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri, Maxar, Earthstar Geographics'});
+const topo=L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'&copy; OpenStreetMap, SRTM | OpenTopoMap (CC-BY-SA)'});
+L.control.layers({'basemap.de (BKG, farbig)':bkg,'basemap.de grau':bkgGrau,'TopPlusOpen (BKG Topo)':topplus,'OpenStreetMap.de':osmde,'Esri Straßen':esriStreet,'Esri Topo':esriTopo,'Esri Satellit':esriSat,'OpenTopoMap':topo}).addTo(map);
+const parks=Object.fromEntries(DATA.parks.map(p=>[p.id,p]));
+const clients=[...new Set(DATA.parks.map(p=>p.client))].sort((a,b)=>a==='holdout'?1:b==='holdout'?-1:a.localeCompare(b));
+const colors={R0:'#1f77b4',R1:'#2ca02c',R2:'#9467bd',R3:'#e6a100',N0:'#17a2b8',N1:'#b5651d',N2:'#e377c2',N3:'#555e59',holdout:'#111'};
+const col=c=>colors[c]||'#111';const off=new Set();let cur=null;
+const markers=[],rotors=[];const gm=L.layerGroup().addTo(map),gr=L.layerGroup();
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function parkPanel(p){document.getElementById('park').innerHTML=[['Park',p.name||('Cluster '+p.id)],['Client',p.client==='holdout'?'Hold-out':(p.client.startsWith('R')?'regional ':'überregional ')+p.client],['Klasse',p.slot],['Anlagen',`${p.n} (${p.k} Typen)`],['Leistung',p.cap.toFixed(1)+' MW'],['Baujahre',p.y0===p.y1?p.y0:`${p.y0}–${p.y1}`],['Nabenhöhen',p.hubs+' m'],['Betreiber',p.ops+(p.ops>1?' (Mehrbetreiber)':'')],['Region',p.region]].map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');document.getElementById('types').textContent=p.types.split(' | ').join('\n')}
+function dotR(z){return z<=6?6.5:z<=7?5.5:z<=9?4.5:z<=11?3.5:3}
+function style(t,hov){return {radius:dotR(map.getZoom()),color:hov?'#d9480f':'#fff',weight:hov?2:0.6,fillColor:col(t.client),fillOpacity:off.has(t.client)?.12:.9,opacity:off.has(t.client)?.2:1}}
+DATA.turbines.forEach((t,i)=>{const p=parks[t.park];
+  const m=L.circleMarker([t.lat,t.lon],style(t,false)).addTo(gm);markers.push(m);
+  m.bindTooltip(`<b>${esc(t.type)}</b><br><span class="m">${t.kw} kW · D ${t.rotor??'?'} m · Nabe ${t.hub??'?'} m · ${t.year}</span><br>Kurve: <span class="m">${esc(t.lib)}</span><br>Park: <b>${esc(p.name||('Cluster '+p.id))}</b> (${p.n} WEA) · ${p.client==='holdout'?'Hold-out':p.client}${t.wp&&t.wp!==p.name?'<br><span class="m">MaStR: '+esc(t.wp)+'</span>':''}`,{className:'tt',sticky:true,direction:'top',offset:[0,-6]});
+  m.on('mouseover',()=>{if(cur!==t.park){cur=t.park;markers.forEach((mm,j)=>mm.setStyle(style(DATA.turbines[j],DATA.turbines[j].park===t.park)));parkPanel(p)}});
+  m.on('click',()=>{const pts=DATA.turbines.filter(x=>x.park===t.park).map(x=>[x.lat,x.lon]);map.fitBounds(L.latLngBounds(pts).pad(0.4),{maxZoom:14})});
+  if(t.rotor)rotors.push(L.circle([t.lat,t.lon],{radius:t.rotor/2,color:col(t.client),weight:1,fillOpacity:.15}).addTo(gr));
+});
+map.on('mouseout',()=>{cur=null;markers.forEach((mm,j)=>mm.setStyle(style(DATA.turbines[j],false)))});
+function onZoom(){const z=map.getZoom();markers.forEach(m=>m.setRadius(dotR(z)));if(z>=12){if(!map.hasLayer(gr))gr.addTo(map)}else if(map.hasLayer(gr))map.removeLayer(gr)}
+map.on('zoomend',onZoom);onZoom();
+const stations=L.layerGroup(DATA.stations.map(s=>L.circleMarker([s.lat,s.lon],{radius:4,color:'#7a8a7e',weight:1.2,fill:false}).bindTooltip(`DWD ${s.id} · ${s.alt} m`)));
+document.getElementById('st').onchange=e=>e.target.checked?stations.addTo(map):map.removeLayer(stations);
+const fmt=n=>n.toLocaleString('de-DE');
+document.getElementById('stats').innerHTML=[['Parks',DATA.parks.length],['Turbinen',DATA.turbines.length],['MW',Math.round(DATA.parks.reduce((a,p)=>a+p.cap,0))]].map(([k,v])=>`<div><b>${fmt(v)}</b>${k}</div>`).join('');
+const leg=document.getElementById('legend');clients.forEach(c=>{const n=DATA.parks.filter(p=>p.client===c).length,tn=DATA.turbines.filter(t=>t.client===c).length;const b=document.createElement('button');b.innerHTML=`<span class="dot" style="background:${col(c)}"></span>${c==='holdout'?'Hold-out':c.startsWith('R')?'Regional '+c.slice(1):'Überregional '+c.slice(1)} <span style="color:var(--muted)">${n} · ${tn}</span>`;b.onclick=()=>{off.has(c)?off.delete(c):off.add(c);b.classList.toggle('off');markers.forEach((m,j)=>m.setStyle(style(DATA.turbines[j],false)))};leg.appendChild(b)});
+</script>
+</body>
+</html>

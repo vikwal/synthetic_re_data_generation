@@ -1,0 +1,116 @@
+<title>Windpark-Auswahl v1</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f5f6f3; --panel:#ffffff; --ink:#1b2320; --muted:#5c6862; --line:#d6dbd4; --land:#e8ece6; --border:#8f9a91; --sea:#f5f6f3;
+  --hover:#d9480f; --station:#7a8a7e; --tip-bg:#1b2320; --tip-ink:#f5f6f3;
+  --c0:#1f77b4; --c1:#2ca02c; --c2:#9467bd; --c3:#e6a100; --c4:#17a2b8; --c5:#b5651d; --c6:#e377c2; --c7:#555e59; --ch:#111;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#141716; --panel:#1c211f; --ink:#e9ece8; --muted:#9aa59c; --line:#2d3531; --land:#222927; --border:#5f6b64; --sea:#141716;
+  --hover:#ff7a3d; --station:#8d9a90; --tip-bg:#e9ece8; --tip-ink:#141716; --c7:#b8c0bb; --ch:#fff; }}
+:root[data-theme="dark"]{
+  --bg:#141716; --panel:#1c211f; --ink:#e9ece8; --muted:#9aa59c; --line:#2d3531; --land:#222927; --border:#5f6b64; --sea:#141716;
+  --hover:#ff7a3d; --station:#8d9a90; --tip-bg:#e9ece8; --tip-ink:#141716; --c7:#b8c0bb; --ch:#fff; }
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Source Sans 3",system-ui,sans-serif;font-size:15px;line-height:1.4}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16px;box-sizing:border-box;min-height:100%}
+@media (max-width:860px){.wrap{grid-template-columns:1fr}}
+header{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 24px}
+h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+.sub{color:var(--muted);margin:0}
+.mapbox{background:var(--panel);border:1px solid var(--line);border-radius:6px;position:relative;overflow:hidden;touch-action:none}
+.zoom{position:absolute;top:10px;left:10px;display:flex;flex-direction:column;gap:4px;z-index:1}
+.zoom button{width:30px;height:30px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:4px;font-size:18px;cursor:pointer;line-height:1}
+.zoom button:hover,.zoom button:focus-visible{background:var(--line);outline:none}
+.mapbox.drag{cursor:grabbing}
+svg.map{display:block;width:100%;height:auto;max-height:calc(100vh - 120px)}
+.land{fill:var(--land);stroke:var(--border);stroke-width:.6;vector-effect:non-scaling-stroke}
+.station{fill:none;stroke:var(--station);stroke-width:.8;opacity:.6;vector-effect:non-scaling-stroke}
+.t{stroke:#fff0;stroke-width:6;cursor:pointer}
+.t.dim{opacity:.18}
+.t.sib{stroke:var(--hover);stroke-width:1.2;vector-effect:non-scaling-stroke}
+.t.hov{stroke:var(--hover);stroke-width:2;vector-effect:non-scaling-stroke}
+.tip{position:absolute;pointer-events:none;background:var(--tip-bg);color:var(--tip-ink);padding:8px 10px;border-radius:4px;font-size:13px;line-height:1.35;max-width:290px;box-shadow:0 2px 10px #0004;display:none;z-index:2}
+.tip b{font-weight:700}.tip .m{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px}
+aside{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px;font-weight:600}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+.legend button{all:unset;display:flex;align-items:center;gap:7px;cursor:pointer;padding:3px 4px;border-radius:4px;font-size:14px}
+.legend button:hover,.legend button:focus-visible{background:var(--line);outline:none}
+.legend button.off{opacity:.35}
+.dot{width:11px;height:11px;border-radius:50%;flex:none}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:14px}
+.kv dt{color:var(--muted)}.kv dd{margin:0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-variant-numeric:tabular-nums}
+.stats div{font-size:13px;color:var(--muted)}.stats b{display:block;font-size:20px;color:var(--ink);font-weight:700}
+label.chk{display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer}
+.types{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;white-space:pre-wrap;color:var(--ink)}
+.hint{color:var(--muted);font-size:13px;margin:0}
+</style>
+<div class="wrap">
+  <header>
+    <h1>Windpark-Auswahl v1</h1>
+    <p class="sub">90 reale Parks (MaStR-Lokationen, nur Typen mit Leistungskurve) — 4 regionale + 4 überregionale Clients × 5 Klassen × 2 Parks + Hold-out. Ein Punkt = eine Turbine.</p>
+  </header>
+  <div class="mapbox">
+    <svg class="map" id="map" viewBox="0 0 640 820" role="img" aria-label="Karte Deutschlands mit Turbinenstandorten"></svg>
+    <div class="zoom"><button id="zi" title="Vergrößern" aria-label="Vergrößern">+</button><button id="zo" title="Verkleinern" aria-label="Verkleinern">−</button><button id="zr" title="Zurücksetzen" aria-label="Zurücksetzen" style="font-size:13px">⌂</button></div>
+    <div class="tip" id="tip"></div>
+  </div>
+  <aside>
+    <div class="card"><h2>Bestand</h2><div class="stats" id="stats"></div></div>
+    <div class="card"><h2>Clients — klicken blendet aus</h2><div class="legend" id="legend"></div>
+      <p class="hint" style="margin-top:8px">Hover über eine Turbine markiert ihren Park (orange Ring). Zoomen mit Mausrad oder +/−, verschieben durch Ziehen, Doppelklick zoomt hinein.</p>
+      <label class="chk" style="margin-top:8px"><input type="checkbox" id="st" checked> DWD-Stationen (200 Wind-Standorte) zeigen</label></div>
+    <div class="card"><h2>Park</h2><dl class="kv" id="park"><dt>—</dt><dd>Turbine anfahren</dd></dl><div class="types" id="types"></div></div>
+  </aside>
+</div>
+<script>
+/*__DATA__*/
+const svg=document.getElementById('map'),tip=document.getElementById('tip');
+const LON0=5.6,LON1=15.3,LAT0=47.1,LAT1=55.2,W=640,H=820,K=Math.cos(51.2*Math.PI/180);
+const sx=W/((LON1-LON0)*K),sy=H/(LAT1-LAT0),s=Math.min(sx,sy);
+const X=lon=>((lon-LON0)*K)*s+ (W-(LON1-LON0)*K*s)/2, Y=lat=>(LAT1-lat)*s+(H-(LAT1-LAT0)*s)/2;
+const ns='http://www.w3.org/2000/svg',el=(n,a)=>{const e=document.createElementNS(ns,n);for(const k in a)e.setAttribute(k,a[k]);return e};
+const land=el('path',{class:'land',d:DATA.rings.map(r=>'M'+r.map(p=>X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join('L')+'Z').join('')});svg.appendChild(land);
+const gst=el('g',{id:'gst'});DATA.stations.forEach(p=>{const x=X(p.lon),y=Y(p.lat);gst.appendChild(el('path',{class:'station',d:`M${x-3},${y}h6M${x},${y-3}v6`}))});svg.appendChild(gst);
+const parks=Object.fromEntries(DATA.parks.map(p=>[p.id,p]));const clients=[...new Set(DATA.parks.map(p=>p.client))].sort((a,b)=>a==='holdout'?1:b==='holdout'?-1:a.localeCompare(b));
+const CM={R0:0,R1:1,R2:2,R3:3,N0:4,N1:5,N2:6,N3:7};const col=c=>c==='holdout'?'var(--ch)':`var(--c${CM[c]??7})`;const off=new Set();
+const gt=el('g',{id:'gt'});const nodes=[];
+DATA.turbines.forEach((t,i)=>{const c=el('circle',{class:'t',cx:X(t.lon).toFixed(2),cy:Y(t.lat).toFixed(2),r:dotR(1),fill:col(t.client),'data-i':i});gt.appendChild(c);nodes.push(c)});svg.appendChild(gt);
+const fmt=n=>n.toLocaleString('de-DE');
+document.getElementById('stats').innerHTML=[['Parks',DATA.parks.length],['Turbinen',DATA.turbines.length],['MW',Math.round(DATA.parks.reduce((a,p)=>a+p.cap,0))]].map(([k,v])=>`<div><b>${fmt(v)}</b>${k}</div>`).join('');
+const leg=document.getElementById('legend');clients.forEach(c=>{const n=DATA.parks.filter(p=>p.client===c).length,tn=DATA.turbines.filter(t=>t.client===c).length;const b=document.createElement('button');b.innerHTML=`<span class="dot" style="background:${col(c)}"></span>${c==='holdout'?'Hold-out':c.startsWith('R')?'Regional '+c.slice(1):'Überregional '+c.slice(1)} <span style="color:var(--muted)">${n} · ${tn}</span>`;b.onclick=()=>{off.has(c)?off.delete(c):off.add(c);b.classList.toggle('off');nodes.forEach((e,i)=>e.classList.toggle('dim',off.has(DATA.turbines[i].client)))};leg.appendChild(b)});
+document.getElementById('st').onchange=e=>gst.style.display=e.target.checked?'':'none';
+const box=svg.parentElement;let cur=null;
+function show(i,ev){const t=DATA.turbines[i],p=parks[t.park];if(cur!==t.park){nodes.forEach((e,j)=>e.classList.toggle('sib',DATA.turbines[j].park===t.park));cur=t.park;
+  document.getElementById('park').innerHTML=[['Park',p.name||('Cluster '+p.id)],['Client',p.client==='holdout'?'Hold-out':(p.client.startsWith('R')?'regional ':'überregional ')+p.client],['Klasse',p.slot],['Anlagen',`${p.n} (${p.k} Typen)`],['Leistung',p.cap.toFixed(1)+' MW'],['Baujahre',p.y0===p.y1?p.y0:`${p.y0}–${p.y1}`],['Nabenhöhen',p.hubs+' m'],['Betreiber',p.ops+(p.ops>1?' (Mehrbetreiber)':'')],['Region',p.region]].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  document.getElementById('types').textContent=p.types.split(' | ').join('\n')}
+  nodes.forEach(e=>e.classList.remove('hov'));nodes[i].classList.add('hov');
+  tip.innerHTML=`<b>${t.type}</b><br><span class="m">${t.kw} kW · D ${t.rotor??'?'} m · Nabe ${t.hub??'?'} m · ${t.year}</span><br>Kurve: <span class="m">${t.lib}</span><br>Park: <b>${p.name||('Cluster '+p.id)}</b> (${p.n} WEA) · ${p.client==='holdout'?'Hold-out':p.client}${t.wp&&t.wp!==p.name?'<br><span class="m">MaStR: '+t.wp+'</span>':''}`;
+  tip.style.display='block';move(ev)}
+function move(ev){const r=box.getBoundingClientRect();let x=ev.clientX-r.left+14,y=ev.clientY-r.top+14;if(x+300>r.width)x-=314;if(y+120>r.height)y-=130;tip.style.left=x+'px';tip.style.top=y+'px'}
+svg.addEventListener('mousemove',ev=>{const e=ev.target.closest('.t');if(e)show(+e.dataset.i,ev);else{tip.style.display='none';nodes.forEach(n=>n.classList.remove('hov'))}});
+svg.addEventListener('mouseleave',()=>{tip.style.display='none';nodes.forEach(n=>n.classList.remove('hov','sib'));cur=null});
+
+// --- zoom & pan (viewBox based; marker radius and stroke scale with 1/zoom) ---
+// on-screen dot size grows only slowly with zoom (~z^0.2): large enough at country level, not blobs when zoomed in
+function dotR(z){return 4.6/Math.pow(z,0.8)}
+let vb={x:0,y:0,w:W,h:H};const base={x:0,y:0,w:W,h:H};
+function applyVB(){svg.setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);const z=W/vb.w;const r=dotR(z);nodes.forEach(n=>n.setAttribute('r',r));gt.style.strokeWidth=(6/z)+'px';gst.querySelectorAll('.station').forEach(e=>e.style.strokeWidth=(0.8/z)+'px')}
+function zoomAt(f,cx,cy){const nw=Math.min(W,Math.max(W/40,vb.w/f));const k=nw/vb.w;vb={x:cx-(cx-vb.x)*k,y:cy-(cy-vb.y)*k,w:nw,h:vb.h*k};clamp();applyVB()}
+function clamp(){vb.x=Math.min(Math.max(vb.x,-vb.w*0.5),W-vb.w*0.5);vb.y=Math.min(Math.max(vb.y,-vb.h*0.5),H-vb.h*0.5)}
+function svgPt(ev){const r=svg.getBoundingClientRect();return [vb.x+(ev.clientX-r.left)/r.width*vb.w,vb.y+(ev.clientY-r.top)/r.height*vb.h]}
+svg.addEventListener('wheel',ev=>{ev.preventDefault();const [cx,cy]=svgPt(ev);zoomAt(ev.deltaY<0?1.25:1/1.25,cx,cy)},{passive:false});
+svg.addEventListener('dblclick',ev=>{const [cx,cy]=svgPt(ev);zoomAt(2,cx,cy)});
+document.getElementById('zi').onclick=()=>zoomAt(1.5,vb.x+vb.w/2,vb.y+vb.h/2);
+document.getElementById('zo').onclick=()=>zoomAt(1/1.5,vb.x+vb.w/2,vb.y+vb.h/2);
+document.getElementById('zr').onclick=()=>{vb={...base};applyVB()};
+let drag=null;
+svg.addEventListener('pointerdown',ev=>{if(ev.button!==0)return;drag={x:ev.clientX,y:ev.clientY,vx:vb.x,vy:vb.y,moved:false};svg.setPointerCapture(ev.pointerId)});
+svg.addEventListener('pointermove',ev=>{if(!drag)return;const r=svg.getBoundingClientRect();const dx=(ev.clientX-drag.x)/r.width*vb.w,dy=(ev.clientY-drag.y)/r.height*vb.h;if(Math.abs(ev.clientX-drag.x)+Math.abs(ev.clientY-drag.y)>3){drag.moved=true;box.classList.add('drag');tip.style.display='none'}vb.x=drag.vx-dx;vb.y=drag.vy-dy;clamp();applyVB()});
+const endDrag=()=>{drag=null;box.classList.remove('drag')};svg.addEventListener('pointerup',endDrag);svg.addEventListener('pointercancel',endDrag);
+applyVB();
+</script>
