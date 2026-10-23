@@ -86,11 +86,39 @@ def load_meter_hourly(parks: pd.DataFrame, min_quarters: int = 3) -> pd.DataFram
     return pd.DataFrame(out)
 
 
-def mastr_facts(parks: pd.DataFrame, cand_csv: str = None, xml_json: str = None, max_km: float = 0.5, min_ac_kw: float = 1000.0) -> pd.DataFrame:
-    """Per park: MaStR units within max_km with AC >= min_ac_kw (empty rows where none)."""
-    cols = ["mastr_units", "mastr_dist_km", "ac_kw_mastr", "dc_kwp_mastr", "inv_kw_mastr", "n_modules", "year_mastr",
-            "orientation_class", "tilt_class", "secondary_orientation", "area_ha", "power_limit", "uniform_flag"]
+# MaStR locations of the parks whose coordinates miss the register by kilometres (capacity match of trianel_mastr_match.py,
+# accepted 2026-10-21: nearest candidate within the tolerance; pv1 register point 27 km off, pv6 Trianel point 3 km off)
+MASTR_LOCATIONS = {"pv1": ["SEL991360642453"], "pv6": ["SEL918966805471", "SEL957974947865"]}
+MASTR_UNITS = os.path.join(os.environ.get("DATA_ROOT", "/mnt/lambda1/nvme1"), "synthetic", "solar", "mastr", "solar_units_20250625.parquet")
+
+
+def _facts_from_locations(locs: list, units_path: str = MASTR_UNITS) -> dict:
+    """mastr_facts row from all units in operation at the given MaStR locations (register snapshot parquet)."""
+    u = pd.read_parquet(units_path)
+    u = u[u["LokationMaStRNummer"].isin(locs) & (u["EinheitBetriebsstatus"] == "In Betrieb")]
+    if u.empty:
+        raise ValueError(f"no units in operation at {locs}")
+    num = lambda k: float(pd.to_numeric(u[k], errors="coerce").sum()) or None
+    txt = lambda k: "/".join(sorted({str(v) for v in u[k].dropna()} - {"", "nan", "None"})) or None
+    d = pd.to_datetime(u["Inbetriebnahmedatum"])
+    return {"mastr_units": len(u), "mastr_dist_km": np.nan, "ac_kw_mastr": num("Nettonennleistung"), "dc_kwp_mastr": num("Bruttoleistung"),
+            "inv_kw_mastr": num("ZugeordneteWirkleistungWechselrichter"), "n_modules": num("AnzahlModule"), "year_mastr": int(d.min().year),
+            "date_mastr": f"{d.min():%Y-%m-%d}", "orientation_class": txt("Hauptausrichtung"), "tilt_class": txt("HauptausrichtungNeigungswinkel"),
+            "secondary_orientation": txt("Nebenausrichtung"), "area_ha": num("InAnspruchGenommeneFlaeche"), "power_limit": txt("Leistungsbegrenzung"),
+            "uniform_flag": txt("EinheitlicheAusrichtungUndNeigungswinkel"), "mastr_src": "location:" + "+".join(locs)}
+
+
+def mastr_facts(parks: pd.DataFrame, cand_csv: str = None, xml_json: str = None, max_km: float = 0.5, min_ac_kw: float = 1000.0,
+                locations: dict = MASTR_LOCATIONS) -> pd.DataFrame:
+    """Per park: MaStR units within max_km with AC >= min_ac_kw (empty rows where none); parks in `locations` take the
+    units of their matched MaStR locations instead (coordinates unusable)."""
+    cols = ["mastr_units", "mastr_dist_km", "ac_kw_mastr", "dc_kwp_mastr", "inv_kw_mastr", "n_modules", "year_mastr", "date_mastr",
+            "orientation_class", "tilt_class", "secondary_orientation", "area_ha", "power_limit", "uniform_flag", "mastr_src"]
     out = pd.DataFrame(index=parks.index, columns=cols, dtype=object)
+    for pv, locs in (locations or {}).items():
+        if pv in out.index:
+            for k, v in _facts_from_locations(locs).items():
+                out.loc[pv, k] = v
     if not cand_csv or not os.path.exists(cand_csv):
         return out
     c = pd.read_csv(cand_csv, dtype={"EinheitMastrNummer": str})
@@ -101,7 +129,7 @@ def mastr_facts(parks: pd.DataFrame, cand_csv: str = None, xml_json: str = None,
     dec = lambda v: kat.get(int(float(v)), str(v)) if v not in (None, "", "nan") and pd.notna(v) else None
     for pv in parks.index:
         u = c[(c["pv"] == pv) & (c["dist_km"] <= max_km) & (pd.to_numeric(c["Nettonennleistung"], errors="coerce") >= min_ac_kw)]
-        if u.empty:
+        if u.empty or pv in (locations or {}):
             continue
         xs = [xml.get(i, {}) for i in u["EinheitMastrNummer"]]
         f = lambda k: sum(float(x.get(k, 0) or 0) for x in xs)
@@ -112,6 +140,8 @@ def mastr_facts(parks: pd.DataFrame, cand_csv: str = None, xml_json: str = None,
         out.loc[pv, "inv_kw_mastr"] = f("ZugeordneteWirkleistungWechselrichter") or None
         out.loc[pv, "n_modules"] = float(pd.to_numeric(u["AnzahlModule"], errors="coerce").sum())
         out.loc[pv, "year_mastr"] = int(pd.to_datetime(u["Inbetriebnahmedatum"], errors="coerce").dt.year.min())
+        out.loc[pv, "date_mastr"] = f"{pd.to_datetime(u['Inbetriebnahmedatum'], errors='coerce').min():%Y-%m-%d}"
+        out.loc[pv, "mastr_src"] = f"coordinate<={max_km}km"
         out.loc[pv, "orientation_class"] = dec(u["Hauptausrichtung"].iloc[0])
         out.loc[pv, "tilt_class"] = dec(u["HauptausrichtungNeigungswinkel"].iloc[0])
         out.loc[pv, "secondary_orientation"] = "/".join(filter(None, [dec(x.get("Nebenausrichtung")) for x in xs])) or None
@@ -160,8 +190,10 @@ def park_parameters(parks: pd.DataFrame, facts: pd.DataFrame, meter: pd.DataFram
             dc_ac, dc_ac_src = kwp / float(ac_mastr), "mastr"
         else:
             dc_ac, dc_ac_src = 1.10, "default_median"
+        commissioning = None
         if pd.notna(f["year_mastr"]):
             year, year_src = int(f["year_mastr"]), "mastr"
+            commissioning = f["date_mastr"] if pd.notna(f["date_mastr"]) else None
         elif pd.notna(p["year_hint"]):
             year, year_src = int(p["year_hint"]), "module_type"
         elif pv in meter and meter[pv].first_valid_index() is not None:
@@ -178,6 +210,7 @@ def park_parameters(parks: pd.DataFrame, facts: pd.DataFrame, meter: pd.DataFram
         rows.append({"pv": pv, "kwp_dc": kwp, "kwp_src": "mastr" if dc_mastr else "master_kw", "dc_ac": float(np.clip(dc_ac, 1.0, 1.6)),
                      "gcr": gcr, "kwp_per_ha": kwp_ha, "kwp_per_ha_src": kwp_ha_src,
                      "dc_ac_src": dc_ac_src, "ac_cap_meter_kw": ac_meter, "year": year, "year_src": year_src,
+                     "commissioning_date": commissioning or f"{year}-07-01", "mastr_src": f["mastr_src"],
                      "module_lib": p["module_lib"], "wp_per_module": wp, "era": modules.era_of(year)})
     return pd.DataFrame(rows).set_index("pv")
 
@@ -200,13 +233,13 @@ def base_config(pv: str, p: pd.Series, par: pd.Series, arrays: list = None, vari
         cfg.update({"dc_ac": float(par["dc_ac"]), "module": {"model": "pvwatts", "gamma_pdc": gamma, "year": int(par["year"])},
                     "inverter": {"model": "pvwatts", "eta_inv_nom": 0.97}, "transposition": {"albedo": albedo, "iam": "physical"},
                     "losses": {"dc": 0.02, "ac": 0.01, "availability": 1.0},
-                    "aging": {"enabled": True, "commissioning_date": f"{int(par['year'])}-07-01", "era": par["era"]},
+                    "aging": {"enabled": True, "commissioning_date": par.get("commissioning_date") or f"{int(par['year'])}-07-01", "era": par["era"]},
                     "shading": {"horizon": False}})
     else:
         cfg.update({"dc_ac": float(par["dc_ac"]), "module": {"model": "cec", "name": par["module_lib"], "year": int(par["year"])},
                     "inverter": {"model": "sandia", "unit_kw": None}, "transposition": {"albedo": albedo, "iam": "physical"},
                     "losses": {"dc": 0.02, "ac": 0.01, "availability": 1.0},
-                    "aging": {"enabled": True, "commissioning_date": f"{int(par['year'])}-07-01", "era": par["era"]},
+                    "aging": {"enabled": True, "commissioning_date": par.get("commissioning_date") or f"{int(par['year'])}-07-01", "era": par["era"]},
                     "shading": {"horizon": True, "inter_row": rows}})
     return pvconfig.normalise(cfg)
 
