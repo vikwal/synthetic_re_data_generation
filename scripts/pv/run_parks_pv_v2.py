@@ -121,6 +121,16 @@ def stage_sites(args):
           f"arrays/park {s.n_arrays.mean():.2f}; measured register deviations {(s.register_deviation.str.contains('geodata', na=False)).sum()}")
 
 
+def write_readme():
+    """Release README of v2 from the template; the counts per geometry source come from the written pv_arrays.csv."""
+    src = pd.read_csv(os.path.join(paths.RELEASE_DIR, "pv_arrays.csv"), dtype={"park_id": str}).groupby("park_id").geometry_source.first()
+    kind = src.str.split(":").str[0]
+    txt = open(os.path.join(REPO, "parks_pv", "README_release_v2.md")).read()
+    txt = txt.replace("{date}", f"{pd.Timestamp(os.path.getmtime(os.path.join(paths.RELEASE_DIR, 'pv_arrays.csv')), unit='s'):%Y-%m-%d}").replace("{n_windows}", str((kind == "windows").sum()))
+    txt = txt.replace("{n_dgm1}", str((kind == "register_v1+dgm1").sum())).replace("{n_v1}", str(kind.str.startswith("register_v1").sum() - (kind == "register_v1+dgm1").sum()))
+    open(os.path.join(paths.RELEASE_DIR, "README.md"), "w").write(txt)
+
+
 def main():
     import run_parks_pv_v1 as V1
     ap = argparse.ArgumentParser()
@@ -143,8 +153,7 @@ def main():
     else:
         getattr(V1, f"stage_{a.stage}")(a)
         if a.stage == "tables":                                   # the release README of v2 (v1 text below the v2 header)
-            import shutil
-            shutil.copy(os.path.join(REPO, "parks_pv", "README_release_v2.md"), os.path.join(paths.RELEASE_DIR, "README.md"))
+            write_readme()
 
 
 if __name__ == "__main__":
