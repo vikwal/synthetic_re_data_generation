@@ -265,7 +265,7 @@ def page(title: str, parts: list) -> str:
 
 
 def build_page(P: dict, win: pd.DataFrame, G: pd.DataFrame, arrays: pd.DataFrame, park: dict, head: dict, compare: pd.DataFrame,
-               src_rows: pd.DataFrame = None) -> str:
+               src_rows: pd.DataFrame = None, extra: list = None) -> str:
     """P: rasters and meta (hag, dgm, surf, inside, rgb, conv, RES, H, extent, ortho_rows, source, survey_year, pts, title)."""
     res, H = P["RES"], P["H"]
     nw, win_m = int(round(park["win_m"] / res)), float(park["win_m"])
@@ -313,13 +313,31 @@ def build_page(P: dict, win: pd.DataFrame, G: pd.DataFrame, arrays: pd.DataFrame
         parts += ["<h2>10. 3-D-Modell des Beispielfensters</h2>", fig_3d(P["hag"], P["dgm"], P["surf"], r_ex, nw, H, res)]
     parts += ["<h2>11. Vergleich mit dem Register</h2>", table(compare)]
     parts += ["<details><summary>Fenstertabelle (alle Variablen)</summary>", table(win.drop(columns=["x", "y"], errors="ignore"), 3), "</details>"]
+    if extra:
+        parts[1:1] = ["<p><a href='#synthese'>→ Teil B: Synthese</a></p>"]
+        parts += extra
     parts += [f"<p class='note'>Erzeugt {pd.Timestamp.now():%Y-%m-%d %H:%M} mit scripts/pv/park_report.py (Fenstermethode pv.geodata_windows). "
               "Orthophotos und Höhenmodelle: GeoBasis-DE / Landesvermessungen der Länder (Lizenzen siehe pv/geodata_states.py).</p>"]
     return page(P["title"], parts)
 
 
 # ------------------------------------------------------------------------------------------------ fleet
-def fleet_report(pid: str, suffix: str, out_dir: str) -> dict:
+def short_page(pid: str, r: pd.Series, row: dict, out_dir: str) -> None:
+    """Page of a park without geometry measurement: register entry, reason, synthesis part."""
+    import synthesis_report as SR
+    head = {"Park": pid, "Land / Kreis": f"{r.bundesland} / {r.landkreis}", "Leistung DC / AC": f"{r.dc_kwp:.0f} kWp / {r.ac_kw:.0f} kW",
+            "Inbetriebnahme": int(r.year), "Einheiten": int(r.n_units), "Registerklasse": f"{r.orientation_class} / {r.tilt_class}",
+            "Fläche laut MaStR": f"{r.area_ha} ha", "Betreiber": r.operator, "Koordinate (Register)": f"{r.lat:.5f}, {r.lon:.5f}"}
+    parts = [f"<h1>{html.escape(f'{pid} – {r.bundesland}, {r.dc_kwp:.0f} kWp, {r.year}')}</h1>",
+             f"<p>Teil A (Geometriemessung): <span class='bad'>keine Messung</span> – {html.escape(str(row.get('note', '')))}</p>",
+             "<h2>1. Stammdaten</h2>", kv(head)] + SR.section(pid, start=2)
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{pid}.html")
+    open(path, "w").write(page(pid, parts))
+    row["mb"] = round(os.path.getsize(path) / 1e6, 1)
+
+
+def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -> dict:
     import geometry_release_states as R
     from parks_pv import paths
     from pyproj import Transformer
@@ -333,12 +351,16 @@ def fleet_report(pid: str, suffix: str, out_dir: str) -> dict:
     rd = os.path.join(REPO, "results", "pv", f"geodata_release{suffix}", pid)
     if state not in R.STATE or not os.path.exists(csv):
         row.update(status="register", source="", note="kein Abrufer für das Land / kein Lauf")
+        if synthesis:
+            short_page(pid, r, row, out_dir)
         return row
     df = pd.read_csv(csv, dtype={"pv": str}); dp = df[df.pv == pid]
     best = dp[dp.best] if "best" in dp else dp.iloc[:0]
     pick = best if len(best) else dp.sort_values("source_rank") if len(dp) else dp
     if not len(pick) or pd.isna(pick.source.iloc[0]) or not os.path.exists(os.path.join(rd, f"windows_{pick.source.iloc[0]}.csv")):
         row.update(status="failed", source="", note=str(dp.status_reason.iloc[0]) if len(dp) else "")
+        if synthesis:
+            short_page(pid, r, row, out_dir)
         return row
     src = pick.source.iloc[0]
     win = read_csv0(os.path.join(rd, f"windows_{src}.csv")); G = read_csv0(os.path.join(rd, f"groups_{src}.csv")); arrays = read_csv0(os.path.join(rd, f"arrays_{src}.csv"))
@@ -374,7 +396,11 @@ def fleet_report(pid: str, suffix: str, out_dir: str) -> dict:
                             dict(Größe="Neigung (°)", Register=r.tilt_class, gemessen=round(float(pick.tilt_measured.iloc[0]), 1) if pd.notna(pick.tilt_measured.iloc[0]) else None,
                                  stimmt=pick.tilt_agree_tol.iloc[0])])
     src_rows = dp[["source", "status", "n_ok", "n_windows", "tab_share_accepted", "g0_tilt", "g0_azimuth", "g0_ew", "survey_year", "best"]].copy()
-    html_ = build_page(P, win, G, arrays, park, head, compare, src_rows)
+    extra = None
+    if synthesis:
+        import synthesis_report as SR
+        extra = SR.section(pid, start=12)
+    html_ = build_page(P, win, G, arrays, park, head, compare, src_rows, extra)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{pid}.html")
     open(path, "w").write(html_)
@@ -448,6 +474,7 @@ def main():
     ap.add_argument("--pv", action="append", default=None)
     ap.add_argument("--suffix", default="_v2")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--synthesis", action="store_true", help="append the synthesis part (scripts/pv/synthesis_report.py) of $PV_SYNTH_RELEASE (default parks_pv_v2)")
     a = ap.parse_args()
     rows = []
     if a.mode == "fleet":
@@ -457,7 +484,7 @@ def main():
         ids = a.parks.split(",") if a.parks else sel.park_id.tolist()
         for pid in ids:
             try:
-                rows.append(fleet_report(pid, a.suffix, out))
+                rows.append(fleet_report(pid, a.suffix, out, a.synthesis))
             except Exception as ex:
                 import traceback
                 traceback.print_exc()
