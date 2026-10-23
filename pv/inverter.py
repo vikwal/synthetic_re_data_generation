@@ -65,7 +65,9 @@ def pick_inverter(pac_total_w: float, year: int = 2015, unit_kw: float = None) -
 
 
 def ac_pvwatts(p_dc: pd.Series, pac0_w: float, eta_inv_nom: float = 0.96, eta_inv_ref: float = 0.9637) -> pd.Series:
-    return pvlib.inverter.pvwatts(p_dc, pac0_w, eta_inv_nom=eta_inv_nom, eta_inv_ref=eta_inv_ref).clip(lower=0.0)
+    """PVWatts inverter with the AC rating pac0_w. pvlib takes the DC input limit pdc0 and caps at eta_inv_nom * pdc0,
+    so pdc0 = pac0_w / eta_inv_nom puts the cap at pac0_w (until 2026-10-23 pac0_w was passed as pdc0: cap 0.97 * P_AC)."""
+    return pvlib.inverter.pvwatts(p_dc, pac0_w / eta_inv_nom, eta_inv_nom=eta_inv_nom, eta_inv_ref=eta_inv_ref).clip(lower=0.0)
 
 
 def ac_sandia(p_dc: pd.Series, v_dc: pd.Series, inv: pd.Series, n_units: int, scale_dc: float = 1.0) -> pd.Series:

@@ -122,10 +122,12 @@ def stage_configs(args):
     arrays = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"))
     par = pd.read_csv(os.path.join(paths.DATA_DIR, "park_params.csv")).set_index("park_id")
     sites = pd.read_csv(os.path.join(paths.DATA_DIR, "sites.csv")).set_index("site_id")
+    dates = P.commissioning_dates(sel)
     os.makedirs(paths.CONFIG_DIR, exist_ok=True)
     for r in sel.itertuples():
         a = arrays[arrays.park_id == r.park_id]
-        cfg = P.park_config(r.park_id, r.lat, r.lon, float(sites.altitude.get(r.park_id, 0.0) or 0.0), par.loc[r.park_id].to_dict(),
+        pr = dict(par.loc[r.park_id].to_dict(), commissioning_first=f"{dates.loc[r.park_id, 'commissioning_first']:%Y-%m-%d}")
+        cfg = P.park_config(r.park_id, r.lat, r.lon, float(sites.altitude.get(r.park_id, 0.0) or 0.0), pr,
                             [{"name": x.array_id, "tilt": x.tilt, "azimuth": x.azimuth, "share": x.share} for x in a.itertuples()], seed=args.seed)
         with open(os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml"), "w") as f:
             yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
@@ -155,7 +157,7 @@ def stage_correct(args):
 
 
 def _one_generate(task):
-    park_id, lat, lon, cfg_path, hz, model_tag, step, snow_model = task
+    park_id, lat, lon, cfg_path, hz, model_tag, step, snow_model, start = task
     from parks import era5_db
     from parks_pv import drivers as DRV, generate as GEN
     conn = era5_db.connect()
@@ -163,6 +165,7 @@ def _one_generate(task):
         drv, meta = DRV.build(park_id, lat, lon, START, END, conn, model_tag, snow_cache=os.path.join(SNOW_CACHE, f"{park_id}.parquet"), step=step)
     finally:
         conn.close()
+    drv = drv[drv.index >= pd.Timestamp(start, tz="UTC")]       # no series before the park has its registered capacity
     cfg = yaml.safe_load(open(cfg_path))
     if snow_model != "depth_linear":
         drv["icon_snow_depth_cm"], meta["icon_snow"] = DRV.icon_snow_series(park_id, drv.index)
@@ -178,14 +181,17 @@ def _one_generate(task):
     return {"park_id": park_id, "cf_ac": float(cf), "cf_dc": float(res["power_park"].mean() / (cfg["kwp_dc"] * 1000.0)),
             "clipped_share_day": float(res.loc[day, "clipped"].mean()), "snow_loss_share": float(1 - res["power_park"].sum() / res["power_park_free"].sum()),
             "cams_fallback_share": meta["share_hours_cams_fallback"], "ring_missing_share": meta["share_hours_ring_missing"],
-            "era5_solar_cell": meta["era5_solar_cell"], "era5_met_cell": meta["era5_met_cell"], "n_steps": int(len(res)), "step": step}
+            "era5_solar_cell": meta["era5_solar_cell"], "era5_met_cell": meta["era5_met_cell"], "n_steps": int(len(res)), "step": step,
+            "series_start": str(drv.index[0])}
 
 
 def stage_generate(args):
     from concurrent.futures import ProcessPoolExecutor
     sel = load_selection(args.parks)
     hz = json.load(open(HORIZON_OUT))
-    tasks = [(r.park_id, r.lat, r.lon, os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml"), hz.get(r.park_id, {}), args.model_tag, args.step, args.snow_model) for r in sel.itertuples()]
+    full = P.commissioning_dates(sel)["commissioning_full"]
+    tasks = [(r.park_id, r.lat, r.lon, os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml"), hz.get(r.park_id, {}), args.model_tag, args.step, args.snow_model,
+              str(max(pd.Timestamp(START), full[r.park_id]).date())) for r in sel.itertuples()]
     rows = []
     with ProcessPoolExecutor(args.workers) as ex:
         for out in ex.map(_one_generate, tasks):
@@ -202,6 +208,7 @@ def stage_assemble(args):
     sites = pd.read_csv(os.path.join(paths.DATA_DIR, "sites.csv")).set_index("site_id")
     arrays = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"))
     hz = json.load(open(HORIZON_OUT))
+    dates = P.commissioning_dates(sel)
     for r in sel.itertuples():
         drv = pd.read_parquet(os.path.join(CHAIN_DIR, f"{r.park_id}_drivers.parquet"))
         res = pd.read_parquet(os.path.join(CHAIN_DIR, f"{r.park_id}_chain.parquet"))
@@ -209,7 +216,8 @@ def stage_assemble(args):
         cfg_path = os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml")
         cfg = yaml.safe_load(open(cfg_path))
         rel = A.release_frame(drv, res)
-        man = A.manifest(r, cfg, par.loc[r.park_id].to_dict(), meta, sites.loc[r.park_id].to_dict(),
+        pr = dict(par.loc[r.park_id].to_dict(), **{k: f"{v:%Y-%m-%d}" for k, v in dates.loc[r.park_id].items()})
+        man = A.manifest(r, cfg, pr, meta, sites.loc[r.park_id].to_dict(),
                          arrays[arrays.park_id == r.park_id].to_dict("records"), sites.loc[r.park_id, "horizon_src"], rel,
                          hashlib.sha256(open(cfg_path, "rb").read()).hexdigest(),
                          hashlib.sha256(json.dumps(hz.get(r.park_id, {}), sort_keys=True).encode()).hexdigest())
@@ -223,7 +231,7 @@ def stage_tables(args):
     par = pd.read_csv(os.path.join(paths.DATA_DIR, "park_params.csv"))
     sites = pd.read_csv(os.path.join(paths.DATA_DIR, "sites.csv"))
     rs = pd.read_csv(os.path.join(paths.DATA_DIR, f"run_summary{paths.VARIANT}.csv"))
-    parks = M.parks_table(sel, par, sites, rs)
+    parks = M.parks_table(sel, par, sites, rs, P.commissioning_dates(sel))
     parks.to_csv(os.path.join(paths.RELEASE_DIR, "parks.csv"), index=False)
     M.clients_table(parks).to_csv(os.path.join(paths.RELEASE_DIR, "clients.csv"), index=False)
     for f in ("sites.csv", "pv_arrays.csv", "pv_masterdata_view.csv"):

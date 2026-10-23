@@ -158,6 +158,12 @@ def test_pick_inverter_scales_to_park():
     assert n >= 1 and abs(n * inv["Paco"] - 5e6) / 5e6 < 0.25
 
 
+def test_pvwatts_inverter_caps_at_ac_rating():
+    ac = inverter.ac_pvwatts(pd.Series([0.0, 500.0, 2000.0, 5000.0]), 1000.0, eta_inv_nom=0.97)
+    assert abs(ac.iloc[-1] - 1000.0) < 1e-9 and abs(ac.iloc[-2] - 1000.0) < 1e-9   # cap = AC rating, not 0.97 * rating
+    assert 0.9 * 500.0 < ac.iloc[1] < 500.0
+
+
 def test_sandia_clips_and_has_night_tare():
     inv, n = inverter.pick_inverter(1_000_000.0, year=2020)
     pdc = pd.Series([0.0, 0.5e6, 1.3e6])

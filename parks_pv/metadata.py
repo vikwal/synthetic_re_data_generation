@@ -3,7 +3,7 @@ the sites stage and are copied)."""
 import pandas as pd
 
 
-def parks_table(sel: pd.DataFrame, par: pd.DataFrame, sites: pd.DataFrame, run_summary: pd.DataFrame) -> pd.DataFrame:
+def parks_table(sel: pd.DataFrame, par: pd.DataFrame, sites: pd.DataFrame, run_summary: pd.DataFrame, dates: pd.DataFrame = None) -> pd.DataFrame:
     p = par.set_index("park_id")
     s = sites.set_index("site_id")
     rows = []
@@ -12,7 +12,8 @@ def parks_table(sel: pd.DataFrame, par: pd.DataFrame, sites: pd.DataFrame, run_s
             "park_id": r.park_id, "site_id": r.park_id, "technology": "pv", "archetype": r.cls,
             "capacity_kw": float(p.loc[r.park_id, "ac_kw"]), "capacity_kwp_dc": float(p.loc[r.park_id, "kwp_dc"]),
             "dc_ac_ratio": float(p.loc[r.park_id, "dc_ac"]), "n_arrays": int(s.loc[r.park_id, "n_arrays"]),
-            "commissioning_first": f"{int(r.year)}-07-01", "commissioning_last": f"{int(r.year_last)}-07-01",
+            "commissioning_first": f"{dates.loc[r.park_id, 'commissioning_first']:%Y-%m-%d}" if dates is not None else f"{int(r.year)}-07-01",
+            "commissioning_last": f"{dates.loc[r.park_id, 'commissioning_full']:%Y-%m-%d}" if dates is not None else f"{int(r.year_last)}-07-01",
             "availability_mean": 0.98, "history_start": "",
             "client_id": r.client, "client_kind": r.kind, "region": int(r.region), "cohort": r.cohort, "size_bin": r.size_bin,
             "terrain_cls": r.terrain_cls, "n_units_mastr": int(r.n_units), "n_lokationen": int(r.n_lokationen),
@@ -27,6 +28,8 @@ def parks_table(sel: pd.DataFrame, par: pd.DataFrame, sites: pd.DataFrame, run_s
     out = pd.DataFrame(rows)
     if run_summary is not None and len(run_summary):
         out = out.merge(run_summary, on="park_id", how="left")
+        if "series_start" in out:
+            out["history_start"] = out.pop("series_start")
     return out
 
 

@@ -311,7 +311,7 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
     # park parameters
     pp = {"Leistung": f"{S['kwp']:.1f} kWp DC / {S['kw_ac']:.1f} kW AC, DC/AC {par['dc_ac']:.3f}, Leistungsbegrenzung laut MaStR: {par.get('power_limit')}",
           "Module": f"Ära {par['era']}, γ = {par['gamma_pdc']} 1/K (PVWatts), Inbetriebnahme {cfg['aging']['commissioning_date']}, Alterung {'an' if cfg['aging']['enabled'] else 'aus'}",
-          "Wechselrichter": f"PVWatts, η_nom {cfg['inverter']['eta_inv_nom']}, η_ref {cfg['inverter'].get('eta_inv_ref')}; AC-Deckel η_nom · P_AC",
+          "Wechselrichter": f"PVWatts, η_nom {cfg['inverter']['eta_inv_nom']}, η_ref {cfg['inverter'].get('eta_inv_ref')}; AC-Deckel P_AC (pvlib pdc0 = P_AC / η_nom)",
           "Verluste": f"DC {cfg['losses']['dc']:.0%}, AC {cfg['losses']['ac']:.0%}, Verfügbarkeit {cfg['losses']['availability']:.0%}, Verschmutzung {'an' if cfg['soiling']['enabled'] else 'aus'}",
           "Temperatur": f"{cfg['temperature']['model']}, u0 = {cfg['temperature']['u0']}, u1 = {cfg['temperature']['u1']}",
           "Einstrahlung": f"{cfg['transposition']['model']}, IAM {cfg['transposition']['iam']}, Albedo {cfg['transposition']['albedo']}; Horizont {'an' if cfg['shading']['horizon'] else 'aus'}, Reihenverschattung {'an' if cfg['shading']['inter_row'] else 'aus'}",
@@ -319,9 +319,9 @@ def section(pid: str, start: int = 12, rel_dir: str = None) -> list:
           "Gelände": f"{site.altitude:.0f} m ü. NN, Klasse {site.terrain_cls}, Hangneigung im Mittel {site.slope_mean:.1f}° (p90 {site.slope_p90:.1f}°)",
           "Horizont": f"{site.horizon_src}, max. {site.horizon_max_deg}°, Süd {site.horizon_south_deg}°",
           "Archetyp / Client": f"{park.archetype} / {park.client_id} ({park.client_kind}), Größe {park.size_bin}, Kohorte {park.cohort}"}
-    if pd.Timestamp(cfg["aging"]["commissioning_date"], tz="UTC") > df.index[0]:
-        pp["Vor Inbetriebnahme"] = (f"Die Reihe deckt den ganzen Zeitraum ab; vor {cfg['aging']['commissioning_date']} rechnet der Generator den Park "
-                                    "wie neu (Alterungsfaktor 1), es gibt keine Lücke vor der Inbetriebnahme.")
+    if df.index[0] > pd.Timestamp("2023-07-24", tz="UTC"):
+        pp["Reihenbeginn"] = (f"Die Reihe beginnt am {df.index[0]:%Y-%m-%d}, wenn laut MaStR die letzte Einheit in Betrieb ist "
+                              "(registrierte Leistung erreicht); davor gibt es keine Werte.")
     parts += [f"<h2>{n}. Parkparameter</h2>", PR.kv(pp), fig_horizon(S)]
     n += 1
 

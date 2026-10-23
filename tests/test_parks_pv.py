@@ -84,3 +84,16 @@ def test_refine_snow_does_not_bridge_gaps():
     assert f.loc["2024-01-01 01:30":"2024-01-01 03:30", "snow_depth_cm"].isna().all()      # no bridge across the missing hours
     assert f.loc["2024-01-01 01:30", "snowfall_cm"] == 1.0 and np.isnan(f.loc["2024-01-01 02:30", "snowfall_cm"])
     assert len(f) == 12
+
+
+def test_commissioning_dates_first_and_full(tmp_path):
+    units = pd.DataFrame({"EinheitMastrNummer": ["U1", "U2", "U3"],
+                          "Inbetriebnahmedatum": ["2012-09-30", "2025-01-31", "2024-06-19"]})
+    units.to_parquet(tmp_path / "u.parquet")
+    sel = pd.DataFrame({"park_id": ["A", "B"], "unit_ids": ["U1;U2", "U3"]})
+    d = P.commissioning_dates(sel, str(tmp_path / "u.parquet"))
+    assert d.loc["A", "commissioning_first"] == pd.Timestamp("2012-09-30") and d.loc["A", "commissioning_full"] == pd.Timestamp("2025-01-31")
+    assert d.loc["B", "commissioning_first"] == d.loc["B", "commissioning_full"] == pd.Timestamp("2024-06-19")
+    cfg = P.park_config("A", 50.0, 10.0, 100.0, {"kwp_dc": 1000.0, "dc_ac": 1.2, "gcr": 0.4, "gamma_pdc": -0.004, "year": 2012, "era": "multi_si",
+                                                 "commissioning_first": "2012-09-30"}, [{"name": "a0", "tilt": 20, "azimuth": 180, "share": 1.0}])
+    assert cfg["aging"]["commissioning_date"] == "2012-09-30"

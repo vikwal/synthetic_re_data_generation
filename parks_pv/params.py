@@ -1,14 +1,32 @@
 """Park parameters from the selection row (MaStR) and the chain config: PVWatts variant P of the Trianel
 benchmark (era gamma, physical IAM, ERA5 albedo, era aging), plus horizon and inter-row shading and the
 v1 loss level (E3: DC 5 %, AC 2 %, availability 0.98 ~ 0.93 of a loss-free chain)."""
-import numpy as np
+import os
 
+import numpy as np
+import pandas as pd
+
+from parks_pv import paths
 from pv import config as pvconfig, modules
 
 GAMMA = {"multi_si_early": -0.0045, "multi_si": -0.0042, "multi_perc": -0.0040, "mono_perc": -0.0036, "topcon_bifacial": -0.0030}
 WP_M2 = {"multi_si_early": 130, "multi_si": 150, "multi_perc": 165, "mono_perc": 195, "topcon_bifacial": 215}
 DENSITY_YEARS, DENSITY_KWP_HA = [2010, 2014, 2018, 2022, 2025], [450, 600, 850, 1150, 1250]
 LOSSES = {"dc": 0.05, "ac": 0.02, "availability": 0.98}
+UNITS = os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet")
+
+
+def commissioning_dates(sel: pd.DataFrame, units_path: str = UNITS) -> pd.DataFrame:
+    """Per park (index park_id) the MaStR commissioning date of the first unit (`commissioning_first`, aging starts here)
+    and of the last unit (`commissioning_full`: the park has its registered capacity, the release series starts here)."""
+    u = pd.read_parquet(units_path, columns=["EinheitMastrNummer", "Inbetriebnahmedatum"]).set_index("EinheitMastrNummer")
+    rows = []
+    for r in sel.itertuples():
+        d = pd.to_datetime(u["Inbetriebnahmedatum"].reindex(str(r.unit_ids).split(";")))
+        if d.isna().any():
+            raise ValueError(f"{r.park_id}: units without commissioning date in {units_path}")
+        rows.append({"park_id": r.park_id, "commissioning_first": d.min().normalize(), "commissioning_full": d.max().normalize()})
+    return pd.DataFrame(rows).set_index("park_id")
 
 
 def park_parameters(r) -> dict:
@@ -38,6 +56,6 @@ def park_config(park_id: str, lat: float, lon: float, alt: float, par: dict, arr
            "inverter": {"model": "pvwatts", "eta_inv_nom": 0.97},
            "transposition": {"albedo": "era5", "iam": "physical"},
            "losses": dict(LOSSES),
-           "aging": {"enabled": True, "commissioning_date": f"{par['year']}-07-01", "era": par["era"]},
+           "aging": {"enabled": True, "commissioning_date": par.get("commissioning_first") or f"{par['year']}-07-01", "era": par["era"]},
            "shading": {"horizon": horizon, "inter_row": inter_row}}
     return pvconfig.normalise(cfg)
