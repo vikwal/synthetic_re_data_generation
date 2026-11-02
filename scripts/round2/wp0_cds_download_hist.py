@@ -50,7 +50,7 @@ VARIABLES = [
 ]
 EXPECTED_SHORT = {"u10", "v10", "u100", "v100", "fg10", "zust", "t2m", "sp",
                   "d2m", "sshf", "blh", "gwd"}
-MAX_WORKERS = 2
+MAX_WORKERS = 1  # CDS asks for sequential requests; 2 workers hit the queue limit
 
 os.makedirs(OUT_DIR, exist_ok=True)
 logging.basicConfig(
@@ -140,13 +140,17 @@ def fetch_month(year: int, month: int) -> tuple:
     tmp = path + ".part"
     client = cdsapi.Client(quiet=True, wait_until_complete=True)
     t0 = time.time()
-    for attempt in range(3):
+    for attempt in range(40):
         try:
             client.retrieve(DATASET, req, tmp)
             break
         except Exception as e:  # transient CDS errors: retry after a pause
-            log.warning("%s attempt %d failed: %s", fname, attempt + 1, e)
-            time.sleep(120)
+            msg = str(e)
+            # the per-user queue limit is hit while earlier (orphaned) requests
+            # are still being processed server-side: wait longer, do not give up
+            wait = 600 if "queued requests" in msg else 120
+            log.warning("%s attempt %d failed (%s); retry in %ds", fname, attempt + 1, msg[:120], wait)
+            time.sleep(wait)
     else:
         return (year, month, "failed")
     os.replace(tmp, path)
