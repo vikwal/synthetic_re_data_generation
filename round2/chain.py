@@ -34,6 +34,9 @@ from round2 import meterdata
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ERA5_DIR_DEFAULT = "/mnt/nas/synthetic/raw/wind_era5"
 ERA5_DIR_V2 = "/mnt/nvme2/synthetic/raw/wind_era5_v2"
+# density handling in the power step: "iec" (round 3, IEC 61400-12-1 wind-speed
+# normalisation) or "multiplicative" (round 2, P_curve * rho/1.225 capped at rated)
+DENSITY_METHOD = "iec"
 WAKE_DIR = "/mnt/nvme2/synthetic/raw/round2/wakes"
 WAKE_KS = [0.05, 0.075, 0.10]
 # effective window: chain outputs start 2023-07-24 (round-1 convention),
