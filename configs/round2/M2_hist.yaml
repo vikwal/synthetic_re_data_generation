@@ -1,0 +1,14 @@
+# Round 3 longitudinal aging test: M2 chain (no aging, no wakes) over the full ERA5 record 2020-01..2026-04 (wind_era5_v3)
+# Paper M2: M1 + gated height-consistent quantile-mapping correction (WP2).
+# Internal experiment_id 'M2noage' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'M2' in figures/tables).
+round2:
+  experiment_id: 'M2noage_hist'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'power_law'
+  aging_model: 'none'
+  wake: {enabled: false}
+  density: 'iec'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v3'
+  commissioning_table: 'data/round2/park_commissioning.csv'

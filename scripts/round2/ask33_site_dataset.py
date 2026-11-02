@@ -262,16 +262,22 @@ def postprocess(release_dir: str) -> None:
         df = df.rename(columns=rename)
         meas = measured_hourly(sid).reindex(df.index)
         df = pd.concat([df, meas], axis=1)
-        unexpected = [c for c in df.columns if c not in RELEASE_COLS]
-        missing = [c for c in RELEASE_COLS if c not in df.columns]
+        # surface_layer_flag_t* exist only for the MOST chain (V4); the
+        # power-law chain (V5, manuscript schema) releases without them
+        has_flags = any(c.startswith("surface_layer_flag") for c in df.columns)
+        release_cols = [c for c in RELEASE_COLS
+                        if has_flags or not c.startswith("surface_layer_flag")]
+        unexpected = [c for c in df.columns if c not in release_cols]
+        missing = [c for c in release_cols if c not in df.columns]
         assert not unexpected and not missing, \
             f"{sid}: unexpected={unexpected} missing={missing}"
-        df = df[RELEASE_COLS]
+        df = df[release_cols]
         assert df.index.equals(expected_index), f"{sid}: index mismatch"
         df.index.name = "timestamp"
-        for i in range(1, N_TURBINES + 1):
-            df[f"surface_layer_flag_t{i}"] = \
-                df[f"surface_layer_flag_t{i}"].astype(str).eq("True")
+        if has_flags:
+            for i in range(1, N_TURBINES + 1):
+                df[f"surface_layer_flag_t{i}"] = \
+                    df[f"surface_layer_flag_t{i}"].astype(str).eq("True")
         df.to_parquet(os.path.join(release_dir, f"synth_{sid}.parquet"))
         with open(os.path.join(RUN_DIR, f"manifest_{sid}.json")) as f:
             manifests[sid] = json.load(f)
@@ -303,10 +309,10 @@ with gaps left as NaN.
   branch A), relative_humidity [-], saturated_vapor_pressure [Pa],
   density [kg/m3] (all from ERA5 dew point / temperature / pressure).
 - Per turbine t1..t6 (see turbine_parameter.csv for types and hub heights):
-  wind_speed_t{{i}} [m/s] (MOST profile anchored at 100 m),
-  surface_layer_flag_t{{i}} [bool] (hub above 0.1 * boundary_layer_height,
-  i.e. surface-layer criterion violated), density_t{{i}} [kg/m3] (hub
-  height), power_t{{i}} [W] (incl. Weibull aging; commissioning dates in
+  wind_speed_t{{i}} [m/s] (dynamic two-level ERA5 power-law exponent,
+  clipped to [0, 0.4], applied from 10 m), density_t{{i}} [kg/m3] (hub
+  height), power_t{{i}} [W] (manufacturer curve read at the IEC 61400-12-1
+  density-normalised speed, incl. Weibull aging; commissioning dates in
   wind_parameter.csv).
 - Measured DWD weather (10-min records aggregated to hourly means,
   closed/label left, NO imputation — gaps are NaN):
@@ -426,17 +432,19 @@ def verify(release_dir: str) -> None:
         if str(wp.get(sid)) != str(comm.get(sid)):
             problems.append(f"{sid}: commissioning {wp.get(sid)} != "
                             f"table {comm.get(sid)}")
-        blh_means.append([df[f"surface_layer_flag_t{i}"].mean()
-                          for i in range(1, N_TURBINES + 1)])
+        if "surface_layer_flag_t1" in df.columns:
+            blh_means.append([df[f"surface_layer_flag_t{i}"].mean()
+                              for i in range(1, N_TURBINES + 1)])
 
     # surface_layer_flag share must increase with hub height (57,138,149,95,
     # 119,78 -> order by hub height: t1(57) < t6(78) < t4(95) < t5(119)
     # < t2(138) < t3(149))
     order = [0, 5, 3, 4, 1, 2]
-    med = np.median(np.array(blh_means), axis=0)
-    if not all(med[order[i]] <= med[order[i + 1]] + 1e-9
-               for i in range(len(order) - 1)):
-        problems.append(f"blh_flag medians not monotone in hub height: {med}")
+    if blh_means:  # MOST releases only
+        med = np.median(np.array(blh_means), axis=0)
+        if not all(med[order[i]] <= med[order[i + 1]] + 1e-9
+                   for i in range(len(order) - 1)):
+            problems.append(f"blh_flag medians not monotone in hub height: {med}")
 
     # correction spot checks on raw run output (pre-merge). height_consistent
     # QM anchors at 10 m and scales 100 m by the same factor, so branch A must

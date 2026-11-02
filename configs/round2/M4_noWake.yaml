@@ -1,0 +1,18 @@
+# M4 without wakes (ablation M4-noWake, round 3; generated from M4.yaml)
+# Paper M4 (DEPLOYED): dyn. power-law extrapolation + gated QM correction +
+# Weibull aging + NOJ wake losses. This is the framework's default/reported
+# configuration (Table tab:experimental_framework, tab:ladder in the paper).
+# Internal experiment_id 'M5all_PL' kept (join key for results/scores.csv,
+# round2/paper_style.py:PAPER_RUNG translates it to 'M4' in figures/tables).
+round2:
+  experiment_id: 'M5all_PL_noWake'
+  correction: 'height_consistent'
+  correction_branch: 'auto'
+  shear: 'power_law'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: false, model: 'noj', k: 0.075}
+  density: 'iec'
+  era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
+  commissioning_table: 'data/round2/park_commissioning.csv'
