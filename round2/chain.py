@@ -53,6 +53,9 @@ DEFAULT_THETA = {
 def _load_park_config(park_id):
     path = os.path.join(REPO, "configs", "real_wind_parks_era5",
                         f"config_{park_id}.yaml")
+    if not os.path.exists(path):  # moved to the archive in 78a11f4
+        path = os.path.join(REPO, "archiv", "legacy_configs", "real_wind_parks_era5",
+                            f"config_{park_id}.yaml")
     with open(path) as f:
         return yaml.safe_load(f)
 
@@ -270,10 +273,12 @@ class ParkCache:
 class Chain:
     def __init__(self, park_ids=None):
         if park_ids is None:
+            cfg_dir = os.path.join(REPO, "configs", "real_wind_parks_era5")
+            if not os.path.isdir(cfg_dir):  # moved to the archive in 78a11f4
+                cfg_dir = os.path.join(REPO, "archiv", "legacy_configs", "real_wind_parks_era5")
             park_ids = sorted(
                 os.path.basename(p)[len("config_"):-len(".yaml")]
-                for p in glob.glob(os.path.join(
-                    REPO, "configs", "real_wind_parks_era5", "config_*.yaml")))
+                for p in glob.glob(os.path.join(cfg_dir, "config_*.yaml")))
         self.parks = [ParkCache(pid) for pid in park_ids]
 
     def run_chain(self, theta: dict) -> float:
