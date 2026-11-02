@@ -205,7 +205,7 @@ round2:
   commissioning_table: data/round2/site_commissioning.csv
   correction: height_consistent
   correction_branch: auto
-  density: v1_mixed
+  density: iec
   era5_dir_v2: /mnt/nvme2/synthetic/raw/wind_era5_v2
   experiment_id: SITE_v2
   output_naming: readable
