@@ -40,6 +40,26 @@ PROBLEM = {
     ],
 }
 
+# round 3 (reviewer 3a): independent inputs. aging_lambda is replaced by the
+# anchor D20 (cumulative 20-year loss, uniform 0.08..0.18 around the 12.6 %
+# of Germer et al.); lambda follows from (D20, kappa) in decode().
+R3_PROBLEM = {
+    "num_vars": 10,
+    "names": ["wind_level_factor", "correction_mode", "shear_method",
+              "z0_scale", "aging_d20", "aging_kappa",
+              "power_curve_scale", "density_mode", "wake_k", "aging_model"],
+    "bounds": [b if i != 4 else [0.08, 0.18]
+               for i, b in enumerate(PROBLEM["bounds"])],
+}
+D20_DEFAULT = 0.126
+
+
+def lambda_from_anchor(d20: float, kappa: float) -> float:
+    """Weibull scale that reproduces a cumulative loss d20 at age 20 y."""
+    import math
+    return 20.0 / (-math.log(1.0 - d20)) ** (1.0 / kappa)
+
+
 CORR = ["off", "wind10_only", "height_consistent"]
 DENS = ["static_1225", "dynamic"]
 SHEAR = ["power_law", "most"]
@@ -56,6 +76,9 @@ MU_STAR_REFERENCE = {
 MU_STAR_TOLERANCE = 0.005
 
 
+R3 = False  # set by main(--r3): x[4] is aging_d20 instead of aging_lambda
+
+
 def decode(x):
     return {
         "wind_level_factor": float(x[0]),
@@ -63,7 +86,8 @@ def decode(x):
         "shear": SHEAR[min(int(x[2]), 1)],
         "z0_scale": float(np.exp(x[3])),
         "aging_model": AGING[min(int(x[9]), 1)] if len(x) > 9 else "weibull",
-        "aging_lambda": float(x[4]),
+        "aging_lambda": (lambda_from_anchor(float(x[4]), float(x[5])) if R3
+                         else float(x[4])),
         "aging_kappa": float(x[5]),
         "power_curve_scale": float(x[6]),
         "density": DENS[min(int(x[7]), 1)],
@@ -78,14 +102,21 @@ def main():
     ap.add_argument("--factors", type=int, choices=(9, 10), default=9,
                     help="9 = canonical screening (manuscript); "
                          "10 = ask-29 companion incl. aging_model switch")
+    ap.add_argument("--r3", action="store_true",
+                    help="round-3 reparametrisation: aging_d20 instead of aging_lambda, "
+                         "outputs with suffix _r3")
     args = ap.parse_args()
 
-    problem = dict(PROBLEM)
+    global R3
+    R3 = bool(args.r3)
+    problem = dict(R3_PROBLEM if R3 else PROBLEM)
     if args.factors == 9:
         problem["num_vars"] = 9
-        problem["names"] = PROBLEM["names"][:9]
-        problem["bounds"] = PROBLEM["bounds"][:9]
+        problem["names"] = problem["names"][:9]
+        problem["bounds"] = problem["bounds"][:9]
     suffix = "" if args.factors == 9 else "_ask29_10factor"
+    if R3:
+        suffix += "_r3"
 
     chain = Chain()
     # all-aging SA baseline (paper: S3), see wp6_tornado.py
@@ -107,6 +138,8 @@ def main():
     # after the ask-29(b) baseline switch ALL manuscript quotes are re-drawn
     shifted = []
     for param, ref in MU_STAR_REFERENCE.items():
+        if param not in set(df.parameter):
+            continue
         new = float(df.loc[df.parameter == param, "mu_star"].iloc[0])
         if abs(new - ref) > MU_STAR_TOLERANCE:
             shifted.append(f"{param}: {ref:.4f} -> {new:.4f}")

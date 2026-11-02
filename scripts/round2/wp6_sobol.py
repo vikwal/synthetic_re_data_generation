@@ -22,6 +22,7 @@ CONTINUOUS = {
     "wind_level_factor": [0.95, 1.05],
     "z0_scale_log": [np.log(0.5), np.log(2.0)],
     "aging_lambda": [45.0, 70.0],
+    "aging_d20": [0.08, 0.18],     # round 3: anchor instead of lambda (independent of kappa)
     "aging_kappa": [1.5, 2.5],
     "power_curve_scale": [0.97, 1.03],
     "wake_k": [0.05, 0.10],
@@ -29,9 +30,21 @@ CONTINUOUS = {
 NAME_MAP = {"z0_scale": "z0_scale_log"}
 
 
+def lambda_from_anchor(d20: float, kappa: float) -> float:
+    """Weibull scale that reproduces a cumulative loss d20 at age 20 y."""
+    return 20.0 / (-np.log(1.0 - d20)) ** (1.0 / kappa)
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--r3", action="store_true",
+                    help="round-3 reparametrisation (reads morris_ranking_r3.csv, "
+                         "aging_d20 instead of aging_lambda, outputs with suffix _r3)")
+    args = ap.parse_args()
+    suffix = "_r3" if args.r3 else ""
     ranking = pd.read_csv(os.path.join(REPO, "results", "round2",
-                                       "morris_ranking.csv"))
+                                       f"morris_ranking{suffix}.csv"))
     top = []
     for name in ranking["parameter"]:
         key = NAME_MAP.get(name, name)
@@ -53,12 +66,18 @@ def main():
     def theta_of(x):
         th = {"aging_model": "weibull", "wake_enabled": True,
               "correction": "height_consistent", "shear": "power_law",
-              "density": "v1_mixed"}
+              "density": "dynamic"}
         for k, v in zip(top, x):
             if k == "z0_scale_log":
                 th["z0_scale"] = float(np.exp(v))
             else:
                 th[k] = float(v)
+        if args.r3:
+            # independent inputs: lambda follows from the sampled anchor and
+            # shape; factors not among the top-4 keep their defaults
+            d20 = th.pop("aging_d20", 0.126)
+            th["aging_kappa"] = th.get("aging_kappa", 2.0)
+            th["aging_lambda"] = lambda_from_anchor(d20, th["aging_kappa"])
         return th
 
     Y = np.array([chain.run_chain(theta_of(x)) for x in X])
@@ -66,7 +85,7 @@ def main():
     df = pd.DataFrame({"parameter": top, "S1": res["S1"],
                        "S1_conf": res["S1_conf"], "ST": res["ST"],
                        "ST_conf": res["ST_conf"]}).sort_values("ST", ascending=False)
-    df.to_csv(os.path.join(REPO, "results", "round2", "sobol_indices.csv"),
+    df.to_csv(os.path.join(REPO, "results", "round2", f"sobol_indices{suffix}.csv"),
               index=False)
     print(df.round(4).to_string(index=False))
 
@@ -81,7 +100,7 @@ def main():
     ax.set_ylabel("Sobol index")
     ax.set_title("Sobol indices, output: mean |energy ratio - 1|")
     ax.legend()
-    fig.savefig(os.path.join(REPO, "figs", "round2", "sobol_indices.png"),
+    fig.savefig(os.path.join(REPO, "figs", "round2", f"sobol_indices{suffix}.png"),
                 dpi=200, bbox_inches="tight")
     print("figure: figs/round2/sobol_indices.png")
 
