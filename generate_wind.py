@@ -13,7 +13,7 @@ Chain components (see the round2/ package):
   correction     gated quantile-mapping bias correction, height-consistent on v10+v100
   shear          power_law (dynamic exponent from v10/v100) | most (stability-corrected)
   aging_model    const | weibull | weibull_step
-  density        v1_mixed | static_1225 | dynamic
+  density        iec | v1_mixed | static_1225 | dynamic
   wake           wake loss factor w(t) applied to the park sum
   scalers        wind_level_factor, power_curve_scale, z0_scale (sensitivity analysis)
   curtailment    switchable curtailment layers after power_park (curtailment/ package):
@@ -56,7 +56,7 @@ R2_DEFAULTS = {
     'wake': {'enabled': False, 'model': 'noj', 'k': 0.075},
     'apply_ageing_override': None,    # None = Park-Config; True/False = für ALLE Parks erzwingen
     'commissioning_table': None,      # CSV mit autoritativen Park-Inbetriebnahmedaten (Ask 12)
-    'density': 'v1_mixed',            # v1_mixed | static_1225 | dynamic
+    'density': 'iec',                 # iec (round 3, IEC 61400-12-1) | v1_mixed (round 2) | static_1225 | dynamic
     'wind_level_factor': 1.0,
     'power_curve_scale': 1.0,
     'z0_scale': 1.0,
@@ -439,13 +439,23 @@ def get_cp_from_power_curve_hardcoded(data: pd.DataFrame,
             cp_values.append(0)
             continue
         dr = degradation_vector.loc[t]
-        if density_mode == 'dynamic':
+        if density_mode == 'iec':
+            # IEC 61400-12-1 density normalisation for pitch-regulated turbines:
+            # the manufacturer curve (reference rho_0 = 1.225) is read at the
+            # normalised speed v_n = v (rho/rho_0)^(1/3); rated power stays
+            # unchanged, only the knee shifts. Cp is expressed with the actual
+            # density so that 0.5 rho A Cp v^3 returns exactly P_curve(v_n).
             rho_t = rho.loc[t]
+            v_curve = v * (rho_t / 1.225) ** (1/3)
+        elif density_mode == 'dynamic':
+            rho_t = rho.loc[t]
+            v_curve = v
         else:
             rho_t = 1.225 # standard air density for stable cp values # rho.loc[t]
+            v_curve = v
         degraded_ws = power_curve.index * (1/dr)**(1/3)
         degraded_power_curve = pd.Series(power_curve.values, index=degraded_ws).sort_index()
-        power = np.interp(v, degraded_power_curve.index, degraded_power_curve.values)
+        power = np.interp(v_curve, degraded_power_curve.index, degraded_power_curve.values)
         cp = power / (0.5 * rho_t * rotor_area * v**3)
         cp_values.append(cp)
     Cp = pd.Series(cp_values, index=wind_speed.index, name="Cp").clip(lower=0, upper=1)

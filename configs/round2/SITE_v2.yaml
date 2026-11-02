@@ -11,7 +11,7 @@ round2:
   aging: {lambda: 54.5, kappa: 2.0}
   apply_ageing_override: true
   wake: {enabled: false}             # single-turbine site dataset
-  density: 'v1_mixed'                # ERA5-only density inputs regardless of mode
+  density: 'iec'                # ERA5-only density inputs regardless of mode
   era5_dir_v2: '/mnt/nvme2/synthetic/raw/wind_era5_v2'
   commissioning_table: 'data/round2/site_commissioning.csv'
   artifacts_dir: 'data/round2_site'  # site-only correction/ + topo_features.csv (avoids park/site JSON collision)

@@ -239,10 +239,15 @@ class ParkCache:
             v_eff = v_hub * dr ** (1.0 / 3.0)
             p_curve = np.interp(v_eff, ticks, watts)
             if th["density"] == "static_1225":
-                rho = 1.225
+                p = p_curve
+            elif DENSITY_METHOD == "iec":
+                # IEC 61400-12-1 wind-speed normalisation (pitch-regulated):
+                # read the curve at v_eff (rho/rho_0)^(1/3), rated unchanged
+                rho = self.rho_hub[h]
+                p = np.interp(v_eff * (rho / 1.225) ** (1.0 / 3.0), ticks, watts)
             else:
                 rho = self.rho_hub[h]
-            p = p_curve * (rho / 1.225)
+                p = p_curve * (rho / 1.225)
             p = np.where((v_hub < s["cut_in"]) | (v_hub > s["cut_out"]), 0.0, p)
             p = np.minimum(p, rated_power)
             p_park += p

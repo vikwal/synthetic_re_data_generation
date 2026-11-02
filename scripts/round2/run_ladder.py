@@ -28,6 +28,8 @@ from round2 import evaluation, meterdata  # noqa: E402
 
 PYTHON = os.path.join(REPO, "synthre", "bin", "python")
 PARK_CONFIG_DIR = os.path.join(REPO, "configs", "real_wind_parks_era5")
+if not os.path.isdir(PARK_CONFIG_DIR):  # moved to the archive in 78a11f4
+    PARK_CONFIG_DIR = os.path.join(REPO, "archiv", "legacy_configs", "real_wind_parks_era5")
 GEN_DIR = os.path.join(REPO, "configs", "round2", "_generated")
 SYNTH_BASE = "/mnt/nvme2/synthetic"
 RESULTS = os.path.join(REPO, "results", "round2", "ladder_metrics.csv")
