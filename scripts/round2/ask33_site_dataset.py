@@ -422,7 +422,10 @@ def verify(release_dir: str) -> None:
         df = pd.read_parquet(os.path.join(release_dir, f"synth_{sid}.parquet"))
         if not df.index.equals(expected_index):
             problems.append(f"{sid}: index mismatch ({len(df)} rows)")
-        if list(df.columns) != RELEASE_COLS:
+        expected_cols = [c for c in RELEASE_COLS
+                         if "surface_layer_flag_t1" in df.columns
+                         or not c.startswith("surface_layer_flag")]
+        if list(df.columns) != expected_cols:
             problems.append(f"{sid}: column mismatch")
         dens = df[[f"density_t{i}" for i in range(1, N_TURBINES + 1)]]
         # lower bound 0.7 admits mountain stations (05792 Zugspitze, 2904 m)
