@@ -163,8 +163,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default="2020-01")
     ap.add_argument("--end", default="2023-06")
+    ap.add_argument("--forward", action="store_true",
+                    help="oldest month first; default is newest first so the months adjoining "
+                         "the existing station series arrive first and the chain can start early")
     args = ap.parse_args()
     months = list(month_range(args.start, args.end))
+    if not args.forward:
+        months.reverse()
     log.info("requesting %d months %s..%s into %s", len(months), args.start, args.end, OUT_DIR)
     results = {}
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
