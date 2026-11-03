@@ -283,12 +283,30 @@ def postprocess(release_dir: str) -> None:
             manifests[sid] = json.load(f)
         if n % 25 == 0:
             print(f"[{n}/{len(ids)}] postprocessed", flush=True)
-    for name in ("wind_parameter.csv", "turbine_parameter.csv"):
-        shutil.copy(os.path.join(RUN_DIR, name), os.path.join(release_dir, name))
+    shutil.copy(os.path.join(RUN_DIR, "wind_parameter.csv"),
+                os.path.join(release_dir, "wind_parameter.csv"))
+    write_turbine_tables(os.path.join(RUN_DIR, "turbine_parameter.csv"), release_dir)
     with open(os.path.join(release_dir, "manifests.json"), "w") as f:
         json.dump(manifests, f, indent=2, default=str)
     write_readme(release_dir)
     print(f"postprocess: {len(ids)} parquet files -> {release_dir}")
+
+
+def write_turbine_tables(src: str, release_dir: str) -> None:
+    """The chain writes one row per turbine AND site (1200 rows). Downstream
+    loaders (forecasting_framework preprocess_synth_wind_icond2) read
+    turbine_parameter.csv as the catalogue of the six turbine types and sum
+    one power column per row -- 1200 rows multiply the target by 200. Ship the
+    catalogue under the expected name and the per-site table beside it."""
+    per_site = pd.read_csv(src, sep=";", dtype={"park_id": str})
+    per_site.to_csv(os.path.join(release_dir, "turbine_parameter_per_site.csv"),
+                    sep=";", index=False)
+    spec_cols = [c for c in per_site.columns if c != "park_id"]
+    generic = per_site[spec_cols].drop_duplicates()
+    assert len(generic) == N_TURBINES, \
+        f"turbine catalogue is not site-independent: {len(generic)} distinct rows"
+    generic = generic.assign(park_id="all")
+    generic.to_csv(os.path.join(release_dir, "turbine_parameter.csv"), sep=";", index=False)
 
 
 def write_readme(release_dir: str) -> None:
@@ -323,7 +341,8 @@ with gaps left as NaN.
 
 ## Companion tables
 - wind_parameter.csv — site coordinates, altitude, commissioning date.
-- turbine_parameter.csv — the six turbine types with hub heights and specs.
+- turbine_parameter.csv — the six turbine types with hub heights and specs
+  (park_id `all`); turbine_parameter_per_site.csv repeats them per site.
 - wind_missing_values_hourly.csv — per-site, per-column missing shares [%]
   of the measured_* columns on the hourly grid.
 - site_branch_manifest.csv — correction branch per site (A = quantile
