@@ -140,7 +140,7 @@ def fetch_month(year: int, month: int) -> tuple:
     tmp = path + ".part"
     client = cdsapi.Client(quiet=True, wait_until_complete=True)
     t0 = time.time()
-    for attempt in range(40):
+    for attempt in range(200):  # an orphaned request can block the queue for hours
         try:
             client.retrieve(DATASET, req, tmp)
             break
