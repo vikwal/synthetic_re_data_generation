@@ -1,0 +1,9 @@
+[theme]
+# Force light mode regardless of the visitor's OS/browser dark-mode setting,
+# so the dashboard always looks the same instead of depending on the CSS
+# dark-mode overrides holding up perfectly on every element.
+base = "light"
+primaryColor = "#28A745"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#1A1A1A"

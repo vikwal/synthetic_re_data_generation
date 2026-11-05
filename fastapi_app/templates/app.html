@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synthetic Renewables</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/static/style.css?v=26">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><span class="logo">◐</span> Synthetic Renewables</div>
+      <nav class="nav">
+        <button class="nav-btn active" data-view="workspace">Workspace</button>
+        <button class="nav-btn" data-view="compare">Compare</button>
+        <button class="nav-btn" data-view="models">Pre-trained model</button>
+        <button class="nav-btn" data-view="fl">FL model</button>
+      </nav>
+      <div class="spacer"></div>
+      <div id="topbar-actions"></div>
+      <div class="logos">
+        <img src="/static/img/HKA_Logo.png" alt="Hochschule Karlsruhe – University of Applied Sciences" class="logo-hka">
+        <span class="logo-divider"></span>
+        <div class="funded-by">
+          <span class="funded-label">Funded by</span>
+          <img src="/static/img/bmftr_logo.svg" alt="German Federal Ministry of Research, Technology and Space" class="logo-bmftr">
+        </div>
+      </div>
+    </header>
+
+    <div class="body">
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-head">
+          <span>Scenarios</span>
+          <div class="btn-group">
+            <button id="new-wind" class="btn small" title="New wind park">+ Wind</button>
+            <button id="new-solar" class="btn small" title="New solar plant">+ Solar</button>
+          </div>
+        </div>
+        <ul id="scenario-list" class="scenario-list"></ul>
+      </aside>
+      <main id="main" class="main"></main>
+    </div>
+  </div>
+  <div id="toasts" class="toasts"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script type="module" src="/static/js/main.js?v=26"></script>
+</body>
+</html>

@@ -6,3 +6,6 @@ results
 synthre
 figs
 SytheticVenv/
+
+# FastAPI app: generated data (scenarios, results, trained models)
+fastapi_app/storage/

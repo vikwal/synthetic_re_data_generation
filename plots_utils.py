@@ -55,6 +55,68 @@ def get_location_name(lat, lon):
     except Exception as e:
         return "Unknown Location"
 
+def search_location(query, limit=5):
+    """
+    Forward-geocode a place name to candidate locations using Nominatim (OpenStreetMap).
+
+    Nominatim is backed by crowd-sourced OSM data, which occasionally contains vandalized
+    or spam entries (a shop/office/POI tagged with junk text as its name). To keep those out
+    of the UI, results are restricted to genuine place/administrative-boundary entries (cities,
+    towns, villages, districts, etc.) and anything with a suspiciously long or odd-looking
+    name is dropped.
+
+    Args:
+        query (str): Free-text place name typed by the user (e.g. "Berlin", "Cologne, Germany").
+        limit (int): Max number of candidate matches to return.
+
+    Returns:
+        list[dict]: Each dict has 'display_name', 'lat', 'lon'. Empty list on no match/error.
+    """
+    if not query or not query.strip():
+        return []
+
+    # OSM tags that correspond to real settlements/administrative areas, as opposed to
+    # arbitrary points of interest (shops, offices, amenities, ...) where vandalism/spam
+    # is far more likely to show up.
+    allowed_classes = {'place', 'boundary'}
+
+    try:
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            'q': query.strip(),
+            'format': 'json',
+            'addressdetails': 1,
+            'limit': limit,
+            # Bias results towards Germany since that's where the underlying weather/NWP data lives.
+            'countrycodes': 'de',
+        }
+        headers = {'User-Agent': 'SyntheticRenewables/1.0'}
+        response = requests.get(url, params=params, headers=headers, timeout=5)
+        if response.status_code != 200:
+            return []
+
+        results = response.json()
+        cleaned = []
+        for r in results:
+            if r.get('class') not in allowed_classes:
+                continue
+            name = r.get('display_name', '').strip()
+            # Guard against unexpectedly long/junk names slipping through even within
+            # allowed classes.
+            if not name or len(name) > 120:
+                continue
+            try:
+                cleaned.append({
+                    'display_name': name,
+                    'lat': float(r['lat']),
+                    'lon': float(r['lon']),
+                })
+            except (KeyError, ValueError, TypeError):
+                continue
+        return cleaned
+    except Exception:
+        return []
+
 def find_nearest_station_for_park(park_lat, park_lon, all_wind_params):
     """
     Finds the nearest weather station for a single wind park.
@@ -198,7 +260,7 @@ def load_grid_point_data(filename: str, grid_dir: str = "./data/parquet/grid_poi
         return None
     
 
-def generate_wind_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **params):
+def generate_wind_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, silent=False, **params):
     """Generate synthetic wind power from grid meteorological data using ERA5 methods with multiple turbines."""
     try:
         
@@ -275,8 +337,9 @@ def generate_wind_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **para
                     random_seed=wind_params.get('random_seed', 42)
                 )
                 
-                st.info(f"🕐 **Ageing Applied**: Commissioning date: {actual_commissioning_date}")
-                
+                if not silent:
+                    st.info(f"🕐 **Ageing Applied**: Commissioning date: {actual_commissioning_date}")
+
             except Exception as e:
                 st.warning(f"⚠️ Could not apply ageing: {e}")
                 st.exception(e)  # Show full traceback for debugging
@@ -347,16 +410,429 @@ def generate_wind_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **para
         total_installed_capacity = max_values_per_column.sum()
         
         # Display success message with all turbines
-        turbine_count = len(wind_params['turbines'])
-        st.success(f"Generated wind power using **{turbine_count} turbines**: {', '.join(turbine_names)}")
-        st.info(f"**Total Installed Capacity:** {total_installed_capacity/1_000_000:.2f} MW")
-        
+        if not silent:
+            turbine_count = len(wind_params['turbines'])
+            st.success(f"Generated wind power using **{turbine_count} turbines**: {', '.join(turbine_names)}")
+            st.info(f"**Total Installed Capacity:** {total_installed_capacity/1_000_000:.2f} MW")
+
         return result_df
         
     except Exception as e:
         st.error(f"Error generating wind power from grid data with ERA5: {e}")
         st.exception(e)  # This will show the full stack trace
         return None
+
+def _haversine_offset_m(lat1, lon1, lat2, lon2):
+    """Approximate local-tangent-plane (east, north) offset in meters from
+    point 1 to point 2. Good enough for turbine spacings of a few km — not
+    meant for long-range geodesy."""
+    lat1_r = np.radians(lat1)
+    dx = (lon2 - lon1) * 111320.0 * np.cos(lat1_r)
+    dy = (lat2 - lat1) * 110540.0
+    return dx, dy
+
+
+def _circle_overlap_area_vec(d, r1, r2):
+    """Area of intersection between two circles: one of (per-element) radius
+    r1 centered at distance d away, and one of fixed radius r2 at the origin.
+    Standard circle-circle lens-area formula, vectorized over d/r1 arrays."""
+    d = np.asarray(d, dtype=float)
+    r1 = np.asarray(r1, dtype=float)
+    r2 = float(r2)
+    out = np.zeros_like(d)
+
+    full = d <= np.abs(r1 - r2)
+    none_ = d >= (r1 + r2)
+    partial = ~full & ~none_
+
+    out[full] = np.pi * np.minimum(r1[full], r2) ** 2
+
+    dp = np.maximum(d[partial], 1e-6)
+    r1p = r1[partial]
+    term1 = r1p ** 2 * np.arccos(np.clip((dp ** 2 + r1p ** 2 - r2 ** 2) / (2 * dp * r1p), -1, 1))
+    term2 = r2 ** 2 * np.arccos(np.clip((dp ** 2 + r2 ** 2 - r1p ** 2) / (2 * dp * r2), -1, 1))
+    term3 = 0.5 * np.sqrt(np.clip(
+        (-dp + r1p + r2) * (dp + r1p - r2) * (dp - r1p + r2) * (dp + r1p + r2), 0, None
+    ))
+    out[partial] = term1 + term2 - term3
+    return out
+
+
+def apply_wake_losses(turbine_dfs, turbine_meta, wake_decay=0.075, thrust_coefficient=0.8):
+    """
+    Apply a simplified Jensen/Park wake model across the turbines in a park:
+    each turbine's wind speed is reduced based on how much it sits in the
+    wake(s) of other turbines at each timestep, and its power is then
+    re-derived from its own power curve at the reduced speed.
+
+    This is a standard engineering wake model, not a CFD-grade simulation —
+    a few simplifications worth knowing about:
+    - The thrust coefficient (Ct) is held at a constant approximate value
+      rather than a true wind-speed-dependent curve, since per-model Ct
+      curves aren't tracked here. 0.8 is a reasonable mid-operating-range
+      default; it will somewhat overstate losses at high wind speed and
+      understate them near cut-in.
+    - Multiple overlapping wakes are combined by root-sum-square (the usual
+      simplification from Katic et al., 1986), rather than a fully coupled
+      flow solve.
+    - The wind direction driving the geometry at each timestep comes from
+      the upstream turbine's own site data (u/v wind at hub height) — since
+      turbines in a park are typically close enough that direction doesn't
+      vary much between sites.
+    - Partial wake overlap (a downstream rotor only partly inside the wake
+      cone) is handled via circle-circle overlap area, not a hard yes/no cutoff.
+
+    Args:
+        turbine_dfs (list[pd.DataFrame]): one dataframe per turbine (same
+            order as turbine_meta), each already containing
+            f'wind_speed_t{{idx}}', f'power_t{{idx}}' (1-based idx = position
+            in the list), plus 'u_wind_100m'/'v_wind_100m'.
+        turbine_meta (list[dict]): per-turbine 'lat', 'lon', 'diameter'
+            (rotor diameter, m), 'power_curve' (pd.Series indexed by wind
+            speed, values in W).
+        wake_decay (float): wake expansion coefficient k — roughly 0.04 for
+            offshore/smooth terrain, 0.075-0.1 for onshore/complex terrain.
+        thrust_coefficient (float): constant approximate Ct, see above.
+
+    Returns:
+        list[pd.DataFrame]: the same dataframes, with wind_speed_t{idx} and
+        power_t{idx} adjusted in place for wake losses.
+    """
+    n = len(turbine_dfs)
+    if n < 2:
+        return turbine_dfs
+
+    common_index = turbine_dfs[0].index
+    for df in turbine_dfs[1:]:
+        common_index = common_index.intersection(df.index)
+    if len(common_index) == 0:
+        return turbine_dfs
+
+    rotor_radii = [m['diameter'] / 2.0 for m in turbine_meta]
+
+    # Static pairwise geometry (turbine positions don't move over time).
+    dx = np.zeros((n, n))
+    dy = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            dx[i, j], dy[i, j] = _haversine_offset_m(
+                turbine_meta[i]['lat'], turbine_meta[i]['lon'],
+                turbine_meta[j]['lat'], turbine_meta[j]['lon'],
+            )
+
+    sq_deficits = [np.zeros(len(common_index)) for _ in range(n)]
+    sqrt_1mCt = float(np.sqrt(max(0.0, 1 - thrust_coefficient)))
+
+    for i in range(n):
+        u = turbine_dfs[i].loc[common_index, 'u_wind_100m'].to_numpy()
+        v = turbine_dfs[i].loc[common_index, 'v_wind_100m'].to_numpy()
+        speed = np.sqrt(u ** 2 + v ** 2)
+        safe_speed = np.where(speed < 0.1, np.nan, speed)  # avoid /0 in calm air
+        u_hat = u / safe_speed
+        v_hat = v / safe_speed
+
+        for j in range(n):
+            if i == j:
+                continue
+            downwind = dx[i, j] * u_hat + dy[i, j] * v_hat        # along-flow distance, m
+            crosswind = -dx[i, j] * v_hat + dy[i, j] * u_hat      # perpendicular offset, m
+            wake_radius = rotor_radii[i] + wake_decay * downwind
+
+            valid = (downwind > 1.0) & (wake_radius > 0) & ~np.isnan(downwind)
+
+            deficit_ij = np.zeros(len(common_index))
+            if valid.any():
+                overlap_area = np.zeros(len(common_index))
+                overlap_area[valid] = _circle_overlap_area_vec(
+                    np.abs(crosswind[valid]), wake_radius[valid], rotor_radii[j]
+                )
+                overlap_frac = overlap_area / (np.pi * rotor_radii[j] ** 2)
+                wr_safe = np.where(wake_radius == 0, np.nan, wake_radius)
+                base_deficit = (1 - sqrt_1mCt) * (rotor_radii[i] / wr_safe) ** 2
+                deficit_ij = np.where(valid, np.nan_to_num(overlap_frac * base_deficit), 0.0)
+
+            sq_deficits[j] = sq_deficits[j] + deficit_ij ** 2
+
+    avg_loss_pct = []
+    for j in range(n):
+        # Cap at 0.9 so wind speed is never driven to (near) zero — an
+        # upstream wake should never fully kill the downstream turbine.
+        total_deficit = np.sqrt(sq_deficits[j])
+        total_deficit = np.clip(total_deficit, 0.0, 0.9)
+
+        speed_col = f'wind_speed_t{j + 1}'
+        power_col = f'power_t{j + 1}'
+        df = turbine_dfs[j]
+
+        original_speed = df.loc[common_index, speed_col].to_numpy()
+        adjusted_speed = original_speed * (1 - total_deficit)
+
+        # Derive the wake's effect as a *ratio* from the (simplified) power
+        # curve, evaluated at the original vs. wake-reduced speed using the
+        # exact same curve both times — then apply that ratio to the real
+        # power the main pipeline generated (Cp/air-density-based physics),
+        # rather than replacing it outright with a curve lookup. Comparing
+        # curve-lookup power directly against the pipeline's power would mix
+        # two different power models, and even at zero wake effect they don't
+        # agree exactly — that mismatch was previously showing up as a small
+        # spurious "negative wake loss" (impossible physically: a wake can
+        # only ever reduce output, never increase it).
+        power_curve = turbine_meta[j]['power_curve']
+        curve_at_original = np.interp(original_speed, power_curve.index.values, power_curve.values)
+        curve_at_adjusted = np.interp(adjusted_speed, power_curve.index.values, power_curve.values)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            ratio = np.where(curve_at_original > 1.0, curve_at_adjusted / curve_at_original, 1.0)
+        ratio = np.nan_to_num(ratio, nan=1.0)
+        ratio = np.clip(ratio, 0.0, 1.0)  # never let the wake *increase* output
+
+        original_power = df.loc[common_index, power_col].to_numpy()
+        adjusted_power = original_power * ratio
+
+        df.loc[common_index, speed_col] = adjusted_speed
+        df.loc[common_index, power_col] = adjusted_power
+
+        with np.errstate(invalid='ignore', divide='ignore'):
+            # nansum, not sum — a handful of NaN readings (missing grid data,
+            # etc.) shouldn't poison the whole loss-% figure into "nan%".
+            orig_sum = np.nansum(original_power)
+            adj_sum = np.nansum(adjusted_power)
+            loss_pct = 0.0 if not np.isfinite(orig_sum) or orig_sum <= 0 else 100.0 * (1 - adj_sum / orig_sum)
+        loss_pct = max(0.0, loss_pct)  # guard against residual floating-point noise going slightly negative
+        avg_loss_pct.append(loss_pct)
+
+    turbine_meta[0].setdefault('_wake_loss_pct', avg_loss_pct)  # stash for caller to report
+    for k, m in enumerate(turbine_meta):
+        m['_wake_loss_pct_self'] = avg_loss_pct[k]
+
+    return turbine_dfs
+
+
+def generate_wind_park_multi_site(turbines, config, grid_points, kdtree, filenames,
+                                   commissioning_date=None, apply_wake=True,
+                                   wake_decay=0.075, thrust_coefficient=0.8):
+    """
+    Generate synthetic wind power for a park where each turbine sits at its own
+    location, rather than all turbines sharing one weather site.
+
+    Each turbine is matched to its own nearest NWP grid point and generated
+    independently (one-turbine call to generate_wind_from_grid). If apply_wake
+    is True and there's more than one turbine, a simplified Jensen wake model
+    (see apply_wake_losses) then reduces each turbine's wind speed/power based
+    on the others' wakes before the per-turbine power series are summed into
+    total park power. Non-power weather columns (used for feature plots) are
+    taken from the first turbine's site as a representative sample, since each
+    turbine may sit at a different site.
+
+    Args:
+        turbines (list[dict]): Each dict has 'lat', 'lon', 'turbine' (model name),
+            'hub_height'.
+        config (dict): App config (as loaded via load_config_ruamel).
+        grid_points, kdtree, filenames: Spatial index built by build_grid_index().
+        commissioning_date: Optional commissioning date for ageing degradation.
+        apply_wake (bool): whether to apply turbine-to-turbine wake losses.
+        wake_decay (float): Jensen wake expansion coefficient k.
+        thrust_coefficient (float): constant approximate Ct used by the wake model.
+
+    Returns:
+        tuple(pd.DataFrame | None, list[dict]): The combined synthetic data
+        (or None if generation failed for every turbine) and a list of per-turbine
+        site info (each augmented with 'turbine', 'hub_height', 'grid_lat', 'grid_lon',
+        and — when wake losses were applied — 'wake_loss_pct').
+    """
+    if not turbines:
+        st.warning("Add at least one turbine to generate wind power.")
+        return None, []
+
+    per_turbine_dfs = []
+    turbine_meta = []
+    turbine_labels = []
+    site_infos = []
+
+    for idx, t in enumerate(turbines, start=1):
+        nearest = find_nearest_grid_point(t['lat'], t['lon'], grid_points, kdtree, filenames)
+        if nearest is None:
+            st.warning(f"⚠️ Turbine {idx}: no weather grid data found near ({t['lat']:.4f}, {t['lon']:.4f}); skipping.")
+            continue
+
+        grid_data = load_grid_point_data(nearest['filename'])
+        if grid_data is None:
+            continue
+
+        has_wind = all(col in grid_data.columns for col in ['wind_speed_10m', 'temp_2m', 'pressure'])
+        if not has_wind:
+            st.warning(f"⚠️ Turbine {idx}: nearest grid point has no wind data; skipping.")
+            continue
+
+        # Generate this turbine alone, at its own site.
+        single_turbine_config = {
+            **config,
+            'wind_params': {
+                **config['wind_params'],
+                'turbines': [t['turbine']],
+                'hub_heights': [t['hub_height']],
+            },
+        }
+
+        # Each turbine can have its own commissioning date (so a park can mix
+        # older and newer/repowered turbines with different amounts of
+        # degradation); fall back to the park-level default for turbines that
+        # don't have their own date set.
+        turbine_commissioning_date = t.get('commissioning_date') or commissioning_date
+
+        turbine_df = generate_wind_from_grid(
+            grid_data, nearest['grid_lat'], nearest['grid_lon'], single_turbine_config,
+            silent=True, commissioning_date=turbine_commissioning_date,
+        )
+        if turbine_df is None or 'power' not in turbine_df.columns:
+            st.warning(f"⚠️ Turbine {idx}: generation failed; skipping.")
+            continue
+
+        # Ageing degradation is already baked into turbine_df['power'] above
+        # (generate_wind_from_grid applies it internally), but that efficiency
+        # curve isn't returned to the caller. Recompute it here — same inputs,
+        # same random_seed, so it reproduces exactly what was already applied
+        # — purely so it can be reported/plotted (average % loss, and the
+        # efficiency-over-time curve for the degradation chart below).
+        ageing_loss_pct = None
+        ageing_efficiency = None
+        if config['wind_params'].get('apply_ageing', False) and turbine_commissioning_date is not None:
+            try:
+                wind_ages = np.load(config['data']['wind_ages'])
+                time_vector = turbine_df.index
+                if time_vector.tz is None:
+                    time_vector = time_vector.tz_localize('UTC')
+                elif time_vector.tz != 'UTC':
+                    time_vector = time_vector.tz_convert('UTC')
+                ageing_efficiency, _ = get_ageing_degradation(
+                    time_vector=time_vector, real_ages=wind_ages,
+                    commissioning_date=str(turbine_commissioning_date),
+                    random_seed=config['wind_params'].get('random_seed', 42),
+                )
+                ageing_loss_pct = 100.0 * (1 - float(np.mean(ageing_efficiency)))
+            except Exception:
+                ageing_loss_pct = None
+                ageing_efficiency = None
+
+        # Column names are keyed by this turbine's SLOT — its position among
+        # turbines that actually generated successfully (1, 2, 3, ...) — not
+        # the original park idx. If an earlier turbine in the park failed and
+        # got skipped, using the original idx here would leave a gap (e.g.
+        # only 'power_t2' existing with no 'power_t1'), which would silently
+        # break the positional column lookups in apply_wake_losses and below.
+        slot = len(per_turbine_dfs) + 1
+        turbine_df[f'power_t{slot}'] = pd.to_numeric(turbine_df['power'], errors='coerce')
+
+        # 'wind_speed_mean'/'wind_speed_hub' should always be present (set by
+        # generate_wind_from_grid whenever any wind_speed_t* column exists),
+        # but fall back to NaN rather than a raw Python None if they're ever
+        # both missing — None would poison every downstream numeric op
+        # (wake adjustment, power re-interpolation) with a hard TypeError or
+        # silently propagate as an object-dtype column full of blanks.
+        speed_source = turbine_df['wind_speed_mean'] if 'wind_speed_mean' in turbine_df.columns else (
+            turbine_df['wind_speed_hub'] if 'wind_speed_hub' in turbine_df.columns else
+            pd.Series(np.nan, index=turbine_df.index)
+        )
+        turbine_df[f'wind_speed_t{slot}'] = pd.to_numeric(speed_source, errors='coerce')
+
+        per_turbine_dfs.append(turbine_df)
+
+        # Rotor diameter + power curve, needed by the wake model to re-derive
+        # power from a wake-reduced wind speed.
+        try:
+            turbine_dir = Path.cwd().parent / config['data']['turbine_dir']
+            power_curves, _, specs = get_turbines(
+                turbine_path=os.path.join(turbine_dir, config['data']['turbine_power']),
+                cp_path=os.path.join(turbine_dir, config['data']['turbine_cp']),
+                specs_path=os.path.join(turbine_dir, config['data']['turbine_specs']),
+                params={'turbines': [t['turbine']]},
+            )
+            diameter = specs[t['turbine']]['diameter']
+            # The raw power curve CSV has NaN gaps at many wind speeds (only
+            # populated near/above each turbine's real operating range) — the
+            # main generation pipeline never uses it directly, it always runs
+            # it through interpolate() first to get a dense, gap-filled,
+            # monotonic curve. Do the same here, or np.interp() against the
+            # raw curve will return NaN whenever a wake-adjusted wind speed
+            # lands near one of those gaps — manufacturing fake near-total
+            # "wake loss" that's really just missing power-curve data.
+            power_curve = interpolate(power_curves[t['turbine']], specs[t['turbine']]['cut_out'])
+        except Exception:
+            diameter = None
+            power_curve = None
+
+        turbine_meta.append({
+            'lat': t['lat'], 'lon': t['lon'],
+            'diameter': diameter, 'power_curve': power_curve,
+        })
+
+        turbine_labels.append(f"{t['turbine']} at {t['hub_height']}m ({nearest['grid_lat']:.2f}, {nearest['grid_lon']:.2f})")
+        site_infos.append({
+            **t,
+            'grid_lat': nearest['grid_lat'],
+            'grid_lon': nearest['grid_lon'],
+            'distance_km': nearest['distance_km'],
+            # Distinct from t.get('commissioning_date'), which may be None if
+            # this turbine relied on the park-level fallback date.
+            'effective_commissioning_date': turbine_commissioning_date,
+            'ageing_loss_pct': ageing_loss_pct,
+            'ageing_efficiency': ageing_efficiency,  # time series, for the degradation-over-time chart
+            '_ageing_index': turbine_df.index if ageing_efficiency is not None else None,
+        })
+
+    if not per_turbine_dfs:
+        st.error("Could not generate wind power for any of the added turbines.")
+        return None, []
+
+    wake_applied = False
+    if apply_wake and len(per_turbine_dfs) >= 2 and all(m['diameter'] and m['power_curve'] is not None for m in turbine_meta):
+        apply_wake_losses(per_turbine_dfs, turbine_meta, wake_decay=wake_decay, thrust_coefficient=thrust_coefficient)
+        wake_applied = True
+        for site_info, meta in zip(site_infos, turbine_meta):
+            site_info['wake_loss_pct'] = meta.get('_wake_loss_pct_self', 0.0)
+    elif apply_wake and len(per_turbine_dfs) >= 2:
+        st.info("ℹ️ Wake losses skipped: missing rotor diameter/power curve data for one or more selected turbine models.")
+
+    combined_df = per_turbine_dfs[0].copy()
+    power_series_list = [df[f'power_t{idx}'].rename(f'power_t{idx}') for idx, df in enumerate(per_turbine_dfs, start=1)]
+    speed_series_list = [df[f'wind_speed_t{idx}'].rename(f'wind_speed_t{idx}') for idx, df in enumerate(per_turbine_dfs, start=1)
+                          if f'wind_speed_t{idx}' in df.columns]
+
+    # Merge every turbine's own power_t{idx}/wind_speed_t{idx} column into the
+    # combined dataframe that's actually returned/displayed — previously only
+    # the first turbine's df was used as the base, so turbine 2+'s individual
+    # columns were computed but never made it into the final dataset.
+    for series in power_series_list + speed_series_list:
+        combined_df[series.name] = series.reindex(combined_df.index)
+
+    power_df = pd.concat(power_series_list, axis=1)
+    combined_df['power'] = power_df.sum(axis=1, skipna=True)
+
+    if speed_series_list:
+        speed_df = pd.concat(speed_series_list, axis=1)
+        combined_df['wind_speed_mean'] = speed_df.mean(axis=1)
+        combined_df['wind_speed_hub'] = combined_df['wind_speed_mean']
+
+    # Nameplate capacity (each turbine's rated power) rather than the max of
+    # the (possibly wake-reduced) generated series — more correct, and
+    # unaffected by whether a turbine happened to hit its true rated output
+    # in this particular generated dataset.
+    if all(m['power_curve'] is not None for m in turbine_meta):
+        total_capacity = sum(m['power_curve'].max() for m in turbine_meta)
+    else:
+        total_capacity = power_df.max().sum()
+
+    st.success(f"Generated wind power using **{len(turbine_labels)} turbine(s)** across independent sites: {', '.join(turbine_labels)}")
+    st.markdown("<div style='padding-top: 0.6rem;'></div>", unsafe_allow_html=True)
+    st.info(f"**Total Installed Capacity:** {total_capacity/1_000_000:.2f} MW")
+
+    if wake_applied:
+        park_avg_loss = np.nanmean([s.get('wake_loss_pct', 0.0) for s in site_infos])
+        park_avg_loss = 0.0 if not np.isfinite(park_avg_loss) else park_avg_loss
+        st.caption(f"🌀 Wake losses applied (Jensen/Park model, k={wake_decay}) — park-average energy loss: {park_avg_loss:.1f}%")
+
+    return combined_df, site_infos
 
 def generate_pv_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **params):
     """Generate synthetic PV power from grid weather data."""
@@ -426,43 +902,13 @@ def generate_pv_from_grid(df: pd.DataFrame, grid_lat, grid_lon, config, **params
         st.error(f"Error generating PV power from grid data: {e}")
         return None
 
-def show_grid_point_plot(grid_lat: float, grid_lon: float, filename: str, energy_type: str = 'solar', commissioning_date = None):
-    """Show plots for a specific grid point's synthetic data."""
-    grid_data = load_grid_point_data(filename)
-    if grid_data is None:
-        return
-    
-    # DEBUG: Show column information
-    #st.write(f"**Grid file columns:** {list(grid_data.columns)}")
-    #st.write(f"**Data shape:** {grid_data.shape}")
-    #st.write(f"**First few rows:**")
-    #st.dataframe(grid_data.head())
-    
-    config_path = "./config.yaml"
-    config = load_config_ruamel(config_path)
-    
-    # Check what type of data is available
-    has_solar = all(col in grid_data.columns for col in ['ghi', 'dhi'])
-    has_wind = all(col in grid_data.columns for col in ['wind_speed_10m', 'temp_2m', 'pressure'])
-    
-    if energy_type.lower() == 'solar':
-        if has_solar:
-            synthetic_data = generate_pv_from_grid(grid_data, grid_lat, grid_lon, config)
-        else:
-            st.warning("⚡ **Solar data not available.** This grid point contains meteorological data perfect for wind power!")
-            st.info("💡 **Switch to Wind Power mode** - Your grid data includes comprehensive wind measurements.")
-            return
-    else:  # wind power
-        if has_wind:
-            # Pass commissioning_date to wind generation if provided
-            synthetic_data = generate_wind_from_grid(grid_data, grid_lat, grid_lon, config, commissioning_date=commissioning_date) 
-        else:
-            st.error("Wind power requires meteorological data (wind speed, temperature, pressure)")
-            return
-    
-    if synthetic_data is None:
-        return
-    
+def _render_synthetic_energy_plots(synthetic_data, energy_type, location_label, config, download_suffix, available_turbines=None, site_infos=None):
+    """
+    Shared rendering logic for a generated synthetic energy dataframe (solar or wind).
+    Used both for a single grid point's result (show_grid_point_plot) and a multi-site
+    wind park result (show_multi_turbine_wind_plot), so the plots/downloads stay
+    consistent between the two.
+    """
     synthetic_data = process_dataframe_index(synthetic_data)
 
     dates_arr = synthetic_data.index.strftime('%Y-%m-%d')
@@ -475,105 +921,301 @@ def show_grid_point_plot(grid_lat: float, grid_lon: float, filename: str, energy
 
     # Determine project type from energy_type
     project_type = 'solar' if energy_type.lower() == 'solar' else 'wind'
-    energy_emoji = "☀️" if project_type == 'solar' else "🌪️"
 
-    st.info(f"{energy_emoji} Grid Point: ({grid_lat:.4f}, {grid_lon:.4f}) | **{project_type.title()} Power** | Data: {start_date} to {end_date}", icon="🗺️")
+    st.info(f"{location_label} | **{project_type.title()} Power** | Data: {start_date} to {end_date}", icon=None)
 
-    # Feature selection and daily plots - USE CORRECT FEATURES AND FUNCTIONS
-    selected_date = st.selectbox("Select a date", dates_list, key="grid_date")
+    # Charts are paired two-per-row via columns, and each selector lives inside
+    # the same bordered container as the chart it controls (not stacked separately
+    # at the top), so it's clear which dropdown drives which plot.
+    row1_col1, row1_col2 = st.columns(2)
 
-    if project_type == 'solar':
-        # Solar: Use existing solar features and plotting function
-        selected_features = st.multiselect(
-            "Select solar irradiance features", 
-            options=["Total", "Direct", "Diffuse"], 
-            default=["Total"],
-            key="grid_features"
-        )
-        
-        if len(selected_features) > 0:
-            with st.container(border=True):
-                features = [synthetic_data[feature] for feature in selected_features]
-                fig_feature = plot_power_and_features_pv_streamlit(
-                    day=selected_date,
-                    plot_names=selected_features,
-                    features=features,
-                    power=synthetic_data['power']
+    with row1_col1:
+        with st.container(border=True, key="results_chart_card_daily"):
+            selected_date = st.selectbox("Select a date", dates_list, key="grid_date")
+
+            if project_type == 'solar':
+                # Solar: Use existing solar features and plotting function
+                selected_features = st.multiselect(
+                    "Select solar irradiance features",
+                    options=["Total", "Direct", "Diffuse"],
+                    default=["Total"],
+                    key="grid_features"
                 )
-                st.pyplot(fig=fig_feature, use_container_width=True)
-                
-    else:  # wind power
-        # Wind: Use existing wind feature selection and plotting function
-        wind_features_available = []
-        if 'wind_speed_hub' in synthetic_data.columns:
-            wind_features_available.append('wind_speed_hub')
-        if 'wind_speed_mean' in synthetic_data.columns and 'wind_speed_hub' not in synthetic_data.columns:
-            wind_features_available.append('wind_speed_mean')
-        
-        # Add other wind features if available
-        if 'density_hub' in synthetic_data.columns:
-            wind_features_available.append('density_hub')
-        if 'temperature_hub' in synthetic_data.columns:
-            wind_features_available.append('temperature_hub')
 
-        if wind_features_available:
-            selected_wind_feature = st.selectbox(
-                "Select wind feature to plot",
-                options=wind_features_available,
-                key="grid_wind_feature"
+                if len(selected_features) > 0:
+                    features = [synthetic_data[feature] for feature in selected_features]
+                    fig_daily = plot_power_and_features_pv_streamlit(
+                        day=selected_date,
+                        plot_names=selected_features,
+                        features=features,
+                        power=synthetic_data['power']
+                    )
+                    st.pyplot(fig=fig_daily, use_container_width=True)
+
+            else:  # wind power
+                # Wind: Use existing wind feature selection and plotting function
+                wind_features_available = []
+                if 'wind_speed_hub' in synthetic_data.columns:
+                    wind_features_available.append('wind_speed_hub')
+                if 'wind_speed_mean' in synthetic_data.columns and 'wind_speed_hub' not in synthetic_data.columns:
+                    wind_features_available.append('wind_speed_mean')
+
+                # Add other wind features if available
+                if 'density_hub' in synthetic_data.columns:
+                    wind_features_available.append('density_hub')
+                if 'temperature_hub' in synthetic_data.columns:
+                    wind_features_available.append('temperature_hub')
+
+                if wind_features_available:
+                    selected_wind_feature = st.selectbox(
+                        "Select wind feature to plot",
+                        options=wind_features_available,
+                        key="grid_wind_feature"
+                    )
+                    # Create minimal params for plotting
+                    feature_params = {f: {'name': f, 'unit': 'm/s' if 'wind_speed' in f else 'kg/m³' if 'density' in f else '°C'} for f in wind_features_available}
+                    fig_daily = plot_power_and_feature_wind_streamlit(
+                        data=synthetic_data,
+                        params=feature_params,
+                        day=selected_date,
+                        feature=selected_wind_feature,
+                        power=synthetic_data['power']
+                    )
+                    st.pyplot(fig=fig_daily, use_container_width=True)
+                else:
+                    st.warning("⚠️ No wind features available for plotting in generated data")
+
+    with row1_col2:
+        with st.container(border=True, key="results_chart_card_year"):
+            # Yearly analysis - use correct project_type
+            selected_year = st.selectbox("Select a year", years_list, key="grid_year")
+            data_for_year = synthetic_data[synthetic_data.index.year == selected_year].copy()
+            fig_boxplot = plot_quarterly_boxplot(data_for_year, selected_year, project_type=project_type)
+            st.pyplot(fig=fig_boxplot, use_container_width=True)
+
+    row2_col1, row2_col2 = st.columns(2)
+    multi_year_col = row2_col2
+
+    if project_type == 'wind':
+        with row2_col1:
+            with st.container(border=True, key="results_chart_card_turbine"):
+                turbines_list = available_turbines if available_turbines else config['wind_params']['turbines']
+                unique_turbine_list = list(set(turbines_list))
+
+                selected_turbine = st.selectbox("Select a turbine", unique_turbine_list, key="grid_turbine")
+
+                fig_wind_power = plot_turbine_power_vs_wind_speed(
+                    csv_path='../power_curves/turbine_power.csv',
+                    turbine_name=selected_turbine
+                )
+                st.pyplot(fig=fig_wind_power, use_container_width=True)
+    else:
+        # Solar has no turbine plot to fill row2_col1, so put the multi-year plot
+        # there instead of leaving an empty cell next to it.
+        multi_year_col = row2_col1
+
+    with multi_year_col:
+        with st.container(border=True, key="results_chart_card_total"):
+            fig_total = plot_multi_year_power_production(synthetic_data, project_type=project_type)
+            st.pyplot(fig=fig_total, use_container_width=True)
+
+    # Wake/ageing performance impact — stacked below the existing chart rows,
+    # in the same bordered-container style, and only shown when there's
+    # something to show (skipped for a plain run with no wake/ageing).
+    if site_infos:
+        has_wake_data = any(s.get('wake_loss_pct') is not None for s in site_infos)
+        has_ageing_data = any(s.get('ageing_loss_pct') is not None for s in site_infos)
+        if has_wake_data or has_ageing_data:
+            row3_col1, row3_col2 = st.columns(2)
+            with row3_col1:
+                with st.container(border=True, key="results_chart_card_degradation_summary"):
+                    fig_summary = plot_degradation_summary(site_infos)
+                    st.pyplot(fig=fig_summary, use_container_width=True)
+            with row3_col2:
+                with st.container(border=True, key="results_chart_card_degradation_timeline"):
+                    if has_ageing_data:
+                        fig_timeline = plot_ageing_efficiency_over_time(site_infos)
+                        if fig_timeline is not None:
+                            st.pyplot(fig=fig_timeline, use_container_width=True)
+                        else:
+                            st.caption("Ageing degradation over time unavailable for this run.")
+                    else:
+                        st.caption("Enable ageing to see the degradation-over-time curve.")
+
+    # Download option — a smaller, centered card (not full page width like the
+    # chart cards above). CSS alone can't reliably resize the dataframe grid
+    # (it's a canvas-based component that negotiates its own pixel width and
+    # ignores plain width overrides on ancestor divs), so this uses Streamlit's
+    # native column layout instead — the framework actually respects that for
+    # sizing this widget, since use_container_width fills whatever real
+    # Streamlit column it's placed in.
+    _, table_col, _ = st.columns([1, 3, 1])
+    with table_col:
+        with st.container(border=True, key="results_data_table_card"):
+            csv_content = synthetic_data.to_csv().encode('utf-8')
+            st.download_button(
+                label=f"Download {project_type.title()} Data CSV",
+                data=csv_content,
+                file_name=f'{project_type}_synthetic_{download_suffix}.csv',
+                mime='csv',
             )
-            with st.container(border=True):
-                # Create minimal params for plotting
-                feature_params = {f: {'name': f, 'unit': 'm/s' if 'wind_speed' in f else 'kg/m³' if 'density' in f else '°C'} for f in wind_features_available}
-                fig_wind = plot_power_and_feature_wind_streamlit(
-                    data=synthetic_data,
-                    params=feature_params,
-                    day=selected_date, 
-                    feature=selected_wind_feature,
-                    power=synthetic_data['power']
-                )
-                st.pyplot(fig=fig_wind, use_container_width=True)
+            st.dataframe(synthetic_data, height=300, use_container_width=True)
+
+
+def show_grid_point_plot(grid_lat: float, grid_lon: float, filename: str, energy_type: str = 'solar', commissioning_date = None):
+    """Show plots for a specific grid point's synthetic data (single site)."""
+    grid_data = load_grid_point_data(filename)
+    if grid_data is None:
+        return
+
+    config_path = "./config.yaml"
+    config = load_config_ruamel(config_path)
+
+    # Check what type of data is available
+    has_solar = all(col in grid_data.columns for col in ['ghi', 'dhi'])
+    has_wind = all(col in grid_data.columns for col in ['wind_speed_10m', 'temp_2m', 'pressure'])
+
+    if energy_type.lower() == 'solar':
+        if has_solar:
+            synthetic_data = generate_pv_from_grid(grid_data, grid_lat, grid_lon, config)
         else:
-            st.warning("⚠️ No wind features available for plotting in generated data")
+            st.warning("⚡ **Solar data not available.** This grid point contains meteorological data perfect for wind power!")
+            st.info("💡 **Switch to Wind Power mode** - Your grid data includes comprehensive wind measurements.")
+            return
+    else:  # wind power
+        if has_wind:
+            # Pass commissioning_date to wind generation if provided
+            synthetic_data = generate_wind_from_grid(grid_data, grid_lat, grid_lon, config, commissioning_date=commissioning_date)
+        else:
+            st.error("Wind power requires meteorological data (wind speed, temperature, pressure)")
+            return
 
-    # Yearly analysis - use correct project_type
-    selected_year = st.selectbox("Select a year", years_list, key="grid_year")
-    data_for_year = synthetic_data[synthetic_data.index.year == selected_year].copy()
+    if synthetic_data is None:
+        return
 
-    with st.container(border=True):
-        fig_boxplot = plot_quarterly_boxplot(data_for_year, selected_year, project_type=project_type)
-        st.pyplot(fig=fig_boxplot, use_container_width=True)
+    _render_synthetic_energy_plots(
+        synthetic_data,
+        energy_type,
+        location_label=f"Grid Point: ({grid_lat:.4f}, {grid_lon:.4f})",
+        config=config,
+        download_suffix=f"grid_{grid_lat:.4f}_{grid_lon:.4f}",
+    )
 
-        if project_type == 'wind':
-            turbines_list = config['wind_params']['turbines'] 
-            unique_turbine_list = list(set(turbines_list))
-            
-            selected_turbine = st.selectbox("Select a turbine", unique_turbine_list, key="grid_turbine")
-            
-            fig_wind_power = plot_turbine_power_vs_wind_speed(
-                csv_path='../power_curves/turbine_power.csv',
-                turbine_name=selected_turbine
-            )
-            st.pyplot(fig=fig_wind_power, use_container_width=True)
 
-    with st.container(border=True):
-        fig_total = plot_multi_year_power_production(synthetic_data, project_type=project_type)
-        st.pyplot(fig=fig_total, use_container_width=True)
+def plot_degradation_summary(site_infos):
+    """
+    Grouped bar chart: for each turbine, how much of its potential energy was
+    lost to wake effects vs. ageing degradation, plus their combined effect.
+    Uses the same "coolwarm" palette as the other grouped-bar charts in this
+    app (e.g. plot_multi_year_power_production) for a consistent look.
+    """
+    labels = [f"T{i}" for i in range(1, len(site_infos) + 1)]
+    wake_pct = [s.get('wake_loss_pct', 0.0) or 0.0 for s in site_infos]
+    ageing_pct = [s.get('ageing_loss_pct', 0.0) or 0.0 for s in site_infos]
+    # Combined loss isn't simply additive — a turbine that's 10% down from
+    # wake and 5% down from ageing keeps 90% * 95% of potential, not 85%.
+    combined_pct = [100 * (1 - (1 - w / 100) * (1 - a / 100)) for w, a in zip(wake_pct, ageing_pct)]
 
-    # Download option
-    with st.container(border=True):
-        csv_content = synthetic_data.to_csv().encode('utf-8')
-        st.download_button(
-            label=f"Download {project_type.title()} Grid Point Data CSV",
-            data=csv_content,
-            file_name=f'{project_type}_synthetic_grid_{grid_lat:.4f}_{grid_lon:.4f}.csv',
-            mime='csv',
+    plot_df = pd.DataFrame({
+        'Turbine': labels * 3,
+        'Loss (%)': wake_pct + ageing_pct + combined_pct,
+        'Source': ['Wake loss'] * len(labels) + ['Ageing loss'] * len(labels) + ['Combined'] * len(labels),
+    })
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(data=plot_df, x='Turbine', y='Loss (%)', hue='Source', ax=ax, palette="coolwarm")
+    ax.set_title('Per-turbine performance loss: wake vs. ageing')
+    ax.grid(axis='y', linestyle='--', alpha=0.4)
+    fig.tight_layout()
+    return fig
+
+
+def plot_ageing_efficiency_over_time(site_infos):
+    """
+    Line chart of each turbine's ageing efficiency factor over the generated
+    period (100% = no degradation yet, declining over time). Only includes
+    turbines that actually have an ageing_efficiency series. Uses the same
+    "coolwarm" palette as plot_degradation_summary for visual consistency.
+    """
+    series_list = []
+    for i, s in enumerate(site_infos, start=1):
+        eff = s.get('ageing_efficiency')
+        idx = s.get('_ageing_index')
+        if eff is None or idx is None:
+            continue
+        series_list.append(pd.DataFrame({
+            'Time': idx, 'Efficiency (%)': np.asarray(eff) * 100, 'Turbine': f"T{i}",
+        }))
+
+    if not series_list:
+        return None
+
+    plot_df = pd.concat(series_list, ignore_index=True)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.lineplot(data=plot_df, x='Time', y='Efficiency (%)', hue='Turbine', ax=ax, palette="coolwarm", linewidth=1.5)
+    ax.set_title('Ageing degradation over time')
+    ax.grid(axis='y', linestyle='--', alpha=0.4)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    return fig
+
+
+def show_multi_turbine_wind_plot(turbines, grid_points, kdtree, filenames, commissioning_date=None,
+                                  apply_wake=True, wake_decay=0.075, thrust_coefficient=0.8):
+    """
+    Show plots for a wind park made up of individually-located turbines (each turbine
+    matched to its own nearest NWP grid point), generated via generate_wind_park_multi_site.
+    """
+    config_path = "./config.yaml"
+    config = load_config_ruamel(config_path)
+
+    synthetic_data, site_infos = generate_wind_park_multi_site(
+        turbines, config, grid_points, kdtree, filenames, commissioning_date=commissioning_date,
+        apply_wake=apply_wake, wake_decay=wake_decay, thrust_coefficient=thrust_coefficient,
+    )
+    if synthetic_data is None:
+        return
+
+    available_turbines = [s['turbine'] for s in site_infos]
+    location_label = f"Wind Park — {len(site_infos)} turbine{'s' if len(site_infos) != 1 else ''}"
+
+    # Show which weather grid point each turbine is actually drawing data from —
+    # each turbine sits at its own site, so this can differ per turbine. Also
+    # show each turbine's individual wake loss, when wake modeling ran.
+    for idx, s in enumerate(site_infos, start=1):
+        wake_note = ""
+        if 'wake_loss_pct' in s:
+            wake_note = f" — 🌀 wake loss: {s['wake_loss_pct']:.1f}%"
+        age_note = ""
+        if s.get('effective_commissioning_date'):
+            age_note = f" — 🕐 commissioned {s['effective_commissioning_date']}"
+        st.markdown(
+            f"**📍 Turbine {idx}**: ({s['lat']:.4f}, {s['lon']:.4f}) — "
+            f"**🎯 Using grid point**: ({s['grid_lat']:.4f}, {s['grid_lon']:.4f}) - {s['distance_km']:.1f} km away"
+            f"{wake_note}{age_note}"
         )
-        st.dataframe(synthetic_data)
 
-def create_map(markers, my_location = None, nearest_station = {}, clicked_location = None):
-    # Create a map centered around a specific location
-    m = folium.Map(location=[51.4, 10.4515], zoom_start=7)
+    st.markdown("---")
+
+    _render_synthetic_energy_plots(
+        synthetic_data,
+        'wind',
+        location_label=location_label,
+        config=config,
+        download_suffix="wind_park",
+        available_turbines=available_turbines,
+        site_infos=site_infos,
+    )
+
+def create_map(markers, my_location = None, nearest_station = {}, clicked_location = None, key = None, zoom_start = 7, center = None):
+    # Create a map centered around a specific location. `center` lets a caller
+    # visually re-center the map to account for the floating options panel that
+    # overlays the left ~380px of the map — the map itself still spans the full
+    # width, so without this the true geographic center (Germany) renders behind
+    # the panel instead of in the middle of the visible area.
+    if center is None:
+        center = [51.4, 10.4515]
+    m = folium.Map(location=center, zoom_start=zoom_start)
 
     # Add markers to the map
     for name, location in markers.items():
@@ -584,17 +1226,37 @@ def create_map(markers, my_location = None, nearest_station = {}, clicked_locati
                 popup="📍 Clicked Location", 
                 icon=folium.Icon(color='blue', icon='glyphicon-map-marker')
             ).add_to(m)
-        elif name == 'grid_point':
-            # Orange marker for grid point
+        elif name == 'grid_point' or name.startswith('grid_point'):
+            # Orange marker for the nearest ERA5/NWP grid point (data source).
+            # Multiple grid-point markers (one per turbine) use keys like
+            # 'grid_point_0', 'grid_point_1', ... so they don't overwrite each other.
             folium.Marker(
-                location, 
-                popup="🎯 Grid Point (Data Source)", 
+                location,
+                popup="🎯 Grid Point (Data Source)",
                 icon=folium.Icon(color='orange', icon='glyphicon-th')
             ).add_to(m)
         elif name in nearest_station:
             color = "green"
             popup_text = f"{name} Distance: {nearest_station[name]['distance_km']:.2f} km"
             folium.Marker(location, popup=popup_text, icon=folium.Icon(color=color)).add_to(m)
+        elif name.startswith('Turbine '):
+            # Added wind turbine — pin plus a small permanent "T<n>" label so
+            # turbines are identifiable on the map at a glance, not just on click.
+            turbine_num = name.split(':', 1)[0].replace('Turbine', '').strip()
+            folium.Marker(location, popup=name, icon=folium.Icon(color='darkpurple')).add_to(m)
+            folium.Marker(
+                location,
+                icon=folium.DivIcon(
+                    icon_size=(30, 20),
+                    icon_anchor=(15, 48),
+                    html=(
+                        f'<div style="font-size:11px;font-weight:700;color:#fff;'
+                        f'background:#6f42c1;border-radius:4px;padding:1px 5px;'
+                        f'text-align:center;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">'
+                        f'T{turbine_num}</div>'
+                    ),
+                ),
+            ).add_to(m)
         else:
             color = "darkpurple"
             popup_text = name
@@ -607,7 +1269,7 @@ def create_map(markers, my_location = None, nearest_station = {}, clicked_locati
             icon=folium.Icon(color='red', icon='glyphicon-user')
         ).add_to(m)
 
-    map_data = st_folium(m, use_container_width=True, height=1200)
+    map_data = st_folium(m, use_container_width=True, height=1200, key=key)
     return map_data
 
 def plot_power_and_features_pv_streamlit(day: str, 
@@ -766,9 +1428,12 @@ def plot_quarterly_boxplot(data_for_year: pd.DataFrame, selected_year: int, real
         data_for_year['source'] = 'Synthetic'
         real_data['source'] = 'Real'
 
-        # Combine the dataframes
-        combined_df = pd.concat([real_data,data_for_year])
-        combined_df['quarter'] = combined_df.index.month.map(get_quarter)
+        # Compute quarter before combining, then combine with a fresh index so
+        # overlapping real/synthetic timestamps don't create duplicate index labels
+        data_for_year['quarter'] = data_for_year.index.month.map(get_quarter)
+        real_data['quarter'] = real_data.index.month.map(get_quarter)
+
+        combined_df = pd.concat([real_data, data_for_year], ignore_index=True)
         combined_df['quarter'] = pd.Categorical(combined_df['quarter'], categories=quarter_order, ordered=True)
 
         # Create the boxplot with a 'hue' for the source
@@ -826,8 +1491,10 @@ def plot_power_histogram(data_for_year: pd.DataFrame, selected_year: int, real_d
 
         synthetic_data
 
-        # Concatenate the dataframes for plotting with Seaborn's 'hue' parameter
-        combined_df = pd.concat([ real_data_filtered,synthetic_data])
+        # Concatenate the dataframes for plotting with Seaborn's 'hue' parameter.
+        # ignore_index=True avoids duplicate index labels when real and synthetic
+        # share timestamps, which breaks seaborn's internal reindexing.
+        combined_df = pd.concat([ real_data_filtered,synthetic_data], ignore_index=True)
 
         sns.histplot(
             data=combined_df,
@@ -912,8 +1579,9 @@ def plot_multi_year_power_production(data_for_all_years: pd.DataFrame, real_data
             'Data Series': 'Real'
         })
 
-        # Concatenate the dataframes
-        combined_plot_data = pd.concat([real_plot_data,plot_data])
+        # Concatenate the dataframes (ignore_index=True avoids duplicate
+        # default RangeIndex labels from the two freshly-built dataframes)
+        combined_plot_data = pd.concat([real_plot_data,plot_data], ignore_index=True)
 
         # Create the bar plot using Seaborn with the 'hue' parameter
         sns.barplot(data=combined_plot_data, x='Year', y='Total Power', 
@@ -1174,10 +1842,12 @@ def plot_hourly_real_vs_synth_boxplots(df1: pd.DataFrame, df2: pd.DataFrame, lab
     df1_filtered['hour'] = df1_filtered.index.hour
     df2_filtered['hour'] = df2_filtered.index.hour
 
-    # Combine the dataframes into a single one for plotting
+    # Combine the dataframes into a single one for plotting.
+    # ignore_index=True avoids duplicate index labels when real and synthetic
+    # share the same timestamps, which breaks seaborn's internal reindexing.
     df1_filtered['series'] = label1
     df2_filtered['series'] = label2
-    combined_df = pd.concat([df1_filtered, df2_filtered])
+    combined_df = pd.concat([df1_filtered, df2_filtered], ignore_index=True)
 
     fig, ax = plt.subplots(figsize=(12, 6))
     
@@ -1221,8 +1891,12 @@ def plot_daily_power_comparison_for_day(synthetic_data: pd.DataFrame, real_data:
     synthetic_for_day['power_mw'] = synthetic_for_day['power'] / 1_000_000
     real_for_day['power_mw'] = real_for_day['power'] / 1_000
 
-    combined_data = pd.concat([real_for_day,synthetic_for_day])
-    combined_data['Hour'] = combined_data.index.hour
+    # Compute Hour before combining, then combine with a fresh index so
+    # overlapping real/synthetic timestamps don't create duplicate index labels
+    synthetic_for_day['Hour'] = synthetic_for_day.index.hour
+    real_for_day['Hour'] = real_for_day.index.hour
+
+    combined_data = pd.concat([real_for_day,synthetic_for_day], ignore_index=True)
 
     #combined_data['power_mw'] = combined_data['power'] / 1_000_000
     
@@ -1259,10 +1933,10 @@ def plot_wind_speed_vs_power_scatter( real_data: pd.DataFrame, synthetic_data: p
     synthetic_data_plot['Data Series'] = 'Synthetic'
     real_data_plot['Data Series'] = 'Real'
     
-    combined_data = pd.concat([real_data_plot,synthetic_data_plot])
-    
+    combined_data = pd.concat([real_data_plot,synthetic_data_plot], ignore_index=True)
+
     fig, ax = plt.subplots(figsize=(10, 6))
-    
+
     # Create the scatter plot using seaborn
     sns.scatterplot(data=combined_data, x='wind_speed_mean', y='power_mw', hue='Data Series', ax=ax, alpha=0.5, s=20)
     
@@ -1298,7 +1972,7 @@ def plot_monthly_power_comparison(synthetic_data: pd.DataFrame, real_data: pd.Da
     synthetic_monthly['Data Series'] = 'Synthetic'
     real_monthly['Data Series'] = 'Real'
     
-    combined_df = pd.concat([real_monthly,synthetic_monthly])
+    combined_df = pd.concat([real_monthly,synthetic_monthly], ignore_index=True)
     combined_df['Month'] = combined_df['timestamp'].dt.strftime('%b')
     
     fig, ax = plt.subplots(figsize=(12, 6))

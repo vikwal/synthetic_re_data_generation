@@ -1,0 +1,11 @@
+[theme]
+# Force light mode regardless of the visitor's OS/browser dark-mode setting.
+# Duplicated here (in addition to the project-root .streamlit/config.toml)
+# because Streamlit reads config.toml relative to the current working
+# directory the `streamlit run` command was launched from, which may be
+# this streamlit/ folder rather than the project root.
+base = "light"
+primaryColor = "#28A745"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#1A1A1A"
