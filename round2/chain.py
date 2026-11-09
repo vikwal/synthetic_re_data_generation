@@ -50,6 +50,7 @@ DEFAULT_THETA = {
     "aging_model": "weibull", "aging_lambda": 54.5, "aging_kappa": 2.0,
     "power_curve_scale": 1.0, "density": "v1_mixed",
     "wake_k": 0.075, "wake_enabled": True,
+    "alpha_min": 0.0, "alpha_max": 0.4,   # clip of the two-level ERA5 shear exponent
 }
 
 
@@ -231,7 +232,7 @@ class ParkCache:
             else:
                 with np.errstate(divide="ignore", invalid="ignore"):
                     alpha = np.log(v100 / v10) / np.log(10.0)
-                alpha = np.clip(np.nan_to_num(alpha), 0.0, 0.4)
+                alpha = np.clip(np.nan_to_num(alpha), th["alpha_min"], th["alpha_max"])
                 v_hub = v10 * (h / 10.0) ** alpha
             v_hub = np.round(v_hub, 2)
             s = self.specs[t]
