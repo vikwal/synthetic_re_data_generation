@@ -1,0 +1,510 @@
+<title>PV-Datenpipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: a process sheet. Phases run top to bottom; every step is one row of three lanes: source -> step with its check -> storage. */
+:root {
+  --paper: #f6f7f4;
+  --sheet: #ffffff;
+  --ink: #1d2422;
+  --ink-2: #4b5552;
+  --rule: #d5dad6;
+  --rule-strong: #9aa59f;
+  --blue: #23518c;        /* structure: phase markers, links, arrows */
+  --blue-soft: #e4ecf6;
+  --have: #2f6b4f;        /* data already there: skip */
+  --have-soft: #e2f0e8;
+  --fetch: #9a5a00;       /* data missing: fetch and store */
+  --fetch-soft: #fbefdc;
+  --code-bg: #eef1ee;
+  --f-body: "IBM Plex Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --f-head: "IBM Plex Sans Condensed", "Arial Narrow", "IBM Plex Sans", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #131716; --sheet: #1a1f1e; --ink: #e3e8e5; --ink-2: #a5b0ab; --rule: #2e3634; --rule-strong: #56625d;
+    --blue: #8fb3e6; --blue-soft: #1d2a3b; --have: #7cc7a0; --have-soft: #18291f; --fetch: #e6a64a; --fetch-soft: #2e2414;
+    --code-bg: #222826; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #131716; --sheet: #1a1f1e; --ink: #e3e8e5; --ink-2: #a5b0ab; --rule: #2e3634; --rule-strong: #56625d;
+  --blue: #8fb3e6; --blue-soft: #1d2a3b; --have: #7cc7a0; --have-soft: #18291f; --fetch: #e6a64a; --fetch-soft: #2e2414;
+  --code-bg: #222826; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-head); font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 4.2vw, 2.9rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.15rem; }
+p { margin: 0; max-width: 68ch; }
+code, .path { font-family: var(--f-mono); font-size: 0.86em; }
+code { background: var(--code-bg); padding: 0.05em 0.35em; border-radius: 3px; overflow-wrap: anywhere; }
+a { color: var(--blue); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+section { display: grid; gap: 20px; }
+.lede { display: grid; gap: 14px; }
+.lede p { color: var(--ink-2); font-size: 1.05rem; }
+.meta { font-size: 0.85rem; color: var(--ink-2); }
+
+/* legend */
+.legend { display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 0.88rem; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; display: inline-block; }
+.sw.src { border-color: var(--rule-strong); background: var(--sheet); border-style: dashed; }
+.sw.step { border-color: var(--blue); background: var(--blue-soft); }
+.sw.have { border-color: var(--have); background: var(--have-soft); }
+.sw.fetch { border-color: var(--fetch); background: var(--fetch-soft); }
+
+/* pattern diagram */
+.figure { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 20px; overflow-x: auto; }
+.figure svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.figure figcaption { margin-top: 12px; font-size: 0.88rem; color: var(--ink-2); max-width: 80ch; }
+svg text { font-family: var(--f-body); font-size: 13px; fill: var(--ink); }
+svg .mono { font-family: var(--f-mono); font-size: 11.5px; fill: var(--ink-2); }
+svg .lbl { font-size: 12px; font-weight: 600; }
+svg .n-step { fill: var(--blue-soft); stroke: var(--blue); stroke-width: 1.5; }
+svg .n-have { fill: var(--have-soft); stroke: var(--have); stroke-width: 1.5; }
+svg .n-fetch { fill: var(--fetch-soft); stroke: var(--fetch); stroke-width: 1.5; }
+svg .n-src { fill: var(--sheet); stroke: var(--rule-strong); stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg .edge { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
+svg .edge.have { stroke: var(--have); }
+svg .edge.fetch { stroke: var(--fetch); }
+svg .t-have { fill: var(--have); }
+svg .t-fetch { fill: var(--fetch); }
+svg .ah { fill: var(--ink-2); }
+svg .ah.have { fill: var(--have); }
+svg .ah.fetch { fill: var(--fetch); }
+
+/* phases */
+.phase { display: grid; gap: 12px; }
+.phase-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; border-bottom: 2px solid var(--blue); padding-bottom: 8px; }
+.phase-no { font-family: var(--f-head); font-weight: 600; font-size: 1.6rem; color: var(--blue); font-variant-numeric: tabular-nums; }
+.phase-head p { color: var(--ink-2); font-size: 0.92rem; }
+.lanes-head { display: grid; grid-template-columns: 1fr 1.35fr 1.15fr; gap: 28px; font-size: 0.8rem; color: var(--ink-2); letter-spacing: 0.04em; padding: 0 2px; }
+.row { display: grid; grid-template-columns: 1fr 1.35fr 1.15fr; gap: 28px; align-items: stretch; position: relative; }
+.row > div { min-width: 0; }
+.src { border: 1.5px dashed var(--rule-strong); border-radius: 6px; padding: 12px 14px; background: var(--sheet); position: relative; }
+.step { border: 1.5px solid var(--blue); border-radius: 6px; background: var(--sheet); display: grid; position: relative; }
+.store { border-left: 3px solid var(--rule-strong); padding: 10px 0 10px 14px; display: grid; gap: 6px; align-content: start; }
+.src::after, .step::after {
+  content: ""; position: absolute; top: 50%; right: -24px; width: 20px; height: 0; border-top: 1.5px solid var(--ink-2);
+}
+.src::before, .step::before {
+  content: ""; position: absolute; top: calc(50% - 4.5px); right: -27px; border: 5px solid transparent; border-left: 7px solid var(--ink-2); border-right: 0;
+}
+.src h4, .step h4 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.src p, .store p { font-size: 0.88rem; color: var(--ink-2); }
+.step-title { padding: 10px 14px; background: var(--blue-soft); border-radius: 5px 5px 0 0; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.step-title code { background: transparent; padding: 0; color: var(--blue); font-weight: 500; }
+.checks { display: grid; }
+.check { display: grid; grid-template-columns: 74px 1fr; gap: 10px; padding: 8px 14px; font-size: 0.88rem; border-top: 1px solid var(--rule); }
+.check b { font-weight: 600; font-size: 0.78rem; letter-spacing: 0.03em; padding-top: 2px; }
+.check.q b { color: var(--blue); }
+.check.have { background: var(--have-soft); }
+.check.have b { color: var(--have); }
+.check.fetch { background: var(--fetch-soft); }
+.check.fetch b { color: var(--fetch); }
+.check:last-child { border-radius: 0 0 5px 5px; }
+.path { display: block; color: var(--ink); overflow-wrap: anywhere; }
+.store .path + p { margin-top: -2px; }
+
+/* tables */
+.tbl { overflow-x: auto; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; vertical-align: top; padding: 9px 14px; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; font-size: 0.8rem; color: var(--ink-2); letter-spacing: 0.03em; background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td .path { font-size: 0.82rem; }
+td.k { white-space: nowrap; }
+.grp td { background: var(--paper); font-weight: 600; font-family: var(--f-head); font-size: 0.95rem; }
+
+pre { margin: 0; background: var(--code-bg); border-radius: 6px; padding: 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.82rem; line-height: 1.6; }
+pre .c { color: var(--ink-2); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.two > div { min-width: 0; display: grid; gap: 12px; align-content: start; }
+ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; max-width: 72ch; }
+.note { border-left: 3px solid var(--fetch); padding: 4px 0 4px 14px; font-size: 0.92rem; }
+
+@media (max-width: 860px) {
+  .lanes-head { display: none; }
+  .row { grid-template-columns: 1fr; gap: 14px; }
+  .src::after, .step::after { top: auto; bottom: -13px; right: auto; left: 24px; width: 0; height: 10px; border-top: 0; border-left: 1.5px solid var(--ink-2); }
+  .src::before, .step::before { top: auto; bottom: -14px; right: auto; left: 20px; border: 5px solid transparent; border-top: 7px solid var(--ink-2); border-bottom: 0; }
+  .two { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="lede">
+  <h1>PV-Datenpipeline</h1>
+  <p>Wie die synthetischen PV-Zeitreihen der 90 Parks entstehen: woher jede Eingangsgröße kommt, wo sie abgelegt wird und wie die Pipeline prüft, ob sie schon da ist. Jeder Schritt arbeitet nach demselben Muster. Er schaut zuerst nach, holt nur, was fehlt, und schreibt nichts Vorhandenes neu.</p>
+  <p class="meta">Generator <code>~/Work/synthetic_re_data_generation</code> · Stand 3. November 2026 · Fassung <code>parks_pv_v3</code> (Auswahl v3)</p>
+  <div class="legend" aria-label="Legende">
+    <span><i class="sw src"></i>externe Quelle</span>
+    <span><i class="sw step"></i>Pipeline-Schritt</span>
+    <span><i class="sw have"></i>liegt vor: überspringen</span>
+    <span><i class="sw fetch"></i>fehlt: holen und ablegen</span>
+  </div>
+</header>
+
+<section aria-labelledby="muster">
+  <h2 id="muster">Das Grundmuster</h2>
+  <p>Jeder Schritt läuft für jeden Park der Auswahl durch diese Schleife. Weil fertige Dateien erst am Ende umbenannt werden, hinterlässt ein Abbruch nie eine halbe Datei, die beim nächsten Lauf als „vorhanden“ gälte. Jeder Lauf lässt sich deshalb einfach neu starten.</p>
+  <figure class="figure" style="margin:0">
+    <svg viewBox="0 0 1060 300" role="img" aria-labelledby="pat-t">
+      <title id="pat-t">Ablauf je Park: prüfen, ob die Daten vorliegen; wenn ja überspringen, wenn nein herunterladen, prüfen und ablegen</title>
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="ah have" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="ah fetch" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <!-- start -->
+      <rect class="n-step" x="10" y="40" width="150" height="56" rx="6"/>
+      <text x="85" y="64" text-anchor="middle" class="lbl">Park aus der</text>
+      <text x="85" y="82" text-anchor="middle" class="lbl">Auswahl</text>
+      <path class="edge" d="M160,68 H222" marker-end="url(#a)"/>
+      <!-- decision -->
+      <polygon class="n-step" points="320,18 418,68 320,118 222,68"/>
+      <text x="320" y="64" text-anchor="middle" class="lbl">Datei bzw.</text>
+      <text x="320" y="81" text-anchor="middle" class="lbl">Eintrag da?</text>
+      <!-- yes -->
+      <path class="edge have" d="M418,68 H520" marker-end="url(#ag)"/>
+      <text x="438" y="58" class="lbl t-have">ja</text>
+      <rect class="n-have" x="520" y="40" width="190" height="56" rx="6"/>
+      <text x="615" y="64" text-anchor="middle" class="lbl">überspringen</text>
+      <text x="615" y="82" text-anchor="middle" class="mono">kein Netzzugriff</text>
+      <path class="edge have" d="M710,68 H880" marker-end="url(#ag)"/>
+      <!-- no -->
+      <path class="edge fetch" d="M320,118 V178" marker-end="url(#ao)"/>
+      <text x="330" y="150" class="lbl t-fetch">nein</text>
+      <rect class="n-src" x="10" y="186" width="150" height="56" rx="6"/>
+      <text x="85" y="210" text-anchor="middle" class="lbl">Quelle</text>
+      <text x="85" y="228" text-anchor="middle" class="mono">API · NAS · DB</text>
+      <path class="edge" d="M160,214 H222" marker-end="url(#a)"/>
+      <rect class="n-fetch" x="222" y="180" width="196" height="68" rx="6"/>
+      <text x="320" y="206" text-anchor="middle" class="lbl">herunterladen</text>
+      <text x="320" y="225" text-anchor="middle" class="mono">nach &lt;ziel&gt;.part</text>
+      <path class="edge fetch" d="M418,214 H520" marker-end="url(#ao)"/>
+      <rect class="n-fetch" x="520" y="180" width="190" height="68" rx="6"/>
+      <text x="615" y="206" text-anchor="middle" class="lbl">Ergebnis prüfen</text>
+      <text x="615" y="225" text-anchor="middle" class="mono">&gt; 1 kB, kein Fehler</text>
+      <path class="edge fetch" d="M710,214 H740" />
+      <rect class="n-fetch" x="740" y="180" width="140" height="68" rx="6"/>
+      <text x="810" y="206" text-anchor="middle" class="lbl">umbenennen</text>
+      <text x="810" y="225" text-anchor="middle" class="mono">.part → Ziel</text>
+      <path class="edge fetch" d="M880,214 H920 V96" marker-end="url(#ao)"/>
+      <!-- inventory -->
+      <rect class="n-step" x="880" y="40" width="170" height="56" rx="6"/>
+      <text x="965" y="64" text-anchor="middle" class="lbl">Inventur</text>
+      <text x="965" y="82" text-anchor="middle" class="mono">nächster Park</text>
+      <!-- retry loop -->
+      <path class="edge fetch" d="M615,248 V280 H320 V248" stroke-dasharray="5 4" marker-end="url(#ao)"/>
+      <text x="468" y="274" text-anchor="middle" class="mono">Kontingent erschöpft oder Fehler: warten, erneut versuchen</text>
+    </svg>
+    <figcaption>Die Prüfung „da?“ hat je Schritt ein eigenes, genaues Kriterium, siehe unten. Geschrieben wird immer erst in eine <code>.part</code>-Datei. Die Inventur am Anfang und am Ende jedes Laufs zeigt je Park, was vorhanden ist (<code>prepare --dry-run</code>).</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="ablauf">
+  <h2 id="ablauf">Ablauf in vier Phasen</h2>
+  <p>Die Phasen bauen aufeinander auf. Phase 1 entsteht von Hand. Die Phasen 2 bis 4 sind Skripte, die man jederzeit erneut starten kann. Pfade mit <code>$DATA_ROOT</code> liegen auf der NVMe von l1, siehe <a href="#verzeichnisse">Verzeichnisse</a>.</p>
+
+  <!-- phase 1 -->
+  <div class="phase">
+    <div class="phase-head"><span class="phase-no">1</span><h3>Auswahl der Parks</h3><p>einmalig, Ersatz einzelner Parks nach Prüfung</p></div>
+    <div class="lanes-head" aria-hidden="true"><span>Quelle</span><span>Schritt und Prüfung</span><span>Ablage</span></div>
+    <div class="row">
+      <div class="src"><h4>Marktstammdatenregister</h4><p>Gesamtdatenexport vom 25.06.2025, Einheiten und Lokationen; Gelände je Park aus dem DEM</p></div>
+      <div class="step">
+        <div class="step-title"><h4>Pool, Auswahl, Split</h4><code>select_parks.py · replace_parks.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Ausgabedatei der Fassung schon da?</span></div>
+          <div class="check have"><b>ja</b><span>Abbruch: Fassungen werden nie überschrieben, eine neue Fassung bekommt eine neue Nummer.</span></div>
+          <div class="check fetch"><b>nein</b><span>Ersatzparks aus derselben Schicht (Klasse, Region, Kohorte, Größe); <code>--assign</code> übernimmt geprüfte Vorschläge.</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">$DATA_ROOT/synthetic/solar/mastr/solar_units_20250625.parquet</span>
+        <span class="path">~/Work/FL_Contribution/data/mastr/pv_park_selection_v3.csv</span>
+        <span class="path">~/Work/FL_Contribution/data/pv_transfer_split_v3.csv</span>
+        <p>dazu <code>selection_v3_changes.csv</code>: alt, neu, Begründung</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- phase 2 -->
+  <div class="phase">
+    <div class="phase-head"><span class="phase-no">2</span><h3>Eingangsdaten je Park: Stufe <code>prepare</code></h3><p>vier Schritte, nur für Parks, denen etwas fehlt</p></div>
+    <div class="lanes-head" aria-hidden="true"><span>Quelle</span><span>Schritt und Prüfung</span><span>Ablage</span></div>
+
+    <div class="row">
+      <div class="src"><h4>OpenStreetMap und PVGIS</h4><p>Overpass-API: Solaranlagen im Umkreis von 3 km. PVGIS (JRC): Horizontprofil am Standort.</p></div>
+      <div class="step">
+        <div class="step-title"><h4>site</h4><code>fetch_site_inputs.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Park-ID als Schlüssel in der JSON-Datei, ohne Feld <code>error</code></span></div>
+          <div class="check have"><b>ja</b><span>überspringen</span></div>
+          <div class="check fetch"><b>nein</b><span>Abfrage, Eintrag ergänzen, Datei nach jedem Park sichern; 3 s Pause (Fair-Use)</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">$DATA_ROOT/synthetic/solar/parks_pv_v1/inputs/osm/parks_osm.json</span>
+        <span class="path">…/inputs/osm/pvgis_horizon.json</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="src"><h4>Copernicus ADS</h4><p>Datensatz <code>cams-solar-radiation-timeseries</code>, 15 min, 01.07.2023 bis 30.09.2026. Neun Punkte je Park: Mitte und Ring in 3 und 8 km nach N, O, S, W.</p></div>
+      <div class="step">
+        <div class="step-title"><h4>cams</h4><code>fetch_cams_parks.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Datei je Punkt vorhanden und größer als 1 kB</span></div>
+          <div class="check have"><b>ja</b><span>überspringen</span></div>
+          <div class="check fetch"><b>nein</b><span>eine Anfrage je Punkt (rund 90 s), in Paketen zu 60. Tageskontingent etwa 500 Anfragen: bei Erschöpfung 30 min warten, dann weiter.</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">…/inputs/cams/CAMS_rad_&lt;park&gt;_2023_2026.csv</span>
+        <span class="path">…/inputs/cams_ring/CAMS_rad_&lt;park&gt;_r3_N_2023_2026.csv</span>
+        <p>8 Ringdateien je Park (r3/r8 × N/E/S/W); Punktliste mit Höhe <code>inputs/cams_points.csv</code></p>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="src"><h4>CAMS-Dateien, ERA5, Modell</h4><p>Ergebnis von <i>cams</i>; ERA5 aus der WeatherDB; trainiertes Korrekturmodell (Ensemble über die Folds) <code>xgb_v5</code></p></div>
+      <div class="step">
+        <div class="step-title"><h4>correct</h4><code>cams_bc/apply_parks.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>beide Parquets (30 min und stündlich) für das Modell vorhanden</span></div>
+          <div class="check have"><b>ja</b><span>überspringen</span></div>
+          <div class="check fetch"><b>nein</b><span>Korrektur nur für diese Parks; GPU, venv <code>~/Work/NWP/ERA5/.venv</code>; wenige Minuten je Park. Bricht ab, wenn CAMS noch fehlt.</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">…/parks_pv_v1/work/cams_corrected/&lt;park&gt;_cams_corrected_30min_xgb_v5.parquet</span>
+        <span class="path">…/&lt;park&gt;_cams_corrected_hourly_xgb_v5.parquet</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="src"><h4>ICON-D2-Archiv (NAS)</h4><p>DWD ICON-D2, Einzelflächen-Felder, Lauf 09 UTC (Schneehöhe für das Schneemodell). <span class="path">/mnt/nas/icon-d2/SL/09/&lt;lauf&gt;_SL/</span></p></div>
+      <div class="step">
+        <div class="step-title"><h4>icon</h4><code>NWP-points/points/run_pv_add.sh</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Ordner <code>park_&lt;id&gt;</code> enthält <code>*_SL.parquet</code></span></div>
+          <div class="check have"><b>ja</b><span>überspringen</span></div>
+          <div class="check fetch"><b>nein</b><span>4 nächste Gitterpunkte wählen, Läufe ins Staging lesen (bereits gelesene Läufe überspringt es), zusammenbauen mit <code>--only-missing</code>. NAS-gebunden: etwa 1,5 bis 2 h je Laufstunde. Manifeste werden vorher gesichert.</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">$DATA_ROOT/nwp_ready_pv/icon-d2/SL/09/park_&lt;id&gt;/&lt;lat&gt;_&lt;lon&gt;_SL.parquet</span>
+        <span class="path">$DATA_ROOT/nwp_ready_pv/icon-d2/_staging/&lt;name&gt;_add/</span>
+        <p>Standortlisten in <code>nwp_ready_pv/sites_input/</code> (enthalten Koordinaten, bleiben dort)</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- phase 3 -->
+  <div class="phase">
+    <div class="phase-head"><span class="phase-no">3</span><h3>Geometrie aus Geodaten (Fensteransatz)</h3><p>Neigung und Ausrichtung der Modultische je Park</p></div>
+    <div class="lanes-head" aria-hidden="true"><span>Quelle</span><span>Schritt und Prüfung</span><span>Ablage</span></div>
+    <div class="row">
+      <div class="src"><h4>Geoportale der Länder</h4><p>Orthophoto DOP20, Oberflächenmodell DOM1 bzw. bDOM, Laserscan (LAZ), Geländemodell DGM1; je Land ein Abrufer. Thüringen von Hand (Portal hinter CAPTCHA).</p></div>
+      <div class="step">
+        <div class="step-title"><h4>Kacheln holen</h4><code>pv/geodata_states.py · geodata_bayern.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Kachel im Cache und größer als 1 kB</span></div>
+          <div class="check have"><b>ja</b><span>Kachel aus dem Cache</span></div>
+          <div class="check fetch"><b>nein</b><span>Download mit <code>curl</code> nach <code>.part</code>, umbenennen. Kachelverzeichnisse der Länder werden höchstens alle paar Tage neu geladen.</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">…/parks_pv_v1/inputs/geodata/&lt;land&gt;/&lt;produkt&gt;/</span>
+        <p>Länderkürzel <code>by bw bb he mv ni nw rp sn st th</code></p>
+      </div>
+    </div>
+    <div class="row">
+      <div class="src"><h4>Kacheln, OSM-Umring, Register</h4><p>aus dem Schritt davor und aus Phase 2</p></div>
+      <div class="step">
+        <div class="step-title"><h4>Vermessen</h4><code>geometry_release_states.py · fleet_geo_status.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Ergebnis unter dem Fassungs-Suffix schon da?</span></div>
+          <div class="check have"><b>ja</b><span>neues Suffix wählen, alte Ergebnisse bleiben</span></div>
+          <div class="check fetch"><b>nein</b><span>Fenster vermessen, Park annehmen oder ablehnen, Teilflächen ableiten</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">data/parks_pv_v1/geodata_release_&lt;land&gt;_&lt;suffix&gt;.csv</span>
+        <span class="path">results/pv/geodata_release_&lt;suffix&gt;/&lt;park&gt;/</span>
+        <p>im Generator-Repo; <code>results/</code> ist nicht versioniert</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- phase 4 -->
+  <div class="phase">
+    <div class="phase-head"><span class="phase-no">4</span><h3>Synthese und Release</h3><p>Stufen <code>added → sites → configs → generate → assemble → tables</code></p></div>
+    <div class="lanes-head" aria-hidden="true"><span>Quelle</span><span>Schritt und Prüfung</span><span>Ablage</span></div>
+    <div class="row">
+      <div class="src"><h4>Alles aus Phase 2 und 3</h4><p>dazu ERA5 aus der WeatherDB (Temperatur, Wind, Druck, Albedo) und ERA5-Schnee als GRIB: <span class="path">$DATA_ROOT/synthetic/era5_snow/raw/ERA5_snow_YYYY-MM.grib</span></p></div>
+      <div class="step">
+        <div class="step-title"><h4>generate</h4><code>run_parks_pv_v1.py generate</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Schnee-Punktreihe des Parks im Cache?</span></div>
+          <div class="check have"><b>ja</b><span>aus dem Cache lesen</span></div>
+          <div class="check fetch"><b>nein</b><span>aus den GRIBs am nächsten Gitterpunkt ziehen und ablegen. Danach läuft die Simulationskette je Park.</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">…/parks_pv_v1/work/era5_snow/&lt;park&gt;.parquet</span>
+        <span class="path">$DATA_ROOT/synthetic/solar/&lt;release&gt;/work/chain/&lt;park&gt;.parquet</span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="src"><h4>Kettenergebnisse</h4><p>je Park, plus Stamm- und Parameter-Tabellen</p></div>
+      <div class="step">
+        <div class="step-title"><h4>assemble, tables</h4><code>run_parks_pv_v1.py</code></div>
+        <div class="checks">
+          <div class="check q"><b>prüft</b><span>Release-Ordner der Fassung</span></div>
+          <div class="check have"><b>da</b><span>nicht überschreiben: alte Fassung als datierte Kopie sichern, neue Fassung in eigenen Ordner</span></div>
+          <div class="check fetch"><b>neu</b><span>Zeitreihen, Manifeste, Tabellen und README schreiben</span></div>
+        </div>
+      </div>
+      <div class="store">
+        <span class="path">$DATA_ROOT/synthetic/solar/parks_pv_v3[_30min]/</span>
+        <p><code>synth_&lt;park&gt;.parquet</code>, <code>manifest_&lt;park&gt;.json</code>, <code>parks.csv</code>, <code>clients.csv</code>, <code>sites.csv</code>, <code>pv_arrays.csv</code>, <code>pv_masterdata_view.csv</code>, <code>README.md</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="verzeichnisse">
+  <h2 id="verzeichnisse">Verzeichnisse</h2>
+  <p><code>$DATA_ROOT</code> ist <code>/mnt/lambda1/nvme1</code> auf l2 und <code>/mnt/nvme1</code> auf l1. Physisch liegt alles auf der NVMe von l1, l2 sieht sie über NFS. Der Ordner <code>parks_pv_v1</code> heißt aus historischen Gründen so. Dort liegen die Eingänge, die alle Fassungen gemeinsam nutzen.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Pfad</th><th>Inhalt</th><th>geschrieben von</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">Gemeinsame Eingänge</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/synthetic/solar/parks_pv_v1/inputs/osm/</span></td><td>OSM-Antworten, PVGIS-Horizonte (JSON je Park-ID)</td><td>prepare · site</td></tr>
+        <tr><td><span class="path">…/inputs/cams/ · …/inputs/cams_ring/</span></td><td>CAMS-Zeitreihen Mitte und Ring (CSV)</td><td>prepare · cams</td></tr>
+        <tr><td><span class="path">…/inputs/cams_points.csv · points.json</span></td><td>Abfragepunkte mit Höhe</td><td>prepare · cams, correct</td></tr>
+        <tr><td><span class="path">…/inputs/geodata/&lt;land&gt;/</span></td><td>Kacheln DOP20, DOM1/bDOM, LAZ, DGM1</td><td>Geometrie</td></tr>
+        <tr><td><span class="path">…/inputs/horizons_used.json</span></td><td>tatsächlich verwendeter Horizont je Park</td><td>Release · added/sites</td></tr>
+        <tr><td><span class="path">…/parks_pv_v1/work/cams_corrected/</span></td><td>korrigierte CAMS, 30 min und stündlich</td><td>prepare · correct</td></tr>
+        <tr><td><span class="path">…/parks_pv_v1/work/era5_snow/</span></td><td>ERA5-Schnee als Punktreihe je Park</td><td>generate</td></tr>
+        <tr class="grp"><td colspan="3">Statische Quellen</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/synthetic/solar/mastr/</span></td><td>MaStR-Auszug, Gelände des Pools</td><td>einmalig</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/synthetic/era5_snow/raw/</span></td><td>ERA5-Schnee, GRIB je Monat, ganz Deutschland</td><td>einmalig (CDS)</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/synthetic/cams_bc/models/&lt;tag&gt;/</span></td><td>Korrekturmodelle; in Gebrauch <code>xgb_v5</code></td><td>Training im ERA5-Projekt</td></tr>
+        <tr><td><span class="path">/mnt/nas/icon-d2/SL/&lt;HH&gt;/</span></td><td>ICON-D2-Archiv (GRIB, gz)</td><td>DWD-Abzug</td></tr>
+        <tr><td><span class="path">/mnt/nas/era5/data/{solar,met}/</span></td><td>ERA5-GRIBs, aus denen die DB befüllt wurde</td><td>CDS-Abzug</td></tr>
+        <tr class="grp"><td colspan="3">NWP-Punktauszüge</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/nwp_ready_pv/icon-d2/SL/&lt;HH&gt;/park_&lt;id&gt;/</span></td><td>ICON-D2 an den 4 nächsten Gitterpunkten</td><td>prepare · icon</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/nwp_ready_pv/sites_input/</span></td><td>Standortlisten je Auswahl</td><td>prepare · icon</td></tr>
+        <tr class="grp"><td colspan="3">Ergebnisse</td></tr>
+        <tr><td><span class="path">$DATA_ROOT/synthetic/solar/&lt;release&gt;[_30min]/</span></td><td>Release: Zeitreihen, Manifeste, Tabellen; <code>work/chain/</code> Kettenausgaben</td><td>Release</td></tr>
+        <tr><td><span class="path">~/Work/synthetic_re_data_generation/data/&lt;release&gt;/</span></td><td>kleine Tabellen zum Code (öffentliche Registerdaten)</td><td>Release · sites</td></tr>
+        <tr><td><span class="path">~/Work/synthetic_re_data_generation/results/pv/</span></td><td>Geometrie-Messungen, Screening, Logs (nicht versioniert)</td><td>Geometrie, prepare</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="db">
+  <h2 id="db">Datenbank</h2>
+  <p>PostgreSQL-Datenbank <b>WeatherDB</b>. Die Verbindung kommt aus der Umgebungsvariablen <code>WEATHER_DB_URL</code>. Sie steht nie im Code, weil sie das Passwort enthält. Ein systemd-Dienst erbt sie nicht und braucht sie in einer Override-Datei.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Tabelle</th><th>Inhalt</th><th>genutzt für</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>public.era5_solar</code></td><td>ERA5-Strahlung stündlich je Gitterzelle über Deutschland, Juli 2023 bis Juli 2026: <code>ssrd, fdir, ssrdc, cdir, tisr, fal, tcc</code></td><td>Albedo, ERA5-GHI zum Vergleich, Merkmale der CAMS-Korrektur</td></tr>
+        <tr><td class="k"><code>public.era5_solar_grid_points</code></td><td><code>cell_id, lat, lon</code></td><td>nächste Zelle zum Park</td></tr>
+        <tr><td class="k"><code>public.era5_wind_grid</code></td><td>ERA5-Meteorologie, Momentanwerte: Wind 10/100 m, Böen, Temperatur, Druck, Taupunkt</td><td>Modultemperatur, Wind, Druck; Merkmale der Korrektur</td></tr>
+        <tr><td class="k"><code>public.era5_wind_grid_points</code></td><td><code>cell_id, lat, lon</code></td><td>nächste Zelle zum Park</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="meta">ERA5 deckt ganz Deutschland ab. Für neue Standorte ist deshalb nichts zu laden, gelesen wird die nächste Gitterzelle.</p>
+</section>
+
+<section aria-labelledby="dienste">
+  <h2 id="dienste">Externe Dienste</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Dienst</th><th>Schritt</th><th>Zugang</th><th>Grenzen</th></tr></thead>
+      <tbody>
+        <tr><td>Copernicus Atmosphere Data Store (ADS)</td><td>cams</td><td>API-Schlüssel in <code>~/.cdsapirc</code>, Client <code>cdsapi</code></td><td>rund 500 Anfragen am Tag; Warteschlange kann Stunden dauern</td></tr>
+        <tr><td>Overpass-API (OSM)</td><td>site, Screening</td><td>offen, mehrere Spiegel mit Wiederholung</td><td>Fair-Use, Pause zwischen Abfragen</td></tr>
+        <tr><td>PVGIS (EU JRC)</td><td>site</td><td>offen</td><td>Fair-Use</td></tr>
+        <tr><td>Nominatim (OSM)</td><td>Auswahl: Koordinate in der Gemeinde?</td><td>offen, eigener User-Agent</td><td>1 Anfrage pro Sekunde, Ergebnisse zwischengespeichert</td></tr>
+        <tr><td>Geoportale der Länder</td><td>Geometrie</td><td>offen (Open Data, Namensnennung)</td><td>Thüringen nur von Hand; Sachsen mit wechselnden Freigabe-Links</td></tr>
+        <tr><td>NAS (ICON-D2, ERA5)</td><td>icon</td><td>Mount <code>/mnt/nas</code></td><td>Durchsatz des NAS bestimmt die Laufzeit</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="befehle">
+  <h2 id="befehle">Befehle</h2>
+  <div class="two">
+    <div>
+      <h3>Eingänge prüfen und holen</h3>
+<pre><span class="c"># Verbindung zur WeatherDB aus der Shell-Umgebung</span>
+eval "$(grep '^export WEATHER_DB_URL' ~/.bashrc)"
+export PV_RELEASE_NAME=parks_pv_v3
+
+<span class="c"># nur Inventur: was fehlt je Park?</span>
+synthre/bin/python scripts/pv/run_parks_pv_v2.py prepare --dry-run
+
+<span class="c"># alles Fehlende holen (lange Läufe mit nohup)</span>
+nohup synthre/bin/python scripts/pv/run_parks_pv_v2.py \
+  prepare --steps site,cams,correct &gt; prepare_cams.log 2&gt;&amp;1 &amp;
+nohup synthre/bin/python scripts/pv/run_parks_pv_v2.py \
+  prepare --steps icon &gt; prepare_icon.log 2&gt;&amp;1 &amp;
+
+<span class="c"># ICON-Läufe für die Prognosen später</span>
+... prepare --steps icon --icon-hours "06 12 15"</pre>
+    </div>
+    <div>
+      <h3>Geometrie und Release</h3>
+<pre><span class="c"># Geometrie je Land, eigenes Suffix je Fassung</span>
+synthre/bin/python scripts/pv/geometry_release_states.py \
+  --state Bayern --suffix _v2d --extend
+
+<span class="c"># Release-Stufen (bisher fest auf parks_pv_v2)</span>
+synthre/bin/python scripts/pv/run_parks_pv_v2.py added
+synthre/bin/python scripts/pv/run_parks_pv_v2.py sites --geodata …
+synthre/bin/python scripts/pv/run_parks_pv_v2.py configs
+synthre/bin/python scripts/pv/run_parks_pv_v2.py generate
+synthre/bin/python scripts/pv/run_parks_pv_v2.py assemble
+synthre/bin/python scripts/pv/run_parks_pv_v2.py tables</pre>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="offen">
+  <h2 id="offen">Was noch nicht automatisch geht</h2>
+  <ul class="plain">
+    <li><b>Geometrie</b> gehört noch nicht zu <code>prepare</code>. Die Kacheln holt <code>geometry_release_states.py</code> selbst, auch dort mit Cache-Prüfung. Das Vermessen ist ein eigener Lauf je Fassung.</li>
+    <li><b>Thüringen:</b> Das Portal steht hinter einem CAPTCHA. Die Kacheln werden von Hand nach <code>inputs/geodata/th/{laser,dgm1,dop20}/</code> gelegt, der Abrufer liest nur den Cache.</li>
+    <li><b>Release-Runner</b> und Geometrie-Skript lesen noch fest <code>parks_pv_v2</code>. Für <code>parks_pv_v3</code> wird das gerade umgestellt.</li>
+    <li><b>Wartezeiten:</b> CAMS hängt am ADS-Tageskontingent, ICON am NAS-Durchsatz. Deshalb steckt beides in <code>prepare</code> und nicht in <code>generate</code>. Die Synthese soll schnell und reproduzierbar bleiben und nie auf einen externen Dienst warten.</li>
+    <li><b>Ohne korrigierte CAMS</b> fällt <code>generate</code> stundenweise auf die rohen CAMS-Werte zurück und markiert diese Stunden. Bei einem neuen Park sollte <code>prepare</code> deshalb vorher vollständig sein.</li>
+  </ul>
+  <p class="note">Vertraulich und nie in einem Repository: Standortlisten mit Koordinaten und der Wert von <code>WEATHER_DB_URL</code>.</p>
+</section>
+
+</div>

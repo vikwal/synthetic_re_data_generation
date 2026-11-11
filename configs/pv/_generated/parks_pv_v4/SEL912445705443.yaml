@@ -1,0 +1,48 @@
+altitude: 273.53082275390625
+dc_ac: 1.0763636363636364
+module:
+  model: pvwatts
+  name: null
+  gamma_pdc: -0.0042
+  year: 2013
+inverter:
+  model: pvwatts
+  name: null
+  eta_inv_nom: 0.97
+  eta_inv_ref: 0.9637
+  unit_kw: null
+temperature:
+  model: faiman
+  u0: 25.0
+  u1: 6.84
+losses:
+  dc: 0.05
+  ac: 0.02
+  availability: 0.98
+aging:
+  enabled: true
+  commissioning_date: '2013-09-27'
+  era: multi_si
+soiling:
+  enabled: false
+  model: hsu
+  cleaning_threshold_mm: 1.0
+  pm_station: null
+shading:
+  horizon: true
+  inter_row: true
+transposition:
+  model: haydavies
+  iam: physical
+  albedo: era5
+random_seed: 42
+park_id: SEL912445705443
+latitude: 51.35909
+longitude: 8.24682
+kwp_dc: 3788.8
+arrays:
+- name: g0_0
+  tilt: 26.43
+  azimuth: 170.42
+  share: 1.0
+  gcr: 0.2806518518518519

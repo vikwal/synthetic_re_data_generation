@@ -1,0 +1,91 @@
+altitude: 342.0225830078125
+dc_ac: 1.0987179487179488
+module:
+  model: pvwatts
+  name: null
+  gamma_pdc: -0.0036
+  year: 2021
+inverter:
+  model: pvwatts
+  name: null
+  eta_inv_nom: 0.97
+  eta_inv_ref: 0.9637
+  unit_kw: null
+temperature:
+  model: faiman
+  u0: 25.0
+  u1: 6.84
+losses:
+  dc: 0.05
+  ac: 0.02
+  availability: 0.98
+aging:
+  enabled: true
+  commissioning_date: '2021-10-12'
+  era: mono_perc
+soiling:
+  enabled: false
+  model: hsu
+  cleaning_threshold_mm: 1.0
+  pm_station: null
+shading:
+  horizon: true
+  inter_row: true
+transposition:
+  model: haydavies
+  iam: physical
+  albedo: era5
+random_seed: 42
+park_id: SEL945760688474
+latitude: 50.12532
+longitude: 10.07236
+kwp_dc: 32137.5
+arrays:
+- name: g0_0_2021
+  tilt: 14.86
+  azimuth: 144.43
+  share: 0.216489
+  gcr: 0.5094557823129252
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2021-10-12'
+- name: g0_0_2022
+  tilt: 14.86
+  azimuth: 144.43
+  share: 0.498141
+  gcr: 0.5788578811369509
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2022-04-22'
+- name: g1_1_2021
+  tilt: 14.6
+  azimuth: 170.55
+  share: 0.055235
+  gcr: 0.5094557823129252
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2021-10-12'
+- name: g1_1_2022
+  tilt: 14.6
+  azimuth: 170.55
+  share: 0.127095
+  gcr: 0.5788578811369509
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2022-04-22'
+- name: g2_2_2021
+  tilt: 14.75
+  azimuth: 160.24
+  share: 0.031215
+  gcr: 0.5094557823129252
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2021-10-12'
+- name: g2_2_2022
+  tilt: 14.75
+  azimuth: 160.24
+  share: 0.071825
+  gcr: 0.5788578811369509
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2022-04-22'

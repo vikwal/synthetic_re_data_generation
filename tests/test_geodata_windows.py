@@ -199,8 +199,10 @@ def test_end_point_estimator_kept():
 
 
 def test_keep_central_component():
-    # two blocks of accepted windows; the one around the centre (window 2,2 of a 5x5 grid of nw=100) is kept
-    rows = [dict(w=k, i0=i * 100, j0=j * 100, ok=True, reason="") for k, (i, j) in enumerate([(2, 2), (2, 1), (1, 2), (0, 4), (1, 4)])]
+    # two blocks of accepted windows; the one around the centre (window 2,2 of a 5x5 grid of nw=100) is kept. The other block
+    # lies within the BRIDGE gap but is built differently (axis 90 instead of 0), so the gap rule must not join it.
+    rows = [dict(w=k, i0=i * 100, j0=j * 100, ok=True, reason="", axis_true=0.0 if k < 3 else 90.0, tilt_horiz=20.0,
+                 pitch=8.0, ew_pair=False) for k, (i, j) in enumerate([(2, 2), (2, 1), (1, 2), (0, 4), (1, 4)])]
     out = GW.keep_central_component(pd.DataFrame(rows), 100, (250.0, 250.0))
     assert out.ok.tolist() == [True, True, True, False, False] and set(out.reason[3:]) == {"anderer Park"}
 

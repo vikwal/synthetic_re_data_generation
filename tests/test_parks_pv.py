@@ -97,3 +97,38 @@ def test_commissioning_dates_first_and_full(tmp_path):
     cfg = P.park_config("A", 50.0, 10.0, 100.0, {"kwp_dc": 1000.0, "dc_ac": 1.2, "gcr": 0.4, "gamma_pdc": -0.004, "year": 2012, "era": "multi_si",
                                                  "commissioning_first": "2012-09-30"}, [{"name": "a0", "tilt": 20, "azimuth": 180, "share": 1.0}])
     assert cfg["aging"]["commissioning_date"] == "2012-09-30"
+
+
+def test_age_cohorts_split_and_config(tmp_path):
+    units = pd.DataFrame({"EinheitMastrNummer": ["U1", "U2", "U3"], "Inbetriebnahmedatum": ["2011-05-02", "2012-03-01", "2023-10-10"],
+                          "Bruttoleistung": [2000.0, 600.0, 3900.0], "InAnspruchGenommeneFlaeche": [5.0, 2.0, np.nan]})
+    units.to_parquet(tmp_path / "u.parquet")
+    row = pd.Series({"unit_ids": "U3;U1;U2"})
+    coh = P.age_cohorts(row, str(tmp_path / "u.parquet"))
+    assert [c["year"] for c in coh] == [2011, 2023] and coh[0]["n_units"] == 2 and coh[0]["commissioning_date"] == "2011-05-02"
+    assert sum(c["share"] for c in coh) == pytest.approx(1.0) and coh[0]["gamma_pdc"] == P.GAMMA["multi_si"]
+    assert coh[0]["gcr"] == P.gcr_of(2600.0 / 7.0, "multi_si")                      # MaStR area of the cohort units
+    par = {"kwp_dc": 6500.0, "dc_ac": 1.2, "gcr": 0.4, "gamma_pdc": -0.0042, "year": 2011, "era": "multi_si", "commissioning_first": "2011-05-02"}
+    arr = [{"name": "a", "tilt": 20, "azimuth": 180, "share": 0.7}, {"name": "b", "tilt": 20, "azimuth": 220, "share": 0.3}]
+    cfg = P.park_config("A", 50.0, 10.0, 100.0, par, arr, cohorts=coh)
+    assert [a["name"] for a in cfg["arrays"]] == ["a_2011", "a_2023", "b_2011", "b_2023"]
+    assert cfg["arrays"][1]["era"] == coh[1]["era"] and cfg["arrays"][1]["commissioning_date"] == "2023-10-10"
+    assert cfg["arrays"][0]["share"] == pytest.approx(0.7 * coh[0]["share"], abs=1e-6)
+    assert P.park_config("A", 50.0, 10.0, 100.0, par, arr, cohorts=coh[:1]) == P.park_config("A", 50.0, 10.0, 100.0, par, arr)
+
+
+def test_chain_per_array_aging_equals_park_aging():
+    from pv import chain
+    idx = pd.date_range("2025-06-01", periods=48, freq="h", tz="UTC")
+    drv = pd.DataFrame({"ghi": np.clip(np.sin(np.linspace(0, 4 * np.pi, 48)), 0, None) * 800, "temp_air": 15.0, "wind_speed": 2.0}, index=idx)
+    drv["dhi"] = drv["ghi"] * 0.3
+    par = {"kwp_dc": 1000.0, "dc_ac": 1.2, "gcr": 0.4, "gamma_pdc": -0.0042, "year": 2012, "era": "multi_si", "commissioning_first": "2012-06-01"}
+    arr = [{"name": "a", "tilt": 20, "azimuth": 180, "share": 1.0}]
+    base = chain.run_park(P.park_config("A", 50.0, 10.0, 100.0, par, arr, horizon=False), drv)
+    coh = [{"year": 2012, "era": "multi_si", "share": 0.5, "gamma_pdc": -0.0042, "gcr": 0.4, "commissioning_date": "2012-06-01"},
+           {"year": 2012, "era": "multi_si", "share": 0.5, "gamma_pdc": -0.0042, "gcr": 0.4, "commissioning_date": "2012-06-01"}]
+    same = chain.run_park(P.park_config("A", 50.0, 10.0, 100.0, par, arr, horizon=False, cohorts=coh), drv)
+    assert np.allclose(same["p_ac_w"], base["p_ac_w"]) and np.allclose(same["aging_factor"], base["aging_factor"])
+    coh[1].update(era="topcon_bifacial", commissioning_date="2023-06-01", gamma_pdc=-0.003)
+    young = chain.run_park(P.park_config("A", 50.0, 10.0, 100.0, par, arr, horizon=False, cohorts=coh), drv)
+    assert (young["aging_factor"] > base["aging_factor"]).all() and young["p_ac_w"].sum() > base["p_ac_w"].sum()

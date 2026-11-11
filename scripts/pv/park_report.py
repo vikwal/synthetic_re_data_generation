@@ -10,6 +10,7 @@ comparison with the register class. Images are embedded as PNG (base64).
 
     synthre/bin/python scripts/pv/park_report.py fleet [--parks ID,ID] [--suffix _v2] [--out DIR]
     synthre/bin/python scripts/pv/park_report.py trianel [--pv pv1 ...]          # confidential, stays on l2
+    synthre/bin/python scripts/pv/park_report.py screen --screen results/pv/replacement_screen_<date> [--out DIR]
 Fleet: rasters from the tile cache (geometry_release_states.fetch_tiles finds the cached tiles), windows from
 results/pv/geodata_release<suffix>/<park>/, park rows from data/parks_pv_v1/geodata_release_<state><suffix>.csv.
 Output: ~/Work/pv_sim2real/results/geo_reports_v2/<park>.html + index.html; trianel -> geo_reports_trianel/."""
@@ -29,6 +30,8 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import matplotlib  # noqa: E402
+import matplotlib.colors  # noqa: E402
+import matplotlib.patches  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
@@ -89,6 +92,38 @@ def fig_outline(rgb, inside, extent, poly_xy, pts, title):
         ax.legend(loc="upper right", fontsize=8)
     ax.set_title(title); ax.set_xlabel("m Ost"); ax.set_ylabel("m Nord")
     return png(fig)
+
+
+def fig_overview(rgb, extent, frame, poly_xy, pts, title):
+    """R3 (2026-11-04): DOP20 around the measured area with a margin; frame = measured box or analysis grid
+    (x0, y0, x1, y1 in the local metres of the image), poly_xy = OSM outline rings."""
+    fig, ax = plt.subplots(figsize=(7.5, 7))
+    if rgb is not None:
+        ax.imshow(np.moveaxis(np.clip(np.nan_to_num(rgb), 0, 255).astype(np.uint8), 0, -1), extent=extent)
+    x0, y0, x1, y1 = frame
+    ax.add_patch(plt.Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, edgecolor="#F2C230", lw=1.6, ls="--", label="Messfläche"))
+    for k, ring in enumerate(poly_xy or []):
+        ax.plot(*ring, color="red", lw=0.9, label="OSM-Umring" if k == 0 else None)
+    for lab, (x, y), m in pts:
+        ax.plot(x, y, m, ms=12, mew=2, label=lab)
+    ax.legend(loc="upper right", fontsize=8)
+    ax.set_xlim(extent[0], extent[1]); ax.set_ylim(extent[2], extent[3])
+    ax.set_title(title); ax.set_xlabel("m Ost"); ax.set_ylabel("m Nord")
+    return png(fig)
+
+
+def table_mask(hag, inside, res):
+    """R3: cells of the table area (0.4-4.5 m above ground, closed 3 m, opened 2 m, parts >= 0.2 ha) within `inside`,
+    for the park spectrum of the report (the whole box holds buildings and field edges, SEL942086318702)."""
+    from scipy import ndimage as ndi
+    tab = np.isfinite(hag) & (hag > GW.TAB_LO) & (hag < GW.TAB_HI) & inside
+    m = ndi.binary_opening(ndi.binary_closing(tab, iterations=int(3 / res)), iterations=int(2 / res))
+    lab, n = ndi.label(m)
+    if not n:
+        return inside
+    big = np.flatnonzero(ndi.sum(m, lab, range(1, n + 1)) * res ** 2 >= 2000) + 1
+    keep = np.isin(lab, big)
+    return keep if keep.any() else inside
 
 
 def fig_spectrum(rgb, inside, res, conv, rows):
@@ -159,6 +194,48 @@ def fig_grid(hag, win, nw, win_m, extent, H, res, ex):
         ax.add_patch(plt.Rectangle((x0, y0), win_m, win_m, fill=tab, facecolor=(0.88, 0.48, 0.09, 0.22),
                                    edgecolor="#B3121A" if r_.w == ex else ("#1F4E99" if r_.ok else "#8A8A8A"), lw=2.0 if r_.w == ex else 0.7))
     ax.set_title(f"Fenstergitter {win_m:.0f} m (blau = angenommen, grau = verworfen, gefüllt = ≥ 15 % Tische, rot = Beispiel)")
+    return png(fig)
+
+
+GROUP_COLORS = ["#1F4E99", "#E07B17", "#2E8B57", "#B3121A", "#6A4C93"]       # fixed order: group 0, 1, 2, 3 (at most four groups)
+
+
+def fig_groups(rgb, hag, win, G, nw, win_m, extent, H, res):
+    """Which part of the park goes into which group: accepted windows coloured by group over the DOP20 (else height
+    above ground), an arrow per window in the facing direction (two for east-west), legend with the group values."""
+    fig, ax = plt.subplots(figsize=(8.5, 7.5))
+    if rgb is not None:
+        ax.imshow(np.moveaxis(np.clip(np.nan_to_num(rgb), 0, 255).astype(np.uint8), 0, -1), extent=extent)
+    else:
+        ax.imshow(np.clip(hag, -0.5, 4), cmap="Greys", extent=extent, alpha=0.85)
+    gid = {}
+    for g in G.itertuples():
+        for w in str(g.windows).split():
+            gid[int(float(w))] = int(g.group)
+    for r_ in win.itertuples():
+        x0, y0 = r_.j0 * res, (H - r_.i0 - nw) * res
+        if r_.w in gid:
+            c = GROUP_COLORS[gid[r_.w] % len(GROUP_COLORS)]
+            ax.add_patch(plt.Rectangle((x0, y0), win_m, win_m, facecolor=matplotlib.colors.to_rgba(c, 0.38), edgecolor=c, lw=1.6))
+            if pd.notna(getattr(r_, "azimuth_true", np.nan)):
+                L = 0.42 * win_m
+                for az in ((r_.azimuth_true, r_.azimuth_true + 180) if bool(getattr(r_, "ew_pair", False)) else (r_.azimuth_true,)):
+                    a = np.radians(az)
+                    ax.quiver(x0 + win_m / 2, y0 + win_m / 2, L * np.sin(a), L * np.cos(a), angles="xy", scale_units="xy", scale=1,
+                              color="white", width=0.004, headwidth=3.5, headlength=4, edgecolor="k", linewidth=0.3)
+        elif r_.ok:
+            ax.add_patch(plt.Rectangle((x0, y0), win_m, win_m, fill=False, edgecolor="white", lw=1.0, ls="--"))
+        elif r_.f_tab >= GW.F_TAB_MIN:
+            ax.add_patch(plt.Rectangle((x0, y0), win_m, win_m, fill=False, edgecolor="#8A8A8A", lw=0.8, hatch="//"))
+    hand = [matplotlib.patches.Patch(facecolor=matplotlib.colors.to_rgba(GROUP_COLORS[int(g.group) % len(GROUP_COLORS)], 0.6),
+                                     edgecolor=GROUP_COLORS[int(g.group) % len(GROUP_COLORS)],
+                                     label=f"Gruppe {int(g.group)}: {g.tilt_horiz:.1f}°, " + ("Ost-West" if g.ew else ("Azimut offen" if g.az_undetermined else f"{g.azimuth:.0f}°"))
+                                     + f", Anteil {g.share:.0%}, {int(g.n_windows)} Fenster") for g in G.itertuples()]
+    hand += [matplotlib.patches.Patch(fill=False, edgecolor="white", ls="--", label="angenommen, keiner Gruppe (Splitter)"),
+             matplotlib.patches.Patch(fill=False, edgecolor="#8A8A8A", hatch="//", label="verworfen (mit Tischen)")]
+    ax.legend(handles=hand, loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8.5, frameon=False)
+    ax.set_title("Gruppen: welcher Teil des Parks in welches Array geht (Pfeil = Blickrichtung der Module)")
+    ax.set_xlabel("m Ost"); ax.set_ylabel("m Nord")
     return png(fig)
 
 
@@ -265,7 +342,7 @@ def page(title: str, parts: list) -> str:
 
 
 def build_page(P: dict, win: pd.DataFrame, G: pd.DataFrame, arrays: pd.DataFrame, park: dict, head: dict, compare: pd.DataFrame,
-               src_rows: pd.DataFrame = None, extra: list = None) -> str:
+               src_rows: pd.DataFrame = None, extra: list = None, gen: pd.DataFrame = None) -> str:
     """P: rasters and meta (hag, dgm, surf, inside, rgb, conv, RES, H, extent, ortho_rows, source, survey_year, pts, title)."""
     res, H = P["RES"], P["H"]
     nw, win_m = int(round(park["win_m"] / res)), float(park["win_m"])
@@ -280,13 +357,22 @@ def build_page(P: dict, win: pd.DataFrame, G: pd.DataFrame, arrays: pd.DataFrame
     parts = [f"<h1>{html.escape(P['title'])}</h1>",
              f"<p>Parkannahme: <span class='{'ok' if st == 'accepted' else 'bad'}'>{html.escape(st)}</span> {html.escape(str(park.get('status_reason', '')))}"
              f" · Quelle {html.escape(str(P['source']))}, Befliegung {P['survey_year']} · Fenster {park.get('n_ok')}/{park.get('n_windows')} angenommen"
-             f" · gelockerte Annahme (≥ 2 Fenster): {park.get('accept_relaxed')}</p>",
+             "</p>",
              "<h2>1. Stammdaten und Zuordnung</h2>", kv(head)]
     if src_rows is not None and len(src_rows):
         parts += ["<p class='note'>Alle Oberflächenquellen dieses Parks:</p>", table(src_rows)]
-    parts += ["<h2>2. Umring und Orthophoto</h2>", fig_outline(P.get("rgb"), P["inside"], P["extent"], None, P.get("pts", []), "DOP20, rot = Analysemaske (Umring − 5 m)")]
+    if P.get("wide") is not None:
+        Wd = P["wide"]
+        parts += ["<h2>2. Umring und Orthophoto</h2>", fig_overview(Wd["rgb"], Wd["extent"], Wd["frame"], Wd["poly_xy"], Wd["pts"],
+                                                                    "DOP20 mit Rand, gelb = Messfläche, rot = OSM-Umring")]
+    else:
+        parts += ["<h2>2. Umring und Orthophoto</h2>", fig_outline(P.get("rgb"), P["inside"], P["extent"], None, P.get("pts", []), "DOP20, rot = Analysemaske (Umring − 5 m)")]
     if P.get("rgb") is not None and P.get("ortho_rows") is not None:
-        parts += ["<h2>3. Graubild und 2-D-Spektrum</h2>", fig_spectrum(P["rgb"], P["inside"], res, P["conv"], P["ortho_rows"]),
+        spec_in = P["spec_mask"] if P.get("spec_mask") is not None else P["inside"]
+        parts += ["<h2>3. Graubild und 2-D-Spektrum</h2>"]
+        if P.get("spec_mask") is not None:
+            parts += ["<p class='note'>Kasten: Spektrum nur über der Tischfläche aus der Höhenkarte (Gebäude und Feldränder bleiben außen).</p>"]
+        parts += [fig_spectrum(P["rgb"], spec_in, res, P["conv"], P["ortho_rows"]),
                   "<h2>4. Fensterkarte des Orthophotos</h2>", fig_ortho_windows(P["rgb"], P["extent"], H, res, P["ortho_rows"])]
     r_ex = win[win.w == ex].iloc[0] if ex is not None else None
     parts += [f"<h2>5. Oberfläche ({html.escape(str(P['source']))}, Befliegung {P['survey_year']}) und Höhe über Grund</h2>",
@@ -306,12 +392,21 @@ def build_page(P: dict, win: pd.DataFrame, G: pd.DataFrame, arrays: pd.DataFrame
         if len(rej):
             parts += ["<p class='note'>Verwerfungsgründe (Fenster mit Tischen): " +
                       html.escape(str(rej.reason.value_counts().to_dict())) + "</p>"]
-    parts += ["<h2>9. Gruppen und Arrays für den Generator</h2>", table(G.drop(columns=["windows"], errors="ignore")) if len(G) else "<p>keine Gruppe</p>",
+    parts += ["<h2>9. Gruppen und Arrays für den Generator</h2>"]
+    if len(G) and len(win):
+        parts += [fig_groups(P.get("rgb"), P["hag"], win, G, nw, win_m, P["extent"], H, res)]
+    parts += [table(G.drop(columns=["windows"], errors="ignore")) if len(G) else "<p>keine Gruppe</p>",
               table(arrays) if len(arrays) else "<p>keine Arrays (Registergeometrie)</p>",
               "<p class='note'>Flags: " + html.escape(", ".join(f"{k}={park.get(k)}" for k in ("rej_tab_frac", "warn_rejected", "az_undetermined", "az_conflict", "slope_cover_min", "n_splinter", "box", "box_side_m") if k in park)) + "</p>"]
     if r_ex is not None and "h_ridge" in win and pd.notna(r_ex.get("h_ridge")):
         parts += ["<h2>10. 3-D-Modell des Beispielfensters</h2>", fig_3d(P["hag"], P["dgm"], P["surf"], r_ex, nw, H, res)]
     parts += ["<h2>11. Vergleich mit dem Register</h2>", table(compare)]
+    if gen is not None:                                           # R13 (c5_mixed): generator arrays = measured + register per MaStR unit
+        parts += ["<h2>Teilfelder für den Generator (Messung + Register je MaStR-Einheit, R13)</h2>",
+                  "<p class='note'><b>Teilfelder mit Quelle register_units sind nicht gemessen, sondern geschätzt:</b> Richtungen laut MaStR-Einheiten, "
+                  "die die Messung nicht gefunden hat, mit dem Leistungsanteil ihrer Einheiten; Neigung = Median der gemessenen Flottenparks gleicher "
+                  "Neigungsklasse und Kohorte, Azimut = Klassenmitte. Die gemessenen Teilfelder teilen sich den Rest.</p>",
+                  table(gen[["array_id", "tilt", "azimuth", "share", "source"]], 3)]
     parts += ["<details><summary>Fenstertabelle (alle Variablen)</summary>", table(win.drop(columns=["x", "y"], errors="ignore"), 3), "</details>"]
     if extra:
         parts[1:1] = ["<p><a href='#synthese'>→ Teil B: Synthese</a></p>"]
@@ -337,25 +432,30 @@ def short_page(pid: str, r: pd.Series, row: dict, out_dir: str) -> None:
     row["mb"] = round(os.path.getsize(path) / 1e6, 1)
 
 
-def fleet_context(pid: str, suffix: str, rasters: bool = True) -> dict:
+def fleet_context(pid: str, suffix: str, rasters: bool = True, r: pd.Series = None, dp: pd.DataFrame = None, rd: str = None,
+                  osm: dict = None) -> dict:
     """Everything the report and the dashboard need of one fleet park: register row, measurement (windows, groups,
     arrays, park dict, source rows) and, with rasters=True, the analysis grid (bounds in the state UTM zone, H, inside),
     the rasters of the chosen source (hag, dgm, surf), the DOP20 mosaic and the orthophoto rows.
-    C["kind"]: "register" (no fetcher / no run), "failed" (no measurement files) or "measured"."""
+    C["kind"]: "register" (no fetcher / no run), "failed" (no measurement files) or "measured".
+    r, dp, rd, osm replace the selection row, the source rows, the measurement directory and the Overpass answers (parks
+    outside the selection, e.g. replacement candidates of screen_replacements.py)."""
     import geometry_release_states as R
     from parks_pv import paths
     from pyproj import Transformer
     from shapely.geometry import Point
-    sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}).set_index("park_id")
-    r = sel.loc[pid].copy()
+    if r is None:
+        r = pd.read_csv(paths.SELECTION, dtype={"park_id": str}).set_index("park_id").loc[pid]
+    r = r.copy()
     r["park_id"] = pid                                            # fetch_margin and municipality use r.park_id
     state = r.bundesland
     C = dict(pid=pid, r=r, state=state)
-    csv = os.path.join(paths.DATA_DIR, f"geodata_release_{state.lower()}{suffix}.csv")
-    rd = os.path.join(REPO, "results", "pv", f"geodata_release{suffix}", pid)
-    if state not in R.STATE or not os.path.exists(csv):
-        return dict(C, kind="register", note="kein Abrufer für das Land / kein Lauf")
-    df = pd.read_csv(csv, dtype={"pv": str}); dp = df[df.pv == pid]
+    rd = rd or os.path.join(REPO, "results", "pv", f"geodata_release{suffix}", pid)
+    if dp is None:
+        csv = os.path.join(paths.DATA_DIR, f"geodata_release_{state.lower()}{suffix}.csv")
+        if state not in R.STATE or not os.path.exists(csv):
+            return dict(C, kind="register", note="kein Abrufer für das Land / kein Lauf")
+        df = pd.read_csv(csv, dtype={"pv": str}); dp = df[df.pv == pid]
     best = dp[dp.best] if "best" in dp else dp.iloc[:0]
     pick = best if len(best) else dp.sort_values("source_rank") if len(dp) else dp
     if not len(pick) or pd.isna(pick.source.iloc[0]) or not os.path.exists(os.path.join(rd, f"windows_{pick.source.iloc[0]}.csv")):
@@ -366,32 +466,66 @@ def fleet_context(pid: str, suffix: str, rasters: bool = True) -> dict:
              park=json.load(open(os.path.join(rd, f"park_{src}.json"))))
     park = C["park"]
     code, zone = R.STATE[state]
-    osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
+    osm = osm if osm is not None else json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
     to_m = Transformer.from_crs("EPSG:4326", GT.CRS[zone], always_xy=True).transform
     pt = Point(*to_m(float(r.lon), float(r.lat)))
     poly = None
-    if park.get("box"):
+    if park.get("box") or str(park.get("auto_outline")) == "True":   # R9: measured inside the height-map outline of the box
         half = float(park["box_side_m"]) / 2
-        bounds = (pt.x - half, pt.y - half, pt.x + half, pt.y + half)
-        H, W = int(round(2 * half / GW.RES)), int(round(2 * half / GW.RES))
+        ext = [float(e) for e in str(park["box_ext"]).split(",")] if park.get("box_ext") else [half] * 4   # R1b: sides grow apart
+        bounds = (pt.x - ext[0], pt.y - ext[1], pt.x + ext[2], pt.y + ext[3])
+        H, W = int(round((ext[1] + ext[3]) / GW.RES)), int(round((ext[0] + ext[2]) / GW.RES))
         inside = np.ones((H, W), bool)
     else:
         poly, _, _ = R.footprint(r, osm, to_m, pt)
-        g = GW.analysis_grid(poly, GW.RES); bounds, H, inside = g["bounds"], g["H"], g["inside"]
+        g = GW.analysis_grid(poly, GW.RES)
+        if str(park.get("extended")) == "True":                    # variant c: windows on the grid of the extended ring
+            R.EXTEND_ON = True
+            g = GW.analysis_grid(poly.buffer(float(park["extend_ring_m"])), GW.RES, buffer_m=20.0, inner_m=0.0)
+        bounds, H, inside = g["bounds"], g["H"], g["inside"]
     C.update(zone=zone, crs=GT.CRS[zone], pt=pt, poly=poly, bounds=bounds, H=H, inside=inside)
     if not rasters:
         return C
+    margin = max(R.fetch_margin(r, osm, zone), max(pt.x - bounds[0], bounds[2] - pt.x, pt.y - bounds[1], bounds[3] - pt.y) + 25)   # the measured box (R1) may exceed the default margin
     tiles = R.fetch_tiles(state, float(r.lat), float(r.lon), int(r.year), r.landkreis, R.municipality(r.unit_ids) if state == "Hessen" else None,
-                          margin_m=R.fetch_margin(r, osm, zone))
+                          margin_m=margin)
     ras = R.rasters(tiles, src, dict(R.sources_from(tiles))[src], bounds, zone, float(r.lat), float(r.lon))
     rgb = GT.mosaic(tiles["dop20"], bounds, GW.RES, zone, bands=[1, 2, 3]) if tiles.get("dop20") else None
-    ortho = GW.orthophoto_axis(rgb, inside, GW.RES)["rows"] if rgb is not None else None
-    C.update(ras=ras, rgb=rgb, ortho=ortho)
+    spec_mask = table_mask(ras["hag"], inside, GW.RES) if park.get("box") else None              # R3
+    ortho = GW.orthophoto_axis(rgb, spec_mask if spec_mask is not None else inside, GW.RES)["rows"] if rgb is not None else None
+    # R3: overview with a margin of max(100 m, 25 %) around the measured area, the measured area as a frame
+    side = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
+    mg = max(100.0, 0.25 * side)
+    wb = (bounds[0] - mg, bounds[1] - mg, bounds[2] + mg, bounds[3] + mg)
+    wide = None
+    if tiles.get("dop20"):
+        try:
+            rgb_w = GT.mosaic(tiles["dop20"], wb, GW.RES * 2, zone, bands=[1, 2, 3])
+            rings = []
+            for g_ in (getattr(poly, "geoms", [poly]) if poly is not None else []):
+                xs, ys = g_.exterior.xy
+                rings.append((np.asarray(xs) - wb[0], np.asarray(ys) - wb[1]))
+            wide = dict(rgb=rgb_w, extent=[0, wb[2] - wb[0], 0, wb[3] - wb[1]], frame=(mg, mg, mg + bounds[2] - bounds[0], mg + bounds[3] - bounds[1]),
+                        poly_xy=rings, pts=[("Registerkoordinate", (pt.x - wb[0], pt.y - wb[1]), "bx")])
+        except Exception as ex:                                    # tiles cover the measured area (+ 25 m); the margin may reach beyond them
+            print("  overview:", type(ex).__name__, str(ex)[:80], flush=True)
+    C.update(ras=ras, rgb=rgb, ortho=ortho, spec_mask=spec_mask, wide=wide)
     return C
 
 
-def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -> dict:
-    C = fleet_context(pid, suffix)
+def generator_arrays(pid: str, state: str, suffix: str, arrays_to: str) -> pd.DataFrame:
+    """Generator arrays of a park from geodata_release_<state><suffix><arrays_to>_arrays.csv when they hold register parts (R13), else None."""
+    from parks_pv import paths
+    f = os.path.join(paths.DATA_DIR, f"geodata_release_{state.lower()}{suffix}{arrays_to}_arrays.csv")
+    if not arrays_to or not os.path.exists(f):
+        return None
+    a = pd.read_csv(f, dtype={"park_id": str})
+    a = a[a.park_id == pid]
+    return a if (a.note.fillna("") == "c5_mixed").any() else None
+
+
+def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False, arrays_to: str = None, **ctx) -> dict:
+    C = fleet_context(pid, suffix, **ctx)
     r, state = C["r"], C["state"]
     row = dict(park_id=pid, state=state, dc_kwp=float(r.dc_kwp), year=int(r.year), orientation_class=r.orientation_class, tilt_class=r.tilt_class)
     if C["kind"] != "measured":
@@ -404,7 +538,7 @@ def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -
     P = dict(hag=ras["hag"], dgm=ras["dgm"], surf=ras["surf"], inside=inside, rgb=rgb, conv=ras["conv"], RES=GW.RES, H=H,
              extent=[0, inside.shape[1] * GW.RES, 0, H * GW.RES], ortho_rows=ortho, source=src, survey_year=ras["survey_year"],
              survey_dates=ras["survey_dates"], title=f"{pid} – {state}, {r.dc_kwp:.0f} kWp, {r.year}",
-             pts=[("Registerkoordinate", (pt.x - bounds[0], pt.y - bounds[1]), "bx")])
+             pts=[("Registerkoordinate", (pt.x - bounds[0], pt.y - bounds[1]), "bx")], wide=C.get("wide"), spec_mask=C.get("spec_mask"))
     G0 = G.iloc[0] if len(G) else None
     head = {"Park": pid, "Land / Kreis": f"{state} / {r.landkreis}", "Leistung DC / AC": f"{r.dc_kwp:.0f} kWp / {r.ac_kw:.0f} kW",
             "Inbetriebnahme": int(r.year), "Einheiten": int(r.n_units), "Registerklasse": f"{r.orientation_class} / {r.tilt_class}",
@@ -419,14 +553,16 @@ def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False) -
     if synthesis:
         import synthesis_report as SR
         extra = SR.section(pid, start=12)
-    html_ = build_page(P, win, G, arrays, park, head, compare, src_rows, extra)
+    gen = generator_arrays(pid, state, suffix, arrays_to)
+    html_ = build_page(P, win, G, arrays, park, head, compare, src_rows, extra, gen)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{pid}.html")
     open(path, "w").write(html_)
     row.update(status=park["status"], source=src, survey=ras["survey_year"], n_ok=park["n_ok"], n_windows=park["n_windows"],
                tilt=round(float(G0.tilt_horiz), 1) if G0 is not None else None, azimuth=round(float(arrays.azimuth.iloc[0])) if len(arrays) else None,
                ew=bool(G0.ew) if G0 is not None else False, or_agree=pick.or_agree.iloc[0], tilt_agree_tol=pick.tilt_agree_tol.iloc[0],
-               accept_relaxed=park.get("accept_relaxed"), footprint="Kasten" if park.get("box") else "OSM", mb=round(os.path.getsize(path) / 1e6, 1))
+               accept_relaxed=park.get("accept_relaxed"), footprint="Kasten" if park.get("box") else "OSM", mb=round(os.path.getsize(path) / 1e6, 1),
+               register_share=round(float(gen[gen.source == "register_units"].share.sum()), 2) if gen is not None else 0.0)
     return row
 
 
@@ -468,7 +604,7 @@ document.querySelectorAll('#ix tbody tr').forEach(r=>{const c=r.dataset;r.style.
 def index(rows: list, out_dir: str, title: str) -> None:
     df = pd.DataFrame(rows)
     opts = lambda col: "".join(f"<option>{html.escape(str(v))}</option>" for v in sorted(df[col].dropna().astype(str).unique())) if col in df else ""
-    cols = [c for c in ["park_id", "state", "dc_kwp", "year", "orientation_class", "tilt_class", "status", "source", "survey", "footprint", "n_ok", "n_windows",
+    cols = [c for c in ["park_id", "replaces", "replaces_state", "replaces_year", "cls", "state", "dc_kwp", "year", "orientation_class", "tilt_class", "status", "source", "survey", "footprint", "n_ok", "n_windows",
                         "tilt", "azimuth", "ew", "or_agree", "tilt_agree_tol", "accept_relaxed", "mb", "note"] if c in df]
     head = "".join(f"<th>{c}</th>" for c in cols)
     body = ""
@@ -486,15 +622,54 @@ def index(rows: list, out_dir: str, title: str) -> None:
     df.to_csv(os.path.join(out_dir, "index.csv"), index=False)
 
 
+def screen_reports(screen: str, out: str, selection: str = "pv_park_selection_v2.csv", write_index: bool = True) -> list:
+    """Pages of the proposed replacements of screen_replacements.py (proposal.csv): selection row as in replace_parks,
+    measurement from <screen>/<old>/<new>/, Overpass answer cached as osm.json there. No synthesis part (not generated)."""
+    import replace_parks as RP
+    from pv import site_inputs
+    prop = pd.read_csv(os.path.join(screen, "proposal.csv")).dropna(subset=["new"])
+    sel = pd.read_csv(os.path.join(RP.FL, "mastr", selection)).set_index("park_id")
+    pool = pd.read_csv(os.path.join(RP.FL, "mastr", "pv_park_pool_v1.csv")).set_index("park_id", drop=False)
+    rows = []
+    for p in prop.itertuples():
+        rd = os.path.join(screen, p.old, p.new)
+        oj = os.path.join(rd, "osm.json")
+        if not os.path.exists(oj):
+            ans = site_inputs.fetch_overpass(float(pool.loc[p.new, "lat"]), float(pool.loc[p.new, "lon"]), 3000)
+            if ans.get("error"):
+                raise SystemExit(f"{p.new}: Overpass unavailable")
+            json.dump(ans, open(oj, "w"))
+        r = pd.Series(RP.selection_row(sel.loc[p.old].rename(p.old), pool.loc[p.new]))
+        dp = pd.read_csv(os.path.join(rd, "sources.csv"), dtype={"pv": str})
+        try:
+            row = fleet_report(p.new, "", out, r=r, dp=dp, rd=rd, osm={p.new: json.load(open(oj))})
+        except Exception as ex:
+            import traceback
+            traceback.print_exc()
+            row = dict(park_id=p.new, state=r.bundesland, status="report_error", note=f"{type(ex).__name__}: {str(ex)[:120]}")
+        row.update(replaces=p.old, replaces_state=p.old_state, replaces_year=p.old_year, cls=p.cls)
+        rows.append(row); print(row, flush=True)
+    if write_index:
+        index(rows, out, "Ersatzkandidaten (Vorschlag, nicht übernommen)")
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["fleet", "trianel"])
+    ap.add_argument("mode", choices=["fleet", "trianel", "screen"])
+    ap.add_argument("--screen", default=None, help="screen mode: output directory of screen_replacements.py")
+    ap.add_argument("--selection", default="pv_park_selection_v2.csv", help="screen mode: selection file in FL/mastr of the replaced parks")
     ap.add_argument("--parks", default=None)
     ap.add_argument("--pv", action="append", default=None)
-    ap.add_argument("--suffix", default="_v2")
+    ap.add_argument("--suffix", default="_t2j")
     ap.add_argument("--out", default=None)
     ap.add_argument("--synthesis", action="store_true", help="append the synthesis part (scripts/pv/synthesis_report.py) of $PV_SYNTH_RELEASE (default parks_pv_v2)")
+    ap.add_argument("--rules", default="", help="rule switches of the run (geometry_release_states.py --rules), needed for the outline of R12 runs")
+    ap.add_argument("--arrays-to", default="", help="fleet mode: generator arrays of geometry_release_states.py --arrays-only --arrays-to (R13 register parts shown)")
     a = ap.parse_args()
+    if a.rules:
+        import geometry_release_states as R
+        R.set_rules(a.rules)
     rows = []
     if a.mode == "fleet":
         from parks_pv import paths
@@ -503,7 +678,7 @@ def main():
         ids = a.parks.split(",") if a.parks else sel.park_id.tolist()
         for pid in ids:
             try:
-                rows.append(fleet_report(pid, a.suffix, out, a.synthesis))
+                rows.append(fleet_report(pid, a.suffix, out, a.synthesis, a.arrays_to))
             except Exception as ex:
                 import traceback
                 traceback.print_exc()
@@ -516,9 +691,9 @@ def main():
             old = pd.read_csv(os.path.join(out, "index.csv"), dtype={"park_id": str})
             new = pd.DataFrame(rows)
             rows = pd.concat([old[~old.park_id.isin(new.park_id)], new]).set_index("park_id").reindex(sel.park_id).reset_index().to_dict("records")
-            a.parks = None
-        if not a.parks:
-            index(rows, out, "Geometrie der Flotte (Fenstermethode, v2)")
+        index(rows, out, f"Geometrie der Flotte (Fenstermethode, {a.suffix.strip('_')})")   # --parks into a new directory: index of these parks
+    elif a.mode == "screen":
+        rows = screen_reports(a.screen, a.out or os.path.join(PAPER, "results", "geo_review_" + pd.Timestamp.now().strftime("%Y-%m-%d"), "replacements"), a.selection)
     else:
         out = a.out or OUT_TRIANEL
         for pv in a.pv or ["pv1", "pv2", "pv3", "pv5", "pv6", "pv7"]:

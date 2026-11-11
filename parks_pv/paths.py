@@ -5,8 +5,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.environ.get("DATA_ROOT", "/mnt/lambda1/nvme1")
 NAME = os.environ.get("PV_RELEASE_NAME", "parks_pv_v1")   # parks_pv_v2 (2026-10-22): same parks and drivers, geometry from geodata
 VARIANT = os.environ.get("PV_RELEASE_VARIANT", "")      # e.g. "_30min": own release and chain work dir, shared inputs
-SELECTION = os.environ.get("PV_SELECTION") or os.path.expanduser(                   # v2 (2026-10-22): 3 parks with wrong MaStR coordinates replaced
-    "~/Work/FL_Contribution/data/mastr/pv_park_selection_v2.csv" if NAME == "parks_pv_v2" else "~/Work/FL_Contribution/data/mastr/pv_park_selection_v1.csv")
+# selection of the release: v2 (2026-10-22) 3 parks with wrong MaStR coordinates replaced, v3 (2026-11-03) 14 parks whose surveys predate them
+_SEL_VER = {"parks_pv_v2": "v2", "parks_pv_v3": "v3", "parks_pv_v4": "v4"}.get(NAME, "v1")   # v4 (2026-11-07): the 226 confirmed parks of the review (fleet list i)
+SELECTION = os.environ.get("PV_SELECTION") or os.path.expanduser(f"~/Work/FL_Contribution/data/mastr/pv_park_selection_{_SEL_VER}.csv")
 SHARED_DIR = f"{ROOT}/synthetic/solar/parks_pv_v1"      # inputs, corrected CAMS and snow cache are shared by all releases
 BASE_DIR = f"{ROOT}/synthetic/solar/{NAME}"
 RELEASE_DIR = BASE_DIR + VARIANT

@@ -55,6 +55,11 @@ def run_park(cfg: dict, drv: pd.DataFrame, horizon: pd.Series = None, pm: pd.Dat
         mean_age = float(np.nanmean(aging.age_years(idx, cfg["aging"]["commissioning_date"])))
     else:
         era, age_f, mean_age = None, pd.Series(1.0, index=idx), 0.0
+    # age cohorts (2026-11-05): arrays with their own era / commissioning date age on their own; the park aging
+    # factor is then the share-weighted one (parks without these keys keep the park-level aging, bit-identical)
+    per_array_age = bool(cfg["aging"]["enabled"]) and any(k in a for a in cfg["arrays"] for k in ("era", "commissioning_date"))
+    pdc_aged = pd.Series(0.0, index=idx)
+    age_w = pd.Series(0.0, index=idx)
 
     poa_sum = pd.Series(0.0, index=idx)
     poa_eff_sum = pd.Series(0.0, index=idx)
@@ -76,11 +81,19 @@ def run_park(cfg: dict, drv: pd.DataFrame, horizon: pd.Series = None, pm: pd.Dat
         tc = mod.cell_temperature(p["poa_global"], drv["temp_air"].fillna(12.0), drv["wind_speed"].fillna(2.0),
                                   model=cfg["temperature"]["model"], u0=cfg["temperature"]["u0"], u1=cfg["temperature"]["u1"])
         share_w = pdc0_w * float(a["share"])
+        if per_array_age:
+            era_a = a.get("era") or era
+            date_a = a.get("commissioning_date") or cfg["aging"]["commissioning_date"]
+            age_a = aging.degradation_series(idx, date_a, era_a)
+            mean_age_a = float(np.nanmean(aging.age_years(idx, date_a)))
+        else:
+            era_a, age_a, mean_age_a = era, None, mean_age
+        gamma0 = float(a.get("gamma_pdc", m["gamma_pdc"]))
         if m["model"] == "pvwatts":
-            gamma = aging.aged_gamma(float(m["gamma_pdc"]), mean_age, era) if era else float(m["gamma_pdc"])
+            gamma = aging.aged_gamma(gamma0, mean_age_a, era_a) if era_a else gamma0
             dc_a = mod.dc_pvwatts(p["poa_eff"], tc, share_w, gamma)
         else:
-            r_s = aging.aged_r_s_growth(mean_age, era) if era else 0.0
+            r_s = aging.aged_r_s_growth(mean_age_a, era_a) if era_a else 0.0
             out = mod.dc_cec(p["poa_eff"], tc, mod_row, share_w, r_s_growth=r_s)
             dc_a = out["p_mp"]
             vmp = vmp + out["v_mp"] * float(a["share"])
@@ -89,6 +102,9 @@ def run_park(cfg: dict, drv: pd.DataFrame, horizon: pd.Series = None, pm: pd.Dat
         tcell_sum += tc * a["share"]
         shaded = np.maximum(shaded, p["horizon_shaded"])
         pdc += dc_a
+        if per_array_age:
+            pdc_aged += dc_a * age_a
+            age_w += age_a * a["share"]
         if return_arrays:
             per_array[a["name"]] = pd.DataFrame({"poa_global": p["poa_global"], "poa_eff": p["poa_eff"], "t_cell": tc, "p_dc_w": dc_a})
 
@@ -98,8 +114,12 @@ def run_park(cfg: dict, drv: pd.DataFrame, horizon: pd.Series = None, pm: pd.Dat
     res["zenith"], res["azimuth_sun"] = sp["apparent_zenith"], sp["azimuth"]
     res["poa_global"], res["poa_eff"], res["t_cell"] = poa_sum, poa_eff_sum, tcell_sum
     res["p_dc_raw_w"] = pdc
-    res["aging_factor"] = age_f
-    pdc = pdc * age_f
+    if per_array_age:
+        res["aging_factor"] = age_w
+        pdc = pdc_aged
+    else:
+        res["aging_factor"] = age_f
+        pdc = pdc * age_f
 
     if cfg["soiling"]["enabled"] and pm is not None and rain_mm is not None:
         tilt_mean = float(np.average([a["tilt"] for a in cfg["arrays"]], weights=[a["share"] for a in cfg["arrays"]]))

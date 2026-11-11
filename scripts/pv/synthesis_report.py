@@ -47,7 +47,7 @@ TILT_CLS = {"< 20 Grad": (0, 20), "20 - 40 Grad": (20, 40), "40 - 60 Grad": (40,
 # ------------------------------------------------------------------------------------------------ data
 def load(pid: str, rel_dir: str = None) -> dict:
     """All release data of one park: manifest, park/site rows, arrays (v2, v1), register view, frames, drivers, horizon."""
-    rel = rel_dir or os.path.join(ROOT_SOLAR, os.environ.get("PV_SYNTH_RELEASE", "parks_pv_v2"))
+    rel = rel_dir or os.path.join(ROOT_SOLAR, os.environ.get("PV_SYNTH_RELEASE", "parks_pv_v3"))
     S = dict(pid=pid, rel=rel, name=os.path.basename(rel))
     S["man"] = json.load(open(os.path.join(rel, f"manifest_{pid}.json")))
     S["park"] = pd.read_csv(os.path.join(rel, "parks.csv"), dtype={"park_id": str}).set_index("park_id").loc[pid]

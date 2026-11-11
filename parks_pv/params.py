@@ -14,6 +14,8 @@ WP_M2 = {"multi_si_early": 130, "multi_si": 150, "multi_perc": 165, "mono_perc":
 DENSITY_YEARS, DENSITY_KWP_HA = [2010, 2014, 2018, 2022, 2025], [450, 600, 850, 1150, 1250]
 LOSSES = {"dc": 0.05, "ac": 0.02, "availability": 0.98}
 UNITS = os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet")
+AGE_COHORTS = True       # 2026-11-05 (Viktor, on): arrays = geometry groups x age cohorts of the MaStR units; off = park-level era/aging
+COHORT_GAP_YEARS = 3     # units of one era further apart than this in commissioning year form their own cohort
 
 
 def commissioning_dates(sel: pd.DataFrame, units_path: str = UNITS) -> pd.DataFrame:
@@ -40,18 +42,69 @@ def park_parameters(r) -> dict:
         kwp_ha, kwp_ha_src = kwp / float(r.area_ha), "mastr_area"
     else:
         kwp_ha, kwp_ha_src = float(np.interp(year, DENSITY_YEARS, DENSITY_KWP_HA)), "year_table"
-    gcr = float(np.clip(kwp_ha * 1000.0 / 10000.0 / WP_M2[era], 0.2, 0.75))
+    gcr = gcr_of(kwp_ha, era)
     return {"kwp_dc": kwp, "ac_kw": ac, "dc_ac": dc_ac, "year": year, "era": era, "gamma_pdc": GAMMA[era],
             "kwp_per_ha": kwp_ha, "kwp_per_ha_src": kwp_ha_src, "gcr": gcr,
             "power_limit": r.power_limit if isinstance(r.power_limit, str) else ""}
 
 
+def gcr_of(kwp_ha: float, era: str) -> float:
+    """Ground coverage ratio from the capacity density and the module power per m2 of the era."""
+    return float(np.clip(kwp_ha * 1000.0 / 10000.0 / WP_M2[era], 0.2, 0.75))
+
+
+def age_cohorts(r, units_path: str = UNITS) -> list:
+    """Age cohorts of a park from its MaStR units (r: selection row with unit_ids): units sorted by commissioning date,
+    a new cohort starts when the technology era changes or the year lies more than COHORT_GAP_YEARS after the first
+    year of the current cohort. Per cohort: kWp share (Bruttoleistung), first commissioning date, era, era gamma and
+    the gcr from the cohort units' MaStR area if every unit has one, else from the year table. One cohort = no split."""
+    global _UNIT_TAB
+    if "_UNIT_TAB" not in globals() or _UNIT_TAB[0] != units_path:
+        u = pd.read_parquet(units_path, columns=["EinheitMastrNummer", "Inbetriebnahmedatum", "Bruttoleistung", "InAnspruchGenommeneFlaeche"])
+        _UNIT_TAB = (units_path, u.set_index("EinheitMastrNummer"))
+    u = _UNIT_TAB[1].reindex(str(r.unit_ids).split(";")).dropna(subset=["Inbetriebnahmedatum", "Bruttoleistung"])
+    u = u.assign(date=pd.to_datetime(u.Inbetriebnahmedatum).dt.normalize()).sort_values("date")
+    groups, cur = [], None
+    for x in u.itertuples():
+        y, era = x.date.year, modules.era_of(x.date.year)
+        if cur is None or era != cur["era"] or y - cur["year"] > COHORT_GAP_YEARS:
+            cur = {"year": y, "era": era, "rows": []}
+            groups.append(cur)
+        cur["rows"].append(x)
+    tot = float(u.Bruttoleistung.sum())
+    out = []
+    for g in groups:
+        kwp = float(sum(x.Bruttoleistung for x in g["rows"]))
+        area = [x.InAnspruchGenommeneFlaeche for x in g["rows"]]
+        if all(np.isfinite(a) and a > 0 for a in area):
+            kwp_ha = kwp / float(sum(area))
+        else:
+            kwp_ha = float(np.interp(g["year"], DENSITY_YEARS, DENSITY_KWP_HA))
+        out.append({"year": g["year"], "commissioning_date": f"{g['rows'][0].date:%Y-%m-%d}", "era": g["era"], "kwp": kwp,
+                    "share": kwp / tot, "gamma_pdc": GAMMA[g["era"]], "gcr": gcr_of(kwp_ha, g["era"]), "n_units": len(g["rows"])})
+    return out
+
+
+def cohort_arrays(arrays: list, cohorts: list) -> list:
+    """Geometry groups x age cohorts, proportional split: every geometry array is divided by the cohort kWp shares
+    (the unit coordinates are often too coarse to place a cohort in one geometry group; a spatial assignment would
+    replace this split where they are not). Names <array>_<cohort year>."""
+    return [dict(a, name=f"{a['name']}_{c['year']}", share=float(a["share"]) * c["share"], gamma_pdc=c["gamma_pdc"], era=c["era"],
+                 commissioning_date=c["commissioning_date"], gcr=c["gcr"]) for a in arrays for c in cohorts]
+
+
 def park_config(park_id: str, lat: float, lon: float, alt: float, par: dict, arrays: list, inter_row: bool = True,
-                horizon: bool = True, seed: int = 42) -> dict:
+                horizon: bool = True, seed: int = 42, cohorts: list = None) -> dict:
+    """cohorts (age_cohorts, with AGE_COHORTS): more than one -> the arrays are split by cohort and carry the cohort
+    era, gamma, commissioning date and gcr; None or one cohort -> park-level values as before."""
+    split = bool(cohorts) and len(cohorts) > 1
+    if split:
+        arrays = cohort_arrays(arrays, cohorts)
     cfg = {"park_id": park_id, "latitude": float(lat), "longitude": float(lon), "altitude": float(alt), "kwp_dc": par["kwp_dc"],
            "dc_ac": par["dc_ac"], "random_seed": seed,
            "arrays": [{"name": a["name"], "tilt": round(float(a["tilt"]), 3), "azimuth": round(float(a["azimuth"]), 3),
-                       "share": round(float(a["share"]), 6), "gcr": par["gcr"] if inter_row else None} for a in arrays],
+                       "share": round(float(a["share"]), 6), "gcr": (a["gcr"] if split else par["gcr"]) if inter_row else None,
+                       **({k: a[k] for k in ("gamma_pdc", "era", "commissioning_date")} if split else {})} for a in arrays],
            "module": {"model": "pvwatts", "gamma_pdc": par["gamma_pdc"], "year": par["year"]},
            "inverter": {"model": "pvwatts", "eta_inv_nom": 0.97},
            "transposition": {"albedo": "era5", "iam": "physical"},

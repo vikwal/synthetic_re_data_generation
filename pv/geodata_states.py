@@ -485,6 +485,149 @@ def fetch_sn(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "
     return out
 
 
+# ------------------------------------------------------------------------------------------ Baden-Württemberg
+BW_BASE = "https://opengeodata.lgl-bw.de/data/"
+BW_PRODUCTS = {"dop20": ("dop20/dop20rgb", (".tif",)), "dom1": ("dom1/dom1", (".tif",)), "dgm1": ("dgm/dgm1", (".xyz",))}
+
+
+def _bw_xyz_to_tif(xyz: str) -> str:
+    """BW DGM1 1 km tile (ASCII x y z, cell centres, 1 m) -> float32 GeoTIFF in EPSG:25832 next to it."""
+    import numpy as np
+    import pandas as pd
+    import rasterio
+    from rasterio.transform import from_origin
+    tif = xyz[:-4] + ".tif"
+    if os.path.exists(tif):
+        return tif
+    d = pd.read_csv(xyz, sep=r"\s+", header=None, names=["x", "y", "z"], dtype=np.float64).to_numpy()
+    x0, y1 = d[:, 0].min() - 0.5, d[:, 1].max() + 0.5
+    W, H = int(round(d[:, 0].max() + 0.5 - x0)), int(round(y1 - d[:, 1].min() + 0.5))
+    a = np.full((H, W), np.nan, np.float32)
+    a[np.round(y1 - 0.5 - d[:, 1]).astype(int), np.round(d[:, 0] - 0.5 - x0).astype(int)] = d[:, 2]
+    with rasterio.open(tif + ".part", "w", driver="GTiff", height=H, width=W, count=1, dtype="float32", crs="EPSG:25832",
+                       transform=from_origin(x0, y1, 1.0, 1.0), nodata=np.nan, compress="deflate") as dst:
+        dst.write(a, 1)
+    os.replace(tif + ".part", tif)
+    os.remove(xyz)
+    return tif
+
+
+def fetch_bw(lat: float, lon: float, out_dir: str, products=("dop20", "dom1", "dgm1"), margin_m: float = 300.0) -> dict:
+    """Baden-Württemberg (LGL Open GeoData portal opengeodata.lgl-bw.de, dl-de/by-2-0; checked 2026-10-29): zips of
+    2 km cells in EPSG:25832 named <prod>_32_<E km>_<N km>_2_bw.zip with E odd and N even (the portal's 2x2 km grid,
+    vector tiles /tiles/vts/2x2Gitter carry the links). Each zip holds four 1 km tiles <prod>_32_<E>_<N>_1_bw_<year>
+    with a CSV whose column Aktualitaet is the flight date. DOM1 (GeoTIFF, laser flights ALS_2 2016-2021, ALS_3 from
+    2022 on), DGM1 (xyz, converted to GeoTIFF here), DOP20 RGB (GeoTIFF + tfw). Only the needed 1 km tiles are read
+    out of the remote zip by HTTP range requests. The point cloud (3DM) is listed in the portal but not open (404)."""
+    import glob
+    import zipfile
+    out = {}
+    for prod in products:
+        sub, suffixes = BW_PRODUCTS[prod]
+        dest = os.path.join(out_dir, "bw", prod)
+        dates_path = os.path.join(dest, "_dates.json")
+        dates = json.load(open(dates_path)) if os.path.exists(dates_path) else {}
+        paths = []
+        for e, n in tiles_for(lat, lon, 32, margin_m):
+            token = f"_32_{e}_{n}_1_bw"
+            local = [f for f in glob.glob(os.path.join(dest, f"*{token}*.tif"))]
+            if local:
+                paths += local
+                continue
+            e2, n2 = e - (e - 1) % 2, n - n % 2
+            url = f"{BW_BASE}{sub}_32_{e2}_{n2}_2_bw.zip"
+            try:
+                rf = _RemoteFile(url)
+            except urllib.error.HTTPError as ex:                  # cells outside the state: no zip
+                print("  BW", prod, e2, n2, "not available:", ex.code, flush=True)
+                continue
+            with zipfile.ZipFile(rf) as z:
+                for nm in z.namelist():
+                    base = os.path.basename(nm)
+                    if token not in base or not base.lower().endswith(suffixes + (".tfw", ".csv")):
+                        continue
+                    p = os.path.join(dest, base)
+                    os.makedirs(dest, exist_ok=True)
+                    with z.open(nm) as s, open(p + ".part", "wb") as d:
+                        d.write(s.read())
+                    os.replace(p + ".part", p)
+                    if base.endswith(".csv"):                      # Kachelname;Aktualitaet;... -> flight date per tile
+                        rows = [r.split(";") for r in open(p, encoding="utf-8", errors="replace").read().splitlines()]
+                        if len(rows) > 1 and "Aktualitaet" in rows[0]:
+                            dates[rows[1][0] + ".tif"] = rows[1][rows[0].index("Aktualitaet")]
+                    elif base.endswith(".xyz"):
+                        paths.append(_bw_xyz_to_tif(p))
+                    elif base.lower().endswith(suffixes):
+                        paths.append(p)
+            json.dump(dates, open(dates_path, "w"))
+        out[prod] = sorted(set(paths))
+        out[prod + "_dates"] = {os.path.basename(p): dates.get(os.path.basename(p)) for p in out[prod] if dates.get(os.path.basename(p))}
+    return out
+
+
+# -------------------------------------------------------------------------------------------- Rheinland-Pfalz
+RP_BASE = "https://geobasis-rlp.de/data/"
+RP_PRODUCTS = {"dom1": ("dom1/current/tif/", 1, (".tif", ".tfw")), "dgm1": ("dgm1/current/tif/", 1, (".tif", ".tfw")),
+               "dop20": ("dop20rgb/current/jp2/", 2, (".jp2", ".j2w"))}
+
+
+def _rp_listing(sub: str, out_dir: str, max_age_days: float = 30.0) -> list:
+    """File names of one RP product directory (HTML index, cached for max_age_days)."""
+    import time
+    path = os.path.join(out_dir, "rp", "_index_" + sub.strip("/").replace("/", "_") + ".html")
+    if not os.path.exists(path) or time.time() - os.path.getmtime(path) > max_age_days * 86400:
+        _curl(RP_BASE + sub, path + ".new", timeout=600)
+        os.replace(path + ".new", path)
+    return re.findall(r'href="([A-Za-z0-9_]+\.[a-z0-9]+)"', open(path, encoding="utf-8", errors="replace").read())
+
+
+def _rp_flight_date(meta_url: str, path: str) -> str:
+    """Flight date of an RP tile: process step 'Erfassung' of its ISO metadata (YYYY-MM-DD) or None."""
+    try:
+        if not os.path.exists(path):
+            _curl(meta_url, path, timeout=120)
+        m = re.search(r"Erfassung</gco:CharacterString>.*?<gco:DateTime>(\d{4}-\d{2}-\d{2})", open(path, encoding="utf-8").read(), re.S)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def fetch_rp(lat: float, lon: float, out_dir: str, products=("dop20", "dom1", "dgm1"), margin_m: float = 300.0) -> dict:
+    """Rheinland-Pfalz (LVermGeo open data server geobasis-rlp.de/data, dl-de/by-2-0; checked 2026-11-02): single files
+    in EPSG:25832, DOM1 and DGM1 as 1 km GeoTIFF <prod>_32_<E km>_<N km>_1_rp_<year>.tif, DOP20 RGB as 2 km JPEG 2000
+    dop20rgb_32_<E>_<N>_2_rp_<year>.jp2 (E, N even) with world files. Laser flights cover the state in four parts
+    (LVermGeo map 07/2026: south 2022, centre 2023, north-east 2024, west 2025); the flight date of a DOM1 tile is the
+    process step 'Erfassung' of its metadata XML. The point cloud (las/, ~150 MB per km2, older than DOM1 in the west)
+    is not fetched."""
+    out = {}
+    for prod in products:
+        sub, km, suffixes = RP_PRODUCTS[prod]
+        names = _rp_listing(sub, out_dir)
+        dest = os.path.join(out_dir, "rp", prod)
+        paths, dates = [], {}
+        cells = sorted({(e - e % km, n - n % km) for e, n in tiles_for(lat, lon, 32, margin_m)})
+        for e, n in cells:
+            stem = f"_32_{e}_{n}_{km}_rp"
+            cand = sorted(nm for nm in names if stem + "_" in nm and nm.endswith(suffixes[0]))
+            if not cand:
+                print("  RP", prod, e, n, "not available", flush=True)
+                continue
+            base = cand[-1][: -len(suffixes[0])]                  # newest year
+            for suf in suffixes:
+                if base + suf in names:
+                    p = _curl(RP_BASE + sub + base + suf, os.path.join(dest, base + suf))
+                    if suf == suffixes[0]:
+                        paths.append(p)
+            if prod == "dom1":
+                d = _rp_flight_date(RP_BASE + sub.replace("tif/", "metadata/") + base + "_meta.xml", os.path.join(dest, base + "_meta.xml"))
+                if d:
+                    dates[base + suffixes[0]] = d
+        out[prod] = paths
+        if prod == "dom1":
+            out["dom1_dates"] = dates
+    return out
+
+
 # -------------------------------------------------------------------------------------------------- Thüringen
 def fetch_th(lat: float, lon: float, out_dir: str, products=("dop20", "laser", "dgm1"), margin_m: float = 300.0) -> dict:
     """Thüringen (TLBG, CC BY 4.0; 1 km tiles in EPSG:25832, LAZ, DGM1, DOP20): on 2026-10-22 the old download

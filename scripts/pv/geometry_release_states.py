@@ -25,20 +25,38 @@ import traceback
 
 import numpy as np
 import pandas as pd
-from shapely.geometry import Point
+from shapely.geometry import MultiLineString, Point
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO)
 from parks_pv import geometry as PG, paths  # noqa: E402
-from pv import geodata_bayern as GB, geodata_states as GS, geodata_tiles as GT, geodata_windows as GW  # noqa: E402
+from pv import geodata_bayern as GB, geodata_states as GS, geodata_tiles as GT, geodata_windows as GW, site_inputs as SI  # noqa: E402
 from pv.plausibility import orientation_class, tilt_class  # noqa: E402
 
 GEO = os.path.join(paths.INPUT_DIR, "geodata")
 STATE = {"Niedersachsen": ("ni", 32), "Brandenburg": ("bb", 33), "Mecklenburg-Vorpommern": ("mv", 33), "Bayern": ("by", 32),
-         "Nordrhein-Westfalen": ("nw", 32), "Hessen": ("he", 32), "Sachsen": ("sn", 33), "Thüringen": ("th", 32), "Sachsen-Anhalt": ("st", 32)}
+         "Nordrhein-Westfalen": ("nw", 32), "Hessen": ("he", 32), "Sachsen": ("sn", 33), "Thüringen": ("th", 32), "Sachsen-Anhalt": ("st", 32),
+         "Baden-Württemberg": ("bw", 32), "Rheinland-Pfalz": ("rp", 32)}
 SOURCE_RANK = {"laz": 0, "dom1_laser": 1, "bdom_image": 2, "dom20_image": 3}     # point cloud before DOM1 before image models (2026-10-22)
 LASER = ("laz", "dom1_laser")
 FENCE_MAX_M = 400.0
+# review 2026-11-04 (Viktor), rules of this script; the window-method rules are pv.geodata_windows.RULES (--rules sets both)
+RULES = dict(ni_bdom=True,        # R11: Niedersachsen also fetches the LGLN bDOM20 (image DSM, 20 cm) - DOM1 often predates young parks
+             osm_fallback=False,  # R12 (probe): no plant near the register point -> plants near the MaStR unit points -> OSM generator areas
+             gen_at_point=False,  # R19 (probe 2026-11-06): register point outside the chosen plant outline but inside a generator area lying outside it -> that area is the outline (SEL938315121090: plant polygon 130 m west of the park)
+             c5_mixed=False,      # R13 (probe, not used): C5 parks = measured arrays + register arrays for the unit classes not measured
+             az_known=True)       # R17 (Viktor 2026-11-05): a source with a group of undetermined azimuth is not accepted
+GEN_AT_POINT_OVERLAP = 0.5        # R19: the generator area replaces the outline only if less than this share of it lies inside the outline
+C5_MISSING_MAX = 0.10             # Viktor 2026-11-05: a C5 park with more capacity in unmeasured register directions leaves the fleet
+EW_PAIR_TOL = 15.0                # opposite arrays within 180 +- this are one east-west construction
+MIXED_AZ_TOL = 35.0               # R13: a register class counts as measured when a measured array lies within this azimuth distance
+# R13: tilt of a register array = median measured tilt of the fleet run _t2g (73 measured parks, 2026-11-05) by
+# (east-west, register tilt class, cohort) where >= 3 parks, else by (east-west, cohort); no random draw
+MEASURED_TILT = {("EW", "< 20 Grad", "2021+"): 14.6, ("EW", "< 20 Grad", "<=2012"): 14.8,
+                 ("S", "20 - 40 Grad", "<=2012"): 23.5, ("S", "20 - 40 Grad", "2013-20"): 21.3, ("S", "20 - 40 Grad", "2021+"): 19.7,
+                 ("S", "< 20 Grad", "2013-20"): 15.3, ("S", "< 20 Grad", "2021+"): 17.0,
+                 ("EW", "<=2012"): 12.8, ("EW", "2013-20"): 13.8, ("EW", "2021+"): 14.6, ("S", "<=2012"): 23.3, ("S", "2013-20"): 20.4, ("S", "2021+"): 18.1}
+GEN_CLOSE_M = 15.0                # R12: generator areas (rows or fields) closed into outlines by a buffer of +/- this width
 TILT_TOL_DEG = 2.0
 CLASS_BOUNDS = {"< 20 Grad": (-90.0, 20.0), "20 - 40 Grad": (20.0, 40.0), "40 - 60 Grad": (40.0, 60.0), "> 60 Grad": (60.0, 90.0)}
 DERIVED = ("ew_measured", "tilt_measured", "az_measured", "or_cls_measured", "tilt_cls_measured", "gate_after_build", "survey_date_known",
@@ -64,7 +82,11 @@ def fetch_tiles(state: str, lat: float, lon: float, year: int, landkreis: str = 
                 out.update(GS.fetch_by_laser(lat, lon, GEO, margin_m))
                 return out
             if state == "Niedersachsen":
-                return GS.fetch_ni(lat, lon, GEO, after=f"{year}-01-01", margin_m=margin_m)
+                out = GS.fetch_ni(lat, lon, GEO, after=f"{year}-01-01", margin_m=margin_m)
+                if RULES["ni_bdom"]:                                     # R11 (probe 2026-11-04, SEL968513427397: DOM1 2016 before the build)
+                    b = GS.fetch_ni(lat, lon, GEO, products=("bdom20",), after=f"{year}-01-01", margin_m=margin_m)
+                    out.update(bdom=b.get("bdom20", []), bdom_dates=b.get("bdom20_dates", {}))
+                return out
             if state == "Brandenburg":
                 return GS.fetch_bb(lat, lon, GEO, products=("dop20", "als", "bdom", "dgm1"), margin_m=margin_m)
             if state == "Nordrhein-Westfalen":
@@ -75,8 +97,12 @@ def fetch_tiles(state: str, lat: float, lon: float, year: int, landkreis: str = 
                 return GS.fetch_sn(lat, lon, GEO, margin_m=margin_m)
             if state == "Thüringen":
                 return GS.fetch_th(lat, lon, GEO, margin_m=margin_m)
+            if state == "Rheinland-Pfalz":
+                return GS.fetch_rp(lat, lon, GEO, margin_m=margin_m)
             if state == "Sachsen-Anhalt":
                 return GS.fetch_st(lat, lon, GEO, margin_m=margin_m)
+            if state == "Baden-Württemberg":
+                return GS.fetch_bw(lat, lon, GEO, margin_m=margin_m)
             return GS.FETCHERS[state](lat, lon, GEO, margin_m=margin_m)
         except RuntimeError as ex:                  # truncated transfers (curl 18) are retried
             last = ex
@@ -90,13 +116,66 @@ def expected_fenced_m2(kwp: float, year: int) -> float:
     return float(kwp) / float(np.interp(int(year), DENSITY_YEARS, DENSITY_KWP_HA)) * 1e4
 
 
+def unit_points(r, to_m) -> list:
+    """R12: points (metres) of the park's MaStR units; a Lokation point can be the mean of units far apart
+    (SEL961760100570: units 0.19 and 0.63 km from it)."""
+    global _UNIT_XY
+    if "_UNIT_XY" not in globals():
+        _UNIT_XY = pd.read_parquet(os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet"),
+                                   columns=["EinheitMastrNummer", "Breitengrad", "Laengengrad"]).dropna().set_index("EinheitMastrNummer")
+    u = _UNIT_XY.reindex(str(r.unit_ids).split(";")).dropna()
+    return [Point(*to_m(float(lo), float(la))) for la, lo in zip(u.Breitengrad, u.Laengengrad)]
+
+
+def generator_fences(elements: list, points: list, to_m) -> pd.DataFrame:
+    """R12: OSM solar generator areas (rows or fields) closed into outlines (buffer +/- GEN_CLOSE_M), one row per
+    outline as in the fences table of osm_footprint (SEL978748582556: only generator areas, the park 270 m east)."""
+    _, gen = GW.osm_footprint(elements, points, to_m, 1e9, power="generator")
+    if not len(gen):
+        return gen
+    from shapely.ops import unary_union
+    u = unary_union(list(gen.geom)).buffer(GEN_CLOSE_M).buffer(-GEN_CLOSE_M)
+    parts = list(getattr(u, "geoms", [u]))
+    return pd.DataFrame([dict(geom=g, name=None, typ="generator", id=None, area_ha=g.area / 1e4, dist_m=min(g.distance(p) for p in points))
+                         for g in parts if g.area > 0])
+
+
 def footprint(r, osm: dict, to_m, pt) -> tuple:
     """(polygon or None, fences table, n_used): OSM plants within FENCE_MAX_M of the register point, selected by
     pv.geodata_windows.select_fences (nearest plant, further ones while the union fits the capacity; 2026-10-22,
-    replaces the union of all plants and the per-park exceptions of the same day)."""
-    _, fences = GW.osm_footprint((osm.get(r.park_id) or {}).get("elements", []), [pt], to_m, FENCE_MAX_M)
-    poly, used, _ = GW.select_fences(fences, expected_fenced_m2(r.dc_kwp, r.year), FENCE_MAX_M)
+    replaces the union of all plants and the per-park exceptions of the same day). R12 (osm_fallback) only where
+    this finds nothing: plants within FENCE_MAX_M of a MaStR unit point, then generator areas near the register or
+    a unit point, under the same area limit. fences.attrs['kind']: osm | osm_units | osm_generator."""
+    els = (osm.get(r.park_id) or {}).get("elements", [])
+    exp = expected_fenced_m2(r.dc_kwp, r.year)
+    _, fences = GW.osm_footprint(els, [pt], to_m, FENCE_MAX_M)
+    poly, used, _ = GW.select_fences(fences, exp, FENCE_MAX_M)
+    kind = "osm"
+    if poly is not None and RULES["gen_at_point"] and not poly.contains(pt):      # R19
+        gen = generator_fences(els, [pt], to_m)
+        at = gen[[g.contains(pt) for g in gen.geom]] if len(gen) else gen
+        if len(at) and at.geom.iloc[0].intersection(poly).area < GEN_AT_POINT_OVERLAP * at.geom.iloc[0].area:
+            poly, used, _ = GW.select_fences(at, exp, FENCE_MAX_M)
+            kind = "osm_generator_point"
+    if poly is None and RULES["osm_fallback"]:
+        pts = [pt] + unit_points(r, to_m)
+        _, fences = GW.osm_footprint(els, pts, to_m, FENCE_MAX_M)
+        poly, used, _ = GW.select_fences(fences, exp, FENCE_MAX_M)
+        kind = "osm_units"
+        if poly is None:
+            fences = generator_fences(els, pts, to_m)
+            poly, used, _ = GW.select_fences(fences, exp, FENCE_MAX_M)
+            kind = "osm_generator"
+    fences.attrs["kind"] = kind if poly is not None else None
     return poly, fences, used
+
+
+EXTEND_ON = False   # variant c (2026-11-02, probe): --extend
+
+
+def extend_ring_m(r) -> float:
+    """Width of the ring around an OSM outline measured by variant c: half the side of the expected fenced square."""
+    return float(max(GW.EXTEND["ring_min_m"], 0.5 * np.sqrt(expected_fenced_m2(r.dc_kwp, r.year))))
 
 
 def fetch_margin(r, osm: dict, zone: int) -> float:
@@ -107,11 +186,17 @@ def fetch_margin(r, osm: dict, zone: int) -> float:
     x, y = to_m(float(r.lon), float(r.lat))
     poly, _, _ = footprint(r, osm, to_m, Point(x, y))
     if poly is not None:
-        minx, miny, maxx, maxy = poly.buffer(25).bounds
+        minx, miny, maxx, maxy = poly.buffer(25 + (GW.EXTEND["ring_max_factor"] * extend_ring_m(r) if EXTEND_ON else 0.0)).bounds
         m = max(x - minx, maxx - x, y - miny, maxy - y)
     else:
-        m = max(np.sqrt(GW.BOX["area_factor"] * float(r.dc_kwp) * 5.0 * 2.2), GW.BOX["size_m"]) / 2 + GW.BOX["step_m"] + 25
+        m = GW.box_reach(float(r.dc_kwp), a_ref_m2(r)) + 60.0 + 25                 # one step (<= 60 m with R1) beyond the cap
     return float(max(m, 300.0))
+
+
+def a_ref_m2(r) -> float:
+    """R1: reference area of the box cap, max(fenced area by era density, MaStR area)."""
+    area = float(r.area_ha) * 1e4 if pd.notna(r.area_ha) and r.area_ha > 0 else 0.0
+    return max(expected_fenced_m2(r.dc_kwp, r.year), area)
 
 
 def municipality(unit_ids: str) -> str:
@@ -138,7 +223,7 @@ def sources_from(tiles: dict) -> list:
 
 def rasters(tiles: dict, name: str, paths_: list, bounds: tuple, zone: int, lat: float, lon: float) -> dict:
     """Height above ground and the terrain of one surface source on the grid of bounds (0.5 m)."""
-    S = GW.surface_from(name, paths_, bounds, zone, GW.RES, dates=tiles.get("dom1_dates") if name == "dom1_laser" else None)
+    S = GW.surface_from(name, paths_, bounds, zone, GW.RES, dates=tiles.get({"dom1_laser": "dom1_dates", "bdom_image": "bdom_dates"}.get(name, "")) or None)
     dgm = GT.mosaic(tiles["dgm1"], bounds, GW.RES, zone)[0].astype(np.float32) if tiles.get("dgm1") else None
     if dgm is None or not np.isfinite(dgm).any():                 # no DGM1: laser ground (LAZ) or a surface percentile (rasters)
         ground = S["ground"] if S["ground"] is not None else GT.ground_from_surface(S["surf"], GW.RES)
@@ -176,14 +261,45 @@ def measure(r, tiles: dict, osm: dict, zone: int, outd: str) -> tuple:
                 pitch0 = ortho_pitch(tiles, g["bounds"], g["inside"], zone)
                 o = GW.measure_park(R["hag"], R["dgm"], g["inside"], R["conv"], name, pitch0, GW.RES, r.orientation_class,
                                     kwp=float(r.dc_kwp), centre_xy=(pt.x - g["bounds"][0], pt.y - g["bounds"][1]))
-                fp = dict(footprint="osm", footprint_ha=round(poly.area / 1e4, 2), n_fences=int((fences.dist_m <= FENCE_MAX_M).sum()), n_fences_used=n_used)
+                fp = dict(footprint=fences.attrs.get("kind") or "osm", footprint_ha=round(poly.area / 1e4, 2), n_fences=int((fences.dist_m <= FENCE_MAX_M).sum()), n_fences_used=n_used)
                 inside = g["inside"]
+                cov0 = GW.coverage(o["park"], int(r.year))
+                o0, R0, g0 = o, R, g
+                if EXTEND_ON and o["park"]["status"] == "accepted" and cov0 < GW.EXTEND["cov_min"]:
+                    from rasterio.features import geometry_mask
+                    from shapely.affinity import translate
+                    ring0 = extend_ring_m(r); ring, steps = ring0, []
+                    while True:                                   # the ring grows while accepted windows touch its outer edge
+                        g = GW.analysis_grid(poly.buffer(ring), GW.RES, buffer_m=20.0, inner_m=0.0)
+                        core_in = ~geometry_mask([poly.buffer(-5.0)], (g["H"], g["W"]), g["transform"])
+                        R = rasters(tiles, name, paths_, g["bounds"], zone, float(r.lat), float(r.lon))
+                        o = GW.measure_park(R["hag"], R["dgm"], g["inside"], R["conv"], name, pitch0, GW.RES, r.orientation_class,
+                                            kwp=float(r.dc_kwp), centre_xy=(pt.x - g["bounds"][0], pt.y - g["bounds"][1]), core_inside=core_in,
+                                            year=int(r.year), outline_xy=translate(poly, -g["bounds"][0], -g["bounds"][1]))
+                        ring_ = translate(poly.buffer(ring), -g["bounds"][0], -g["bounds"][1])
+                        edge_ = ring_.exterior if ring_.geom_type == "Polygon" else MultiLineString([q.exterior for q in ring_.geoms])   # OSM outline of separate parts
+                        ok_ = o["win"][o["win"].ok.astype(bool)]
+                        n_edge = int(sum(edge_.distance(Point(x_, y_)) < o["win_m"] for x_, y_ in zip(ok_.x, ok_.y)))
+                        cov_ = GW.coverage(o["park"], int(r.year))
+                        steps.append((round(ring), n_edge, round(cov_, 3)))
+                        if not n_edge or cov_ >= GW.EXTEND["cov_max"] or ring + GW.EXTEND["grow_m"] > GW.EXTEND["ring_max_factor"] * ring0:
+                            break
+                        ring += GW.EXTEND["grow_m"]
+                    n_join = int((o["win"].ok.astype(bool) & ~o["win"].core.astype(bool)).sum()) if "core" in o["win"] else 0
+                    fp.update(extend_ring_m=round(ring), coverage_outline=round(cov0, 3), extend_steps=str(steps), extend_edge_open=bool(n_edge), extend_joined=n_join)
+                    if n_join and o["park"]["status"] == "accepted":
+                        fp["extended"] = True
+                        inside = g["inside"]
+                    else:                                         # nothing joined or the extension fails: the outline result stays
+                        fp["extended"] = False
+                        o, R, g = o0, R0, g0
+                fp["coverage"] = round(GW.coverage(o["park"], int(r.year)), 3)
             else:
                 def load(bounds, name=name, paths_=paths_):
                     R_ = rasters(tiles, name, paths_, bounds, zone, float(r.lat), float(r.lon))
                     R_["pitch0"] = ortho_pitch(tiles, bounds, np.ones(R_["hag"].shape, bool), zone)
                     return R_
-                o = GW.measure_box(load, (pt.x, pt.y), float(r.dc_kwp), register_orientation=r.orientation_class)
+                o = GW.measure_box(load, (pt.x, pt.y), float(r.dc_kwp), register_orientation=r.orientation_class, a_ref_m2=a_ref_m2(r))
                 R = o["rasters"]
                 inside = np.ones(R["hag"].shape, bool)
                 fp = dict(footprint="box", footprint_ha=round((o["park"]["box_side_m"] ** 2) / 1e4, 2), n_fences=0)
@@ -201,7 +317,7 @@ def measure(r, tiles: dict, osm: dict, zone: int, outd: str) -> tuple:
             G0 = o["G"].iloc[0] if len(o["G"]) else None
             A0 = o["arrays"][o["arrays"].group == 0] if len(o["arrays"]) else o["arrays"]
             rows.append(dict(pv=r.park_id, source=name, survey_year=R["survey_year"], survey_dates=str(R["survey_dates"])[:200], dgm_src=R["dgm_src"],
-                             **fp, **{k: v for k, v in park.items() if k not in ("source", "survey_year", "survey_dates", "dgm_src", "footprint", "footprint_ha", "n_fences", "n_fences_used", "box_steps")},
+                             **fp, **{k: v for k, v in park.items() if k not in ("source", "survey_year", "survey_dates", "dgm_src", "box_steps") and k not in fp},
                              g0_tilt=G0.tilt_horiz if G0 is not None else np.nan, g0_tilt_p10=G0.tilt_p10 if G0 is not None else np.nan,
                              g0_tilt_p90=G0.tilt_p90 if G0 is not None else np.nan, g0_azimuth=float(A0.azimuth.iloc[0]) if len(A0) else np.nan,
                              g0_az_source=A0.az_source.iloc[0] if len(A0) else "", g0_ew=bool(G0.ew) if G0 is not None else False,
@@ -230,6 +346,8 @@ def evaluate(df: pd.DataFrame) -> pd.DataFrame:
     df["survey_date_known"] = sy.notna()
     df["gate_after_build"] = (sy >= col("year_built").astype(float)) | sy.isna()
     df["accept"] = (col("status", "") == "accepted") & df.gate_after_build
+    if RULES["az_known"]:                                         # R17: another accepted source of the park may still be chosen
+        df["accept"] &= ~col("az_undetermined", False).fillna(False).astype(bool)
     df["laser"] = col("source", "").isin(LASER)
     df["source_rank"] = col("source", "").map(SOURCE_RANK).fillna(9)
     az_measured = col("g0_az_source", "").isin(["measured", "axis"])
@@ -243,11 +361,24 @@ def evaluate(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+ADDED_RELEASES = ("parks_pv_v3",)               # newest first: a park added in both keeps the newest tables
+
+
+def added_v1(name: str) -> pd.DataFrame:
+    """added_v1_<name>.csv of the releases that replace v1 parks (run_parks_pv_v2.py added), one park from one release."""
+    out = []
+    for rel in ADDED_RELEASES:
+        f = os.path.join(REPO, "data", rel, f"added_v1_{name}.csv")
+        if os.path.exists(f):
+            d = pd.read_csv(f, dtype={"park_id": str})
+            out.append(d[~d.park_id.isin(set().union(*[set(o.park_id) for o in out]))])
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["park_id"])
+
+
 def v1_arrays() -> pd.DataFrame:
-    """parks_pv_v1 arrays plus the v1-equivalent arrays of parks added in selection v2 (run_parks_pv_v2.py added)."""
+    """parks_pv_v1 arrays plus the v1-equivalent arrays of parks added in selections v2 and v3."""
     a = pd.read_csv(os.path.join(REPO, "data", "parks_pv_v1", "pv_arrays.csv"), dtype={"park_id": str})
-    add = os.path.join(REPO, "data", "parks_pv_v2", "added_v1_arrays.csv")
-    return pd.concat([a, pd.read_csv(add, dtype={"park_id": str})], ignore_index=True) if os.path.exists(add) else a
+    return pd.concat([a, added_v1("arrays")], ignore_index=True)
 
 
 def v1_nominal(arrays_v1: pd.DataFrame, park_id: str) -> list:
@@ -267,8 +398,8 @@ def fallback_arrays(r, tiles: dict, zone: int, arrays_v1: pd.DataFrame, osm: dic
     disc), so that v1 and v2 differ only in the terrain model (GLO-30 -> DGM1); without DGM1 the v1 arrays unchanged."""
     nominal = v1_nominal(arrays_v1, r.park_id)
     if nominal and tiles.get("dgm1"):
-        par = pd.concat([pd.read_csv(os.path.join(REPO, "data", d, f), dtype={"park_id": str}) for d, f in (("parks_pv_v1", "park_params.csv"), ("parks_pv_v2", "added_v1_params.csv"))
-                         if os.path.exists(os.path.join(REPO, "data", d, f))]).set_index("park_id").loc[r.park_id]
+        par = pd.concat([pd.read_csv(os.path.join(REPO, "data", "parks_pv_v1", "park_params.csv"), dtype={"park_id": str}), added_v1("params")]
+                        ).set_index("park_id").loc[r.park_id]
         area_fb = float(r.area_ha) if pd.notna(r.area_ha) and r.area_ha > 0 else float(par.kwp_dc) / float(par.kwp_per_ha)
         poly_ll, _ = PG.footprint(r, (osm.get(r.park_id) or {}).get("elements", []), area_fb)
         g = GW.analysis_grid(GT.to_utm(poly_ll, zone), GW.RES, inner_m=0.0)
@@ -282,6 +413,105 @@ def fallback_arrays(r, tiles: dict, zone: int, arrays_v1: pd.DataFrame, osm: dic
             for x in a.itertuples()], "register_v1"
 
 
+def _az_dist(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def register_classes(r) -> dict:
+    """Orientation classes of a park by its MaStR units: {class: [kWp share, tilt class]}. Hauptausrichtung with the
+    unit's kWp share, or half of it each for Haupt- and Nebenausrichtung when the unit has one (MaStR gives no split);
+    north classes are skipped (register noise on ground parks)."""
+    from pv.plausibility import AZ_CENTRE
+    u = pd.read_parquet(os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet"),
+                        columns=["EinheitMastrNummer", "Bruttoleistung", "Hauptausrichtung", "HauptausrichtungNeigungswinkel", "Nebenausrichtung",
+                                 "NebenausrichtungNeigungswinkel"]).set_index("EinheitMastrNummer").reindex(str(r.unit_ids).split(";")).dropna(subset=["Bruttoleistung"])
+    ok = lambda c: c == "Ost-West" or c in AZ_CENTRE and not str(c).startswith("Nord")
+    reg, tot = {}, float(u.Bruttoleistung.sum()) or 1.0
+    for x in u.itertuples():
+        parts = [(x.Hauptausrichtung, x.HauptausrichtungNeigungswinkel)] + ([(x.Nebenausrichtung, x.NebenausrichtungNeigungswinkel)] if ok(x.Nebenausrichtung) else [])
+        for c, tc in parts:
+            if ok(c):
+                reg.setdefault(c, [0.0, tc])[0] += float(x.Bruttoleistung) / tot / len(parts)
+    if "Ost" in reg and "West" in reg:                                # units registered as Ost and as West = one east-west park
+        o, w = reg.pop("Ost"), reg.pop("West")
+        ew = reg.setdefault("Ost-West", [0.0, o[1]])
+        ew[0] += o[0] + w[0]
+    return reg
+
+
+def measured_classes(az_measured: list) -> set:
+    """Register classes the measured arrays stand for. Two arrays facing opposite ways (180 +- EW_PAIR_TOL deg) with
+    the pair closer to east/west than to north/south are one Ost-West construction, also when rotated (SEL965286735001:
+    115/295 deg); every other array goes to its nearest MaStR class (within MIXED_AZ_TOL; north classes allowed)."""
+    from pv.plausibility import AZ_CENTRE
+    az = [float(x) % 360.0 for x in az_measured]
+    out, used = set(), set()
+    for i in range(len(az)):
+        for k in range(i + 1, len(az)):
+            if i in used or k in used:
+                continue
+            if abs(_az_dist(az[i], az[k]) - 180.0) <= EW_PAIR_TOL and min(_az_dist(az[i], 90.0), _az_dist(az[i], 270.0)) <= 45.0:
+                out.add("Ost-West"); used |= {i, k}
+    for i, x in enumerate(az):
+        if i in used:
+            continue
+        c = min(AZ_CENTRE, key=lambda k: _az_dist(x, AZ_CENTRE[k]))
+        if _az_dist(x, AZ_CENTRE[c]) <= MIXED_AZ_TOL:
+            out.add(c)
+    if {"Ost", "West"} <= out:
+        out = (out - {"Ost", "West"}) | {"Ost-West"}
+    return out
+
+
+def unmeasured_classes(r, az_measured: list) -> dict:
+    """Register classes of the park (register_classes) that no measured array stands for (measured_classes)."""
+    m = measured_classes(az_measured)
+    return {c: v for c, v in register_classes(r).items() if c not in m}
+
+
+def measured_cls(arrays: pd.DataFrame) -> str:
+    """Fleet class of the measured geometry (pv.selection classes): two or more measured directions C5_multi, east-west
+    C3, one south class C1/C2 by the share-weighted tilt (< 20 deg C2), one off-south class C4."""
+    m = measured_classes(arrays.azimuth.tolist())
+    if len(m) >= 2:
+        return "C5_multi"
+    if m == {"Ost-West"}:
+        return "C3_east_west"
+    if m == {"Süd"}:
+        return "C2_south_flat" if float(np.average(arrays.tilt, weights=arrays.share)) < 20.0 else "C1_south_std"
+    return "C4_off_south" if m else ""
+
+
+def c5_check(r, arrays: pd.DataFrame) -> dict:
+    """Viktor 2026-11-05 for parks of the register class C5: usable when at most C5_MISSING_MAX of the capacity lies in
+    register directions the measurement does not hold; the park then goes to the class of its measured geometry
+    (measured_cls: C5 only with two or more measured directions)."""
+    miss = unmeasured_classes(r, arrays.azimuth.tolist())
+    share = float(sum(v[0] for v in miss.values()))
+    return dict(missing=sorted(miss), missing_share=round(share, 3), usable=share <= C5_MISSING_MAX, cls_measured=measured_cls(arrays))
+
+
+def mixed_register_arrays(r, measured: list) -> list:
+    """R13 (c5_mixed, off; not used: Viktor 2026-11-05 takes only completely measured C5 parks): register arrays for the
+    classes the measurement did not find (unmeasured_classes). Nothing is added when no register class is measured (the
+    register then contradicts the measurement) or all are. Tilt: median measured tilt of the fleet (MEASURED_TILT) for
+    the unit's tilt class and the cohort, azimuth the class centre, no terrain."""
+    from pv.plausibility import AZ_CENTRE
+    az_m = [float(a["azimuth"]) for a in measured]
+    reg, miss = register_classes(r), unmeasured_classes(r, az_m)
+    if not reg or len(miss) == len(reg) or not miss:
+        return []
+    tilt = lambda kind, tc: MEASURED_TILT.get((kind, tc, r.cohort), MEASURED_TILT[(kind, r.cohort)])
+    out = []
+    for c, (share, tc) in miss.items():
+        if c == "Ost-West":
+            t = tilt("EW", tc)
+            out += [dict(name="reg_ew_e", tilt=t, azimuth=90.0, share=share / 2), dict(name="reg_ew_w", tilt=t, azimuth=270.0, share=share / 2)]
+        else:
+            out.append(dict(name=f"reg_{c}", tilt=tilt("S", tc), azimuth=AZ_CENTRE[c], share=share))
+    return out
+
+
 def park_arrays(r, df_park: pd.DataFrame, outs: dict, arrays_v1: pd.DataFrame, tiles: dict = None, zone: int = None, osm: dict = None) -> list:
     """Generator arrays of one park: measured (best accepted source, read from the stored arrays CSV of the park) or
     the fallback above."""
@@ -289,16 +519,39 @@ def park_arrays(r, df_park: pd.DataFrame, outs: dict, arrays_v1: pd.DataFrame, t
     if len(best):
         src = best.source.iloc[0]
         A = outs[src]["arrays"] if src in outs else pd.read_csv(os.path.join(REPO, "results", "pv", f"geodata_release{SUFFIX[0]}", r.park_id, f"arrays_{src}.csv"))
-        return [dict(park_id=r.park_id, array_id=f"g{int(a.group)}_{k}", tilt=round(a.tilt, 2), azimuth=round(a.azimuth, 2), share=round(a.share, 5),
+        rows = [dict(park_id=r.park_id, array_id=f"g{int(a.group)}_{k}", tilt=round(a.tilt, 2), azimuth=round(a.azimuth, 2), share=round(a.share, 5),
                      source=f"windows:{src}", az_source=a.az_source, note=a.note if pd.notna(a.note) else "", mount_tilt=np.nan, mount_azimuth=np.nan)
                 for k, a in enumerate(A.itertuples())]
+        if RULES["c5_mixed"] and getattr(r, "cls", None) == "C5_multi":
+            extra = mixed_register_arrays(r, rows)
+            s_reg = sum(x["share"] for x in extra)
+            for x in rows:
+                x["share"] = round(x["share"] * (1.0 - s_reg), 5)
+            rows += [dict(park_id=r.park_id, array_id=x["name"], tilt=round(x["tilt"], 2), azimuth=round(x["azimuth"], 2), share=round(x["share"], 5),
+                          source="register_units", az_source="register", note="c5_mixed", mount_tilt=np.nan, mount_azimuth=np.nan) for x in extra]
+        return rows
     arr_, src = fallback_arrays(r, tiles or {}, zone, arrays_v1, osm or {})
     return [dict(park_id=r.park_id, array_id=a["name"], tilt=round(a["tilt"], 2), azimuth=round(a["azimuth"], 2), share=round(a["share"], 5),
                  source=src, az_source="register", note="", mount_tilt=round(a.get("mount_tilt", np.nan), 2), mount_azimuth=round(a.get("mount_azimuth", np.nan), 2))
             for a in arr_]
 
 
-SUFFIX = ["_v2"]
+SUFFIX = ["_t2j"]
+
+
+def set_rules(spec: str) -> str:
+    """Switch rules by name ('box_cap,-sections'); returns the active rules as text (column `rules` of the run)."""
+    for tok in [t.strip() for t in spec.split(",") if t.strip()]:
+        on, name = not tok.startswith("-"), tok.lstrip("-+")
+        d = GW.RULES if name in GW.RULES else RULES if name in RULES else None
+        if d is None:
+            raise SystemExit(f"unknown rule {name!r}: {sorted(GW.RULES) + sorted(RULES)}")
+        d[name] = on
+    return active_rules()
+
+
+def active_rules() -> str:
+    return " ".join(k for k, v in {**GW.RULES, **RULES}.items() if v)
 
 
 def summary(df: pd.DataFrame, label: str) -> None:
@@ -315,16 +568,28 @@ def summary(df: pd.DataFrame, label: str) -> None:
         print(b[[c for c in cols if c in b.columns]].round(2).to_string(index=False))
 
 
+def load_osm(sel: pd.DataFrame) -> dict:
+    """OSM cache for the selected parks; missing entries are fetched first, never silently measured in the box."""
+    d = os.path.join(paths.INPUT_DIR, "osm")
+    return SI.ensure_osm(sel, os.path.join(d, "parks_osm.json"), os.path.join(d, "pvgis_horizon.json"))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--state", default="Bayern", choices=list(STATE))
     ap.add_argument("--parks", default=None, help="comma-separated park ids (default: all of the state)")
     ap.add_argument("--fetch-only", action="store_true")
-    ap.add_argument("--suffix", default="_v2")
+    ap.add_argument("--suffix", default="_t2j")
     ap.add_argument("--reevaluate", action="store_true", help="recompute classes and the best source from the stored CSV only")
     ap.add_argument("--arrays-only", action="store_true", help="recompute <state><suffix>_arrays.csv from the stored run (overwrites it)")
+    ap.add_argument("--arrays-to", default=None, help="with --arrays-only: write <state><suffix><arrays-to>_arrays.csv instead of overwriting")
+    ap.add_argument("--extend", action="store_true", help="variant c (probe): extend low-coverage OSM outlines")
     ap.add_argument("--append", action="store_true", help="add the --parks to an existing run of this suffix (rows of these parks replaced)")
+    ap.add_argument("--rules", default="", help="comma list of rule switches (GW.RULES, RULES): name = on, -name = off")
     a = ap.parse_args()
+    global EXTEND_ON
+    EXTEND_ON = a.extend
+    set_rules(a.rules)
     code, zone = STATE[a.state]
     out_csv = os.path.join(paths.DATA_DIR, f"geodata_release_{a.state.lower()}{a.suffix}.csv")
     arr_csv = out_csv.replace(".csv", "_arrays.csv")
@@ -338,7 +603,7 @@ def main():
     if a.arrays_only:                                         # recompute the generator arrays from the stored run (cached tiles), measurement unchanged
         df = pd.read_csv(out_csv, dtype={"pv": str})
         sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}); sel = sel[sel.bundesland == a.state]
-        osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
+        osm = load_osm(sel)
         arrays_v1 = v1_arrays()
         rows_a = []
         for r in sel.itertuples():
@@ -349,6 +614,8 @@ def main():
                 print("  tiles", r.park_id, type(ex).__name__, flush=True)
                 tiles = {}
             rows_a += park_arrays(r, df[df.pv == r.park_id], {}, arrays_v1, tiles, zone, osm)
+        if a.arrays_to:
+            arr_csv = out_csv.replace(".csv", f"{a.arrays_to}_arrays.csv")
         pd.DataFrame(rows_a).to_csv(arr_csv, index=False)
         print("written", arr_csv, pd.DataFrame(rows_a).groupby("park_id").source.first().value_counts().to_dict())
         return
@@ -358,7 +625,7 @@ def main():
     sel = sel[sel.bundesland == a.state]
     if a.parks:
         sel = sel[sel.park_id.isin(a.parks.split(","))]
-    osm = json.load(open(os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")))
+    osm = load_osm(sel)
     arrays_v1 = v1_arrays()
     outd_root = os.path.join(REPO, "results", "pv", f"geodata_release{a.suffix}")
     rows, arr_rows = [], []
@@ -377,7 +644,8 @@ def main():
             traceback.print_exc()
             o, outs = [dict(pv=r.park_id, source=None, status="failed", status_reason=f"{type(e).__name__}: {str(e)[:100]}")], {}
         for x in o:
-            x.update(state_code=code, orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp), year_built=int(r.year))
+            x.update(state_code=code, orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp), year_built=int(r.year),
+                     rules=active_rules())
         dfp = evaluate(pd.DataFrame(o))
         arr_rows += park_arrays(r, dfp, outs, arrays_v1, tiles, zone, osm)
         rows += o

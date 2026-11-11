@@ -130,7 +130,8 @@ def stage_configs(args):
         a = arrays[arrays.park_id == r.park_id]
         pr = dict(par.loc[r.park_id].to_dict(), commissioning_first=f"{dates.loc[r.park_id, 'commissioning_first']:%Y-%m-%d}")
         cfg = P.park_config(r.park_id, r.lat, r.lon, float(sites.altitude.get(r.park_id, 0.0) or 0.0), pr,
-                            [{"name": x.array_id, "tilt": x.tilt, "azimuth": x.azimuth, "share": x.share} for x in a.itertuples()], seed=args.seed)
+                            [{"name": x.array_id, "tilt": x.tilt, "azimuth": x.azimuth, "share": x.share} for x in a.itertuples()], seed=args.seed,
+                            cohorts=P.age_cohorts(r) if P.AGE_COHORTS else None)
         with open(os.path.join(paths.CONFIG_DIR, f"{r.park_id}.yaml"), "w") as f:
             yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
     print(f"{len(sel)} configs -> {paths.CONFIG_DIR}")
@@ -173,6 +174,7 @@ def _one_generate(task):
         drv["icon_snow_depth_cm"], meta["icon_snow"] = DRV.icon_snow_series(park_id, drv.index)
         meta["snow_model"], meta["snow_params"] = snow_model, GEN.snow_params(snow_model)
     horizon = pd.Series({float(k): float(v) for k, v in hz.items()}).sort_index() if hz else None
+    meta["age_cohorts"] = sum("era" in a for a in cfg["arrays"]) > 0     # cohort arrays in the config (P.AGE_COHORTS)
     res = GEN.run(cfg, drv, horizon=horizon, snow_model=snow_model)
     os.makedirs(CHAIN_DIR, exist_ok=True)
     drv.to_parquet(os.path.join(CHAIN_DIR, f"{park_id}_drivers.parquet"))

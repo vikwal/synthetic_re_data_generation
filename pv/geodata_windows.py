@@ -49,11 +49,47 @@ SYM_MIN = 0.75               # ridge symmetry of an opposite pair that is merged
 MIN_SURE = 3                 # windows with a sure side choice for a measured group azimuth (E4d); a smaller group needs all of its windows
 MAX_GROUPS = 4
 SPLINTER = dict(n=3, share=0.05)
-PARK_ACCEPT = dict(n_ok=2, tab_share=0.40)   # 2026-10-22 decision 1 (B): >= 2 windows (was 5) as long as they cover >= 40 % of the table cells
+MIN2_SHARE = 0.20            # R18b: a one-window group next to larger groups survives only with this table-area share (SEL974986471201: 21 % at 204 deg, Viktor wants it)
+PARK_ACCEPT = dict(n_ok=1, tab_share=0.40, tab_share_single=2 / 3)   # 2026-10-22 decision 1 (B): >= 2 windows (was 5); 2026-11-02 Viktor: >= 1, the share decides
+# (small outlines hold 1-2 windows); a single window must cover >= 2/3 of the table cells (SEL918941507185: 1 window, 50 %, mixed structures, 7 deg)
 PARK_ACCEPT_BOX = dict(n_ok=5, tab_share=0.40)   # box mode keeps 5: without an outline a few windows at the box edge can be another park (SEL968423559874)
 BOX = dict(size_m=300.0, step_m=50.0, area_factor=3.0)
-MAIN_PARK = dict(fence_factor=1.5, m2_high=12.0, m2_trim=8.0)   # separation from neighbouring plants (2026-10-22): see select_fences, trim_to_capacity
-AZ_CENTRE = {"Süd": 180.0, "Süd-West": 225.0, "Süd-Ost": 135.0, "Ost": 90.0, "West": 270.0, "Nord": 0.0,
+BRIDGE = dict(gap=1, axis=5.0, tilt=4.0, pitch=0.15)   # box mode: a component <= `gap` windows from the kept one joins it if built alike (2026-11-02)
+MAIN_PARK = dict(fence_factor=1.5, m2_high=12.0, m2_trim=8.0, adjacent_m=25.0)
+# variant c (2026-11-02, probe): an OSM outline holding clearly less module area than the capacity needs is extended by
+# a ring; windows there join only through bridge_alike, up to cov_max of the expected area
+EXTEND = dict(cov_min=0.6, cov_max=1.0, ring_min_m=100.0, grow_m=100.0, ring_max_factor=2.0)   # ring grows while accepted windows touch its edge (SEL992895949369)
+MODULE_EFF = ([2008, 2012, 2016, 2020, 2024], [0.13, 0.15, 0.17, 0.20, 0.215])   # module efficiency (kWp per m2) by year   # separation from neighbouring plants (2026-10-22): see select_fences, trim_to_capacity
+# Review of the v3 park reports (2026-11-04, Viktor): one switch per rule (geometry_release_states.py --rules);
+# adopted rules default on, rules under test default off.
+RULES = dict(box_cap=False,       # R1 (under test): box cap 3 sqrt(A_ref), growth step = window, grid anchored at the register point
+             box_tab_near=False,  # R2 (under test): box mode table share only over windows <= 1 window from the accepted ones
+             box_dir=False,       # R1b (probe): box grows only on the sides with accepted edge windows; area cap instead of side cap
+             auto_outline=False,  # R9 (probe): failed box -> outline from the height map near the register point, outline rules
+             ew_one_flank=True,   # R5: a one-flank group joins the east-west group of the same row axis and tilt
+             sections=True,       # R6 (Viktor 2026-11-05: adopted): group < 3 windows kept with >= 10 % table area, OSM outline only (not box, not R9)
+             contrast_ew=True,    # R7: contrast gate 0.3 m for east-west pairs (10-deg tents lift only ~0.6 m)
+             centreline=True,     # R8: windows along the outline centreline when the grid has none (narrow strips)
+             tent_pair=True,      # R10: symmetric tents count as a pair at any azimuth, register class Ost-West only
+             r9_tab_pattern=False,  # R15 (probe, Viktor 2026-11-05: SEL968423559874): in R9 outlines the capacity trim counts only row-pattern windows as table windows (as the box)
+             pair_section=False,  # R16 (rejected 2026-11-05, Viktor: below the materiality threshold, SEL997079763274 -0.24 % energy): a 2-window group with agreeing windows is a section (box too), kept with >= SPLINTER share
+             min2_windows=False,  # R18b (probe 2026-11-05/06): a one-window group next to a group of >= 2 windows is a splinter unless it holds >= MIN2_SHARE of the table area; parks of one-window groups only keep them
+             axis_tol5=True)      # R14 (Viktor 2026-11-05: adopted after _t2i; 607, 406): windows join a group only below AXIS_TOL5 row-axis difference
+AXIS_TOL5 = 5.0              # R14: exclusive, a difference of 5 deg makes two groups
+CONTRAST_MIN, CONTRAST_EW = 0.5, 0.3
+BOX_CAP_FACTOR = 3.0         # R1: box side <= max(300 m, 3 sqrt(A_ref))
+AUTO_OUTLINE = dict(close_m=3.0, open_m=2.0, min_m2=2000.0, join_m=25.0, max_dist_m=50.0, inner_m=2.0, mask_m=3.0)
+                             # R9: table cells closed 3 m / opened 2 m, components >= 0.2 ha; the one nearest the register
+                             # point (<= 50 m: SEL988863759252 found a neighbour 96 m away) and those <= 25 m from it
+BOX_DIR_REACH = 1.0          # R1b: box area <= max_side^2, each edge <= 1.0 max_side from the register point (strip parks, SEL917002969412)
+SECTION_SHARE = 0.10         # R6
+PAIR_SECTION = dict(tilt=2.0, az=5.0)   # R16: a group of 2 windows agreeing within these ranges (deg) is a section
+CENTRELINE = dict(win_m=40.0, mask_m=8.0)   # R8: 40-m windows (50 m keeps too little of a 20-m strip); height map limited to outline + 3 m
+TENT_SYM = 2.0               # R10: |tilt left - tilt right| (deg)
+TENT_AZ_MAX = 60.0           # R10: tent flanks at most this far from east/west; rows along east-west face north + south, no tent (SEL968423559874)
+EW_MIN_TILT = 5.0            # R7/R10 only for pairs with both flanks >= 5 deg: SEL961760100570 (R12 probe) had flat 2-deg
+                             # structures with 14-18 m pitch accepted as tents; east-west parks are built at 8-15 deg
+AZ_CENTRE = {"Süd": 180.0,"Süd-West": 225.0, "Süd-Ost": 135.0, "Ost": 90.0, "West": 270.0, "Nord": 0.0,
              "Nord-Ost": 45.0, "Nord-West": 315.0}   # = pv.plausibility.AZ_CENTRE (copied to keep this module light)
 
 
@@ -115,10 +151,34 @@ def _hz(b_: float, g_: float) -> float:
 
 
 # ------------------------------------------------------------------------------------------------ BODY per window
+def centreline_grid(hag: np.ndarray, inside: np.ndarray, nw: int) -> list:
+    """R8: windows centred on the main axis of the outline cells every nw cells, across at the median of the cells
+    there; for outlines too narrow for the regular grid (SEL943207528444: 580 x 21 m strip). Same tuples as window_grid."""
+    H, W = hag.shape
+    ij = np.argwhere(inside).astype(float)
+    if len(ij) < 10:
+        return []
+    m = ij.mean(0)
+    u = np.linalg.svd(ij - m, full_matrices=False)[2][0]                       # main direction of the outline cells
+    nrm = np.array([-u[1], u[0]])
+    t, q = (ij - m) @ u, (ij - m) @ nrm
+    out = []
+    for c in np.arange(t.min() + nw / 2, t.max() - nw / 4 + 1e-9, nw):
+        sel = np.abs(t - c) < nw / 2
+        if sel.sum() < 10:
+            continue
+        i, j = m + c * u + np.median(q[sel]) * nrm
+        i0, j0 = int(np.clip(round(i - nw / 2), 0, H - nw)), int(np.clip(round(j - nw / 2), 0, W - nw))
+        hw_ = hag[i0:i0 + nw, j0:j0 + nw]
+        out.append((i0, j0, float(inside[i0:i0 + nw, j0:j0 + nw].mean()), float((np.isfinite(hw_) & (hw_ > TAB_LO) & (hw_ < TAB_HI)).mean())))
+    return out
+
+
 def measure_window(hag: np.ndarray, dgm: np.ndarray, cell: tuple, nw: int, conv: float, source: str, res: float = RES,
-                   w: int = 0, detail: bool = False):
+                   w: int = 0, detail: bool = False, tent: bool = False):
     """One window (cell = (i0, j0, f_in, f_tab) from window_grid). Returns the result dict (one row of the window
-    table); with detail=True also a dict of the intermediates (height map, spectrum, profile, rows) for figures."""
+    table); with detail=True also a dict of the intermediates (height map, spectrum, profile, rows) for figures.
+    tent (R10): symmetric two-flank tents count as an east-west pair at any azimuth."""
     H = hag.shape[0]
     i0, j0, f_in, f_tab = cell
     hw_ = hag[i0:i0 + nw, j0:j0 + nw]                                          # height above ground in the window
@@ -215,7 +275,8 @@ def measure_window(hag: np.ndarray, dgm: np.ndarray, cell: tuple, nw: int, conv:
     ridge_sym = float(min(wl, wr) / max(wl, wr, 0.1)); two_flank = bool(ridge_sym > 0.6 and min(wl, wr) >= 1.5)
     dir_across = float(np.degrees(np.arctan2(n_across[0], n_across[1])) % 360)
     flank_dir_grid = dir_across if side == "right" else (dir_across + 180) % 360; azimuth_true = (flank_dir_grid + conv) % 360
-    ew_pair = bool(two_flank and abs((azimuth_true % 180) - 90) <= 35)
+    tilted = bool(min(tilt_left, tilt_right) >= EW_MIN_TILT)
+    ew_pair = bool(two_flank and (abs((azimuth_true % 180) - 90) <= 35 or (tent and tilted and abs(tilt_left - tilt_right) <= TENT_SYM and abs((azimuth_true % 180) - 90) <= TENT_AZ_MAX)))
     det.update(cen=cen, prof2=prof2, k_r=k_r, k_f=k_f, lo=lo, hi=hi, sw=sw, shift=shift)
     # --- one plane per row in the window: second estimator of the tilt
     tab = np.floor((sw[okw] - shift + pitch_ref / 2) / pitch_ref).astype(int)
@@ -244,7 +305,8 @@ def measure_window(hag: np.ndarray, dgm: np.ndarray, cell: tuple, nw: int, conv:
                        else _hz(tilt_profile_ends, g_fac))                     # end-point estimator, kept for comparison (E1)
     # --- gates per window
     est_diff = abs(tilt_left_h - tilt_right_h) if ew_pair else (abs(tilt_profile - tilt_rows) if np.isfinite(tilt_rows) else 99.0)
-    gates_w = dict(g_pattern=bool(share_w >= 0.25 or (np.isfinite(corr_ac) and corr_ac >= 0.3)), g_contrast=contrast >= 0.5, g_flank=bool(1.5 <= flank <= 0.75 * pitch_ref),
+    c_min = CONTRAST_EW if (RULES["contrast_ew"] and ew_pair and tilted) else CONTRAST_MIN      # R7
+    gates_w = dict(g_pattern=bool(share_w >= 0.25 or (np.isfinite(corr_ac) and corr_ac >= 0.3)), g_contrast=bool(contrast >= c_min), g_flank=bool(1.5 <= flank <= 0.75 * pitch_ref),
                    g_ridge=0.8 <= h_ridge <= 4.5, g_rows=len(R) >= 2, g_est=est_diff <= est_tol(source))
     area_tab = float(((h > MIN_H) & (on_flank | ew_pair)).sum() * res**2)       # module area (plan view) in the window, m2; east-west: both flanks
     res_w.update(shift=shift, h_ridge=h_ridge, h_foot=h_foot, flank=flank, wl=wl, wr=wr, side=side, az_sure=az_sure, ridge_sym=ridge_sym, two_flank=two_flank, ew_pair=ew_pair,
@@ -257,13 +319,24 @@ def measure_window(hag: np.ndarray, dgm: np.ndarray, cell: tuple, nw: int, conv:
 
 
 def measure_windows(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: float, source: str, pitch0: float = np.nan,
-                    res: float = RES, win_m: float = None) -> tuple:
-    """W1 + W3: (window table, nw, win_m). One row per window inside the outline, rejected ones with `reason`."""
+                    res: float = RES, win_m: float = None, tent: bool = False) -> tuple:
+    """W1 + W3: (window table, nw, win_m). One row per window inside the outline, rejected ones with `reason`.
+    R8: without a single grid window the height map is limited to the outline + 3 m and CENTRELINE['win_m'] windows
+    are laid along the outline axis (column `centreline`)."""
     win_m = win_m or window_size(pitch0)
     nw = int(round(win_m / res))
-    grid = window_grid(hag, inside, nw)
-    rows = [measure_window(hag, dgm, cell, nw, conv, source, res, w=k) for k, cell in enumerate(grid)]
-    return pd.DataFrame(rows), nw, win_m
+    grid, centre = window_grid(hag, inside, nw), False
+    if not grid and RULES["centreline"] and inside.any() and not inside.all():
+        from scipy.ndimage import binary_dilation
+        hag = np.where(binary_dilation(inside, iterations=int(round(CENTRELINE["mask_m"] / res))), hag, np.nan)
+        win_m = CENTRELINE["win_m"]
+        nw = int(round(win_m / res))
+        grid, centre = centreline_grid(hag, inside, nw), True
+    rows = [measure_window(hag, dgm, cell, nw, conv, source, res, w=k, tent=tent) for k, cell in enumerate(grid)]
+    win = pd.DataFrame(rows)
+    if centre and len(win):
+        win["centreline"] = True
+    return win, nw, win_m
 
 
 def drop_isolated(win: pd.DataFrame, nw: int) -> pd.DataFrame:
@@ -280,7 +353,8 @@ def drop_isolated(win: pd.DataFrame, nw: int) -> pd.DataFrame:
 
 def keep_central_component(win: pd.DataFrame, nw: int, centre_ij: tuple) -> pd.DataFrame:
     """Box mode (2026-10-22): the box can hold neighbouring parks. Accepted windows form 8-connected components; only
-    the component nearest the register point (window centre distance) is kept, the others get reason "anderer Park"."""
+    the component nearest the register point (window centre distance) is kept, together with components bridged to it
+    (BRIDGE: gap of at most one window, same construction); the others get reason "anderer Park"."""
     win = win.copy()
     acc = {(int(r.i0) // nw, int(r.j0) // nw): k for k, r in win[win.ok.astype(bool)].iterrows()}
     if not acc:
@@ -302,10 +376,101 @@ def keep_central_component(win: pd.DataFrame, nw: int, centre_ij: tuple) -> pd.D
     ci, cj = centre_ij
     dist = lambda comp: min(((c[0] + 0.5) * nw - ci) ** 2 + ((c[1] + 0.5) * nw - cj) ** 2 for c in comp)
     keep = set(min(comps, key=dist))
+    # 2026-11-02 (Viktor, SEL941135609693): a path or a gap between building sections splits one park into components;
+    # a component at most BRIDGE['gap'] windows away that is built alike (row axis, tilt, pitch, east-west status) joins
+    rest, joined = [c_ for c_ in comps if not set(c_) & keep], True
+    while rest and joined:
+        joined = False
+        for comp in rest:
+            near = min(max(abs(a[0] - b[0]), abs(a[1] - b[1])) for a in comp for b in keep) <= BRIDGE["gap"] + 1
+            if near and _alike(win.loc[[acc[c] for c in comp]], win.loc[[acc[c] for c in keep]]):
+                keep |= set(comp); rest.remove(comp); joined = True
+                break
     for c, k in acc.items():
         if c not in keep:
             win.at[k, "ok"] = False
             win.at[k, "reason"] = "anderer Park"
+    return win
+
+
+def _alike(a: pd.DataFrame, b: pd.DataFrame) -> bool:
+    """Two sets of accepted windows have the same construction (BRIDGE tolerances on the medians)."""
+    return (abs(ang180(circ_mean(a.axis_true, 180.0) - circ_mean(b.axis_true, 180.0))) <= BRIDGE["axis"]
+            and abs(a.tilt_horiz.median() - b.tilt_horiz.median()) <= BRIDGE["tilt"]
+            and abs(a.pitch.median() / b.pitch.median() - 1.0) <= BRIDGE["pitch"]
+            and (a.ew_pair.astype(bool).mean() >= 0.5) == (b.ew_pair.astype(bool).mean() >= 0.5))
+
+
+def expected_m2_per_kwp(year: int, tilt: float) -> float:
+    """Module plan area per kWp expected from the module efficiency of the year and the tilt."""
+    return float(np.cos(np.radians(tilt if np.isfinite(tilt) else 20.0)) / np.interp(int(year), *MODULE_EFF))
+
+
+def coverage(park: dict, year: int) -> float:
+    """Measured module plan area per kWp over the expected one (fleet median 0.77 on 2026-11-02)."""
+    return float(park.get("m2_per_kwp_after", np.nan)) / expected_m2_per_kwp(year, park.get("tilt_med", np.nan))
+
+
+def bridge_alike(win: pd.DataFrame, nw: int, core: set) -> pd.DataFrame:
+    """Variant c: accepted windows outside the outline (cells not in core) are kept only when their 8-connected
+    component (outside cells only) lies within BRIDGE['gap'] windows of the kept ones and is built alike (BRIDGE);
+    the others get "anderer Park (außerhalb Umring)" and, as every "anderer Park" window, leave the table share; so do
+    all rejected windows outside the outline (2026-11-02 fleet probe: rejected neighbours of the joined fields lowered the table share and inflated
+    the plan area, SEL935324856036). Column `core`: the window lies in the outline."""
+    win = win.copy()
+    win["core"] = [(int(r.i0) // nw, int(r.j0) // nw) in core for r in win.itertuples()]
+    cell = lambda r: (int(r.i0) // nw, int(r.j0) // nw)
+    acc = {cell(r): k for k, r in win[win.ok.astype(bool)].iterrows()}
+    keep = {c for c in acc if c in core}
+    if not keep:
+        return win
+    seen, comps = set(), []                                # components of the accepted windows OUTSIDE the outline: each one
+    for c0 in acc:                                         # joins only if built alike, also when it touches the outline
+        if c0 in seen or c0 in core:                       # (SEL935324856036: a flat roof window next to the park)
+            continue
+        stack, comp = [c0], []
+        seen.add(c0)
+        while stack:
+            c = stack.pop(); comp.append(c)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    n_ = (c[0] + di, c[1] + dj)
+                    if n_ in acc and n_ not in seen and n_ not in core:
+                        seen.add(n_); stack.append(n_)
+        comps.append(comp)
+    rest, joined = list(comps), True
+    while rest and joined:
+        joined = False
+        for comp in rest:
+            near = min(max(abs(a[0] - b[0]), abs(a[1] - b[1])) for a in comp for b in keep) <= BRIDGE["gap"] + 1
+            if near and _alike(win.loc[[acc[c] for c in comp]], win.loc[[acc[c] for c in keep if c in acc]]):
+                keep |= set(comp); rest.remove(comp); joined = True
+                break
+    for k, r in win.iterrows():
+        c = cell(r)
+        if c in core or (c in keep and r.ok):
+            continue
+        win.at[k, "ok"] = False
+        win.at[k, "reason"] = "anderer Park (außerhalb Umring)"
+    return win
+
+
+def cap_extension(win: pd.DataFrame, nw: int, core: set, kwp: float, year: int, outline_xy) -> pd.DataFrame:
+    """Variant c: joined windows outside the outline are dropped, farthest from the outline first, while the plan area
+    exceeds EXTEND['cov_max'] x the expected one."""
+    win = win.copy()
+    ext = win[win.ok.astype(bool) & ~win.apply(lambda r: (int(r.i0) // nw, int(r.j0) // nw) in core, axis=1)]
+    if not len(ext):
+        return win
+    from shapely.geometry import Point
+    d = ext.apply(lambda r: outline_xy.distance(Point(r.x, r.y)), axis=1).sort_values(ascending=False)
+    for k in d.index:
+        ok = win[win.ok.astype(bool)]
+        tab_share = 1.0 - rejected_flag(win, nw)["rej_tab_frac"]
+        if plan_area_m2(win, tab_share) / kwp <= EXTEND["cov_max"] * expected_m2_per_kwp(year, ok.tilt_horiz.median()):
+            break
+        win.at[k, "ok"] = False
+        win.at[k, "reason"] = "anderer Park (Fläche)"
     return win
 
 
@@ -339,17 +504,34 @@ def keep_central_construction(win: pd.DataFrame, nw: int, centre_ij: tuple) -> p
 def select_fences(fences: pd.DataFrame, expected_fenced_m2: float, max_dist_m: float) -> tuple:
     """(a) of the main-park separation (2026-10-22): OSM plants within max_dist_m sorted by distance to the register
     point; the nearest one always, further ones only while their union stays <= MAIN_PARK['fence_factor'] x the fenced
-    area expected from the capacity (caller: capacity / era density). Returns (polygon or None, n_used, n_near)."""
+    area expected from the capacity (caller: capacity / era density). Then (2026-11-02) plants at any distance from the
+    register point that lie within MAIN_PARK['adjacent_m'] of the selected union join under the same area limit, nearest
+    first and repeated until none joins: large parks reach beyond max_dist_m and OSM often maps them in several parts
+    (SEL945760688474: fourth part 440 m from the register point, 10 m from the others). Returns (polygon or None,
+    n_used, n_near)."""
     from shapely.ops import unary_union
     near = fences[fences.dist_m <= max_dist_m].sort_values(["dist_m", "area_ha"]) if len(fences) else fences
     if not len(near):
         return None, 0, 0
     lim = MAIN_PARK["fence_factor"] * expected_fenced_m2
-    poly, used = near.geom.iloc[0], 1
-    for g in near.geom.iloc[1:]:
+    poly, used, taken = near.geom.iloc[0], 1, {near.index[0]}
+    for k, g in near.geom.iloc[1:].items():
         u = unary_union([poly, g])
         if u.area <= lim:
             poly, used = u, used + 1
+            taken.add(k)
+    rest = fences.drop(index=list(taken))
+    while len(rest):
+        gap = rest.geom.apply(poly.distance)
+        joined = False
+        for k in gap[gap <= MAIN_PARK["adjacent_m"]].sort_values().index:
+            u = unary_union([poly, rest.geom[k]])
+            if u.area <= lim:
+                poly, used, joined = u, used + 1, True
+                rest = rest.drop(index=k)
+                break
+        if not joined:
+            break
     return poly, used, len(near)
 
 
@@ -405,6 +587,11 @@ def rejected_flag(win: pd.DataFrame, nw: int, box: bool = False) -> dict:
     tabw_ = win[(win.f_tab >= F_TAB_MIN) & ~other]   # windows of other parks (box mode) do not count
     if box and "g_pattern" in tabw_:
         tabw_ = tabw_[tabw_.g_pattern.fillna(False).astype(bool)]
+    if box and RULES["box_tab_near"] and len(win) and win.ok.astype(bool).any():
+        # R2: a grown box collects hedges, fields and neighbouring areas; only windows <= 1 window from an accepted one count
+        acc_ = {(int(r_.i0) // nw, int(r_.j0) // nw) for r_ in win[win.ok.astype(bool)].itertuples()}
+        near_ = [any((int(r_.i0) // nw + di, int(r_.j0) // nw + dj) in acc_ for di in (-1, 0, 1) for dj in (-1, 0, 1)) for r_ in tabw_.itertuples()]
+        tabw_ = tabw_[np.array(near_, bool)] if len(tabw_) else tabw_
     rej_ = tabw_[~tabw_.ok.astype(bool)]
     rej_tab_frac = float(rej_.f_tab.sum() / max(tabw_.f_tab.sum(), 1e-9))
     gi_ = {(int(r_.i0) // nw, int(r_.j0) // nw): float(r_.f_tab) for r_ in rej_.itertuples()}; seen_, clusters_ = set(), []
@@ -431,7 +618,7 @@ def _group_values(win: pd.DataFrame, g_: dict) -> None:
     g_["axis"] = circ_mean(ws_.axis_true, 180.0); g_["tilt"] = float(ws_.tilt_horiz.median())
 
 
-def group_windows(win: pd.DataFrame) -> pd.DataFrame:
+def group_windows(win: pd.DataFrame, sections: bool = False, pairs: bool = False) -> pd.DataFrame:
     """Accepted windows -> at most four groups (W5). Greedy (largest table area first): axis <= 10 deg, azimuth
     <= 30 deg (not compared for east-west pairs and unsure side choices), tilt <= 4 deg, same east-west status; groups
     whose values agree are merged; opposite pairs with symmetric ridges become one group "azimuth undetermined";
@@ -440,12 +627,13 @@ def group_windows(win: pd.DataFrame) -> pd.DataFrame:
     cols = ["group", "n_windows", "area_tab_ha", "axis_true", "pitch", "tilt_horiz", "tilt_p10", "tilt_p90", "azimuth", "az_undetermined",
             "n_sure", "n_opposite", "ew", "ridge_sym", "slope_deg", "share_raw", "share", "windows"]
     acc = win[win.ok.astype(bool)].sort_values("area_tab", ascending=False) if len(win) and "area_tab" in win else win.iloc[:0]
+    ax_ok = (lambda d: d < AXIS_TOL5) if RULES["axis_tol5"] else (lambda d: d <= GROUP_TOL["axis"])   # R14: grouping and merging only
     groups = []
     for r_ in acc.itertuples():
         placed = False
         for g_ in groups:
             d_ax = abs(ang180(r_.axis_true - g_["axis"])); d_az = abs(ang360(r_.azimuth_true - g_["az"]))
-            if d_ax <= GROUP_TOL["axis"] and (d_az <= GROUP_TOL["az"] or (bool(r_.ew_pair) and g_["ew"]) or not bool(r_.az_sure)) and abs(r_.tilt_horiz - g_["tilt"]) <= GROUP_TOL["tilt"] and bool(r_.ew_pair) == g_["ew"]:
+            if ax_ok(d_ax) and (d_az <= GROUP_TOL["az"] or (bool(r_.ew_pair) and g_["ew"]) or not bool(r_.az_sure)) and abs(r_.tilt_horiz - g_["tilt"]) <= GROUP_TOL["tilt"] and bool(r_.ew_pair) == g_["ew"]:
                 g_["w"].append(r_.w); placed = True; break
         if not placed:
             groups.append(dict(axis=r_.axis_true, az=r_.azimuth_true, tilt=r_.tilt_horiz, ew=bool(r_.ew_pair), w=[r_.w]))
@@ -458,11 +646,26 @@ def group_windows(win: pd.DataFrame) -> pd.DataFrame:
             for ib in range(ia + 1, len(groups)):
                 ga, gb = groups[ia], groups[ib]
                 d_ax = abs(ang180(ga["axis"] - gb["axis"])); d_az = abs(ang360(ga["az"] - gb["az"]))
-                if ga["ew"] == gb["ew"] and d_ax <= GROUP_TOL["axis"] and (d_az <= GROUP_TOL["az"] or ga["ew"]) and abs(ga["tilt"] - gb["tilt"]) <= GROUP_TOL["tilt"]:
+                if ga["ew"] == gb["ew"] and ax_ok(d_ax) and (d_az <= GROUP_TOL["az"] or ga["ew"]) and abs(ga["tilt"] - gb["tilt"]) <= GROUP_TOL["tilt"]:
                     ga["w"] = ga["w"] + gb["w"]; groups.pop(ib); changed = True
                     _group_values(win, ga)
                     break
             if changed: break
+    if RULES["ew_one_flank"]:
+        # R5 (SEL917515222981): a window that sees one flank of an east-west row (asymmetric ridge) is part of that
+        # construction: a non-east-west group joins a larger east-west group of the same row axis and tilt
+        area_ = lambda g: float(win.loc[win.w.isin(g["w"]), "area_tab"].sum())  # noqa: E731
+        changed = True
+        while changed and len(groups) > 1:
+            changed = False
+            for ga in groups:
+                for gb in groups:
+                    if ga is not gb and ga["ew"] and not gb["ew"] and abs(ang180(ga["axis"] - gb["axis"])) <= GROUP_TOL["axis"] \
+                            and abs(ga["tilt"] - gb["tilt"]) <= GROUP_TOL["tilt"] and area_(ga) >= area_(gb):
+                        ga["w"] = ga["w"] + gb["w"]; groups.remove(gb); changed = True
+                        _group_values(win, ga)
+                        break
+                if changed: break
     merged = []                                                                 # opposite pairs with symmetric ridges: azimuth undetermined
     for g_ in groups:
         hit = None
@@ -492,7 +695,19 @@ def group_windows(win: pd.DataFrame) -> pd.DataFrame:
     G["share_raw"] = G.area_tab_ha / G.area_tab_ha.sum()
     # splinters out, THEN at most four; a group below SPLINTER['n'] windows is a splinter only next to a larger group
     # (2026-10-22: a small park with 2 accepted windows in one group keeps its group)
-    keep_g = ((G.n_windows >= SPLINTER["n"]) | (G.n_windows >= G.n_windows.max())) & (G.share_raw >= SPLINTER["share"])
+    # R6 (sections=True): in a small park one 50-m window is a section of its own, kept with >= SECTION_SHARE table area
+    pair = pd.Series(False, index=G.index)
+    if pairs:                                                                   # R16: two windows that agree are not noise (final grouping only, not the capacity trim)
+        for k, g in G.iterrows():
+            if int(g.n_windows) == 2:
+                s_ = win[win.w.isin([int(x) for x in str(g.windows).split()])]
+                big = G[G.n_windows >= SPLINTER["n"]]                          # a pair is a section only with its own orientation
+                other = all(bool(b.ew) != bool(g.ew) or abs(ang360(b.azimuth - g.azimuth)) >= AXIS_TOL5 for b in big.itertuples())
+                pair[k] = bool(other and s_.az_sure.astype(bool).all() and s_.tilt_horiz.min() >= EW_MIN_TILT and np.ptp(s_.tilt_horiz) <= PAIR_SECTION["tilt"]
+                               and abs(ang360(s_.azimuth_true.iloc[0] - s_.azimuth_true.iloc[1])) <= PAIR_SECTION["az"])
+    keep_g = ((G.n_windows >= SPLINTER["n"]) | (G.n_windows >= G.n_windows.max()) | (sections & (G.share_raw >= SECTION_SHARE)) | pair) & (G.share_raw >= SPLINTER["share"])
+    if RULES["min2_windows"]:                                                   # R18b (2026-11-06): a one-window group below MIN2_SHARE is a splinter
+        keep_g &= (G.n_windows >= 2) | (G.n_windows.max() < 2) | (G.share_raw >= MIN2_SHARE)
     attrs = dict(n_splinter=int((~keep_g).sum()), splinter_share=float(G.share_raw[~keep_g].sum()), n_cut=max(int(keep_g.sum()) - MAX_GROUPS, 0))
     G = G[keep_g].head(MAX_GROUPS).reset_index(drop=True)
     G["group"] = range(len(G))
@@ -539,13 +754,14 @@ def park_status(win: pd.DataFrame, G: pd.DataFrame, flag: dict, box: bool = Fals
     acc_ = PARK_ACCEPT_BOX if box else PARK_ACCEPT
     n_ok = int(win.ok.astype(bool).sum()) if len(win) else 0
     tab_share = 1.0 - flag["rej_tab_frac"] if flag["n_tab_windows"] else 0.0
+    need = acc_.get("tab_share_single", acc_["tab_share"]) if n_ok == 1 else acc_["tab_share"]
     if flag["n_tab_windows"] == 0:
         status, why = "no_park", "kein Fenster mit Tischen"
-    elif n_ok >= acc_["n_ok"] and tab_share >= acc_["tab_share"] and len(G):
+    elif n_ok >= acc_["n_ok"] and tab_share >= need and len(G):
         status, why = "accepted", ""
     else:
         why = "; ".join(x for x in (f"{n_ok} angenommene Fenster (< {acc_['n_ok']})" if n_ok < acc_["n_ok"] else "",
-                                    f"Tischanteil angenommen {tab_share:.0%} (< {acc_['tab_share']:.0%})" if tab_share < acc_["tab_share"] else "",
+                                    f"Tischanteil angenommen {tab_share:.0%} (< {need:.0%}{' bei einem Fenster' if n_ok == 1 else ''})" if tab_share < need else "",
                                     "keine Gruppe" if not len(G) else "") if x)
         status = "failed"
     # information only (2026-10-22): small parks reach few windows; would a relaxed minimum of 2 windows accept them?
@@ -556,12 +772,20 @@ def park_status(win: pd.DataFrame, G: pd.DataFrame, flag: dict, box: bool = Fals
 
 def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: float, source: str, pitch0: float = np.nan,
                  res: float = RES, register_orientation: str = None, box: bool = False, win_m: float = None, kwp: float = None,
-                 centre_xy: tuple = None) -> dict:
+                 centre_xy: tuple = None, core_inside: np.ndarray = None, year: int = None, outline_xy=None, r9: bool = False) -> dict:
     """Window method for one park on prepared rasters. Returns dict(win, G, arrays, park, nw, win_m):
     win = window table (every variable of every window), G = groups, arrays = generator input, park = acceptance,
     flags and summary values. With kwp (register capacity) the main park is separated from neighbouring plants by
-    trim_to_capacity around centre_xy (register point in local metres; default the grid centre, as in the box)."""
-    win, nw, win_m = measure_windows(hag, dgm, inside, conv, source, pitch0, res, win_m)
+    trim_to_capacity around centre_xy (register point in local metres; default the grid centre, as in the box).
+    Variant c: with core_inside (the outline mask; `inside` is then the extended ring), year and outline_xy (outline in
+    local metres) windows outside the outline join only through bridge_alike and up to EXTEND['cov_max']."""
+    tent = bool(RULES["tent_pair"] and register_orientation == "Ost-West")          # R10 only for east-west parks (else SEL981828226431: motorway as a tent)
+    win, nw, win_m = measure_windows(hag, dgm, inside, conv, source, pitch0, res, win_m, tent=tent)
+    core = None
+    if core_inside is not None and len(win):
+        core = {(int(r.i0) // nw, int(r.j0) // nw) for r in win.itertuples()
+                if core_inside[int(r.i0):int(r.i0) + nw, int(r.j0):int(r.j0) + nw].mean() >= F_IN_MIN}
+        win = bridge_alike(win, nw, core)
     if box and len(win):
         win = drop_isolated(win, nw)
         win = keep_central_component(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))   # the box is centred on the register point
@@ -569,12 +793,14 @@ def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: flo
         win = keep_central_construction(win, nw, (hag.shape[0] / 2, hag.shape[1] / 2))
     trim, m2_kwp = "", np.nan
     if kwp and len(win) and win.ok.astype(bool).any():
-        f0 = rejected_flag(win, nw, box)
+        f0 = rejected_flag(win, nw, box or (r9 and RULES["r9_tab_pattern"]))   # R15: R9 outlines count table windows as the box does
         cxy = centre_xy if centre_xy is not None else (hag.shape[1] * res / 2, hag.shape[0] * res / 2)
         m2_kwp = plan_area_m2(win, 1.0 - f0["rej_tab_frac"]) / float(kwp)
         win, trim = trim_to_capacity(win, float(kwp), cxy, 1.0 - f0["rej_tab_frac"])
+        if core is not None and year and win.ok.astype(bool).any():
+            win = cap_extension(win, nw, core, float(kwp), int(year), outline_xy)
     flag = rejected_flag(win, nw, box) if len(win) else dict(n_tab_windows=0, rej_tab_frac=0.0, rej_cluster_windows=0, rej_cluster_frac=0.0, warn_rejected=False)
-    G = group_windows(win)
+    G = group_windows(win, sections=bool(RULES["sections"] and not box and not r9), pairs=RULES["pair_section"])   # R6 only with a given outline (box: edge artefacts, SEL968350186501; R9: settlement windows, SEL968423559874)
     arrays = arrays_from_groups(G, register_orientation)
     park = park_status(win, G, flag, box)
     ok = win[win.ok.astype(bool)] if len(win) else win
@@ -592,42 +818,118 @@ def measure_park(hag: np.ndarray, dgm: np.ndarray, inside: np.ndarray, conv: flo
     return dict(win=win, G=G, arrays=arrays, park=park, nw=nw, win_m=win_m)
 
 
-def measure_box(load, centre_xy: tuple, kw: float, source_pref=None, register_orientation: str = None, res: float = RES) -> dict:
+def box_max_side(kw: float, a_ref_m2: float = None) -> float:
+    """Largest box side: max(300 m, sqrt(3 x kw x 11 m2)) (E4b, ~0.9 MWp/ha); R1: max(300 m, 3 sqrt(A_ref)) with A_ref =
+    max(fenced area by era density, MaStR area) - old and long parks need more than 0.9 MWp/ha (SEL913949745287)."""
+    if RULES["box_cap"] and a_ref_m2:
+        return float(max(BOX_CAP_FACTOR * np.sqrt(a_ref_m2), BOX["size_m"]))
+    return float(max(np.sqrt(BOX["area_factor"] * float(kw) * 5.0 * 2.2), BOX["size_m"]))
+
+
+def box_reach(kw: float, a_ref_m2: float = None) -> float:
+    """Largest distance of the box edge from the register point (tile margin)."""
+    ms = box_max_side(kw, a_ref_m2)
+    return ms * BOX_DIR_REACH if RULES["box_dir"] else ms / 2
+
+
+def measure_box(load, centre_xy: tuple, kw: float, source_pref=None, register_orientation: str = None, res: float = RES,
+                a_ref_m2: float = None) -> dict:
     """Park without an OSM outline (E4b): square box around centre_xy (UTM m), grown in BOX['step_m'] rings while
-    accepted windows touch the box edge, up to BOX['area_factor'] x the area expected from the capacity (kw x 5 m2
-    x 2.2). load(bounds) -> dict(hag, dgm, conv, source, pitch0, ...) on a grid of `res` with these bounds."""
+    accepted windows touch the box edge, up to box_max_side. load(bounds) -> dict(hag, dgm, conv, source, pitch0, ...)
+    on a grid of `res` with these bounds. R1: the window size of the first box is kept and the box grows by one window
+    per side, so the grid stays anchored at the register point (the 50-m step re-cut 50-60 m windows at every step,
+    SEL981828226431: 4, 4, 6, 7, 10, 8 accepted windows)."""
     cx, cy = centre_xy
-    half = BOX["size_m"] / 2
-    max_side = max(np.sqrt(BOX["area_factor"] * float(kw) * 5.0 * 2.2), BOX["size_m"])
-    steps = []
+    ext = np.full(4, BOX["size_m"] / 2)                          # west, south, east, north edge distance from the centre (m)
+    max_side = box_max_side(kw, a_ref_m2)
+    steps, win_m, step_m = [], None, BOX["step_m"]
     while True:
-        bounds = (cx - half, cy - half, cx + half, cy + half)
+        bounds = (cx - ext[0], cy - ext[1], cx + ext[2], cy + ext[3])
         r = load(bounds)
         inside = np.ones(r["hag"].shape, bool)
-        out = measure_park(r["hag"], r["dgm"], inside, r["conv"], r["source"], r.get("pitch0", np.nan), res, register_orientation, box=True, kwp=kw)
+        out = measure_park(r["hag"], r["dgm"], inside, r["conv"], r["source"], r.get("pitch0", np.nan), res, register_orientation, box=True, kwp=kw,
+                           win_m=win_m, centre_xy=(ext[0], ext[1]) if RULES["box_dir"] else None)   # R1b: register point off the grid centre
         win, nw = out["win"], out["nw"]
+        if RULES["box_cap"] and win_m is None:
+            win_m = step_m = out["win_m"]
         H, W = r["hag"].shape
         n_i, n_j = H // nw, W // nw
-        edge = win[win.ok.astype(bool) & ((win.i0 // nw == 0) | (win.j0 // nw == 0) | (win.i0 // nw == n_i - 1) | (win.j0 // nw == n_j - 1))] if len(win) else win
-        steps.append(dict(side_m=2 * half, n_ok=out["park"]["n_ok"], n_edge=int(len(edge))))
-        if not len(edge) or 2 * (half + BOX["step_m"]) > max_side:
+        ok = win[win.ok.astype(bool)] if len(win) else win
+        side = np.array([(ok.j0 // nw == 0).any(), (ok.i0 // nw == n_i - 1).any(), (ok.j0 // nw == n_j - 1).any(), (ok.i0 // nw == 0).any()]) if len(ok) else np.zeros(4, bool)
+        edge = ok[(ok.i0 // nw == 0) | (ok.j0 // nw == 0) | (ok.i0 // nw == n_i - 1) | (ok.j0 // nw == n_j - 1)] if len(ok) else ok
+        steps.append(dict(side_m=f"{ext[0] + ext[2]:.0f}x{ext[1] + ext[3]:.0f}", n_ok=out["park"]["n_ok"], n_edge=int(len(edge))))
+        if not len(edge):
             break
-        half += BOX["step_m"]
+        if RULES["box_dir"]:                                     # R1b: grow the open sides only, within area and side caps
+            nxt = ext + step_m * side
+            w, h = nxt[0] + nxt[2], nxt[1] + nxt[3]
+            if w * h > max_side ** 2 or nxt.max() > BOX_DIR_REACH * max_side:
+                break
+            ext = nxt
+        else:
+            if ext[0] * 2 + 2 * step_m > max_side:
+                break
+            ext = ext + step_m
     out.update(rasters=r, bounds=bounds)
-    out["park"].update(box_side_m=2 * half, box_steps=str(steps), box_edge_open=bool(len(edge)))
+    out["park"].update(box_side_m=float(max(ext[0] + ext[2], ext[1] + ext[3])), box_steps=str(steps), box_edge_open=bool(len(edge)),
+                       box_max_side_m=round(max_side), box_ext=",".join(f"{e:.0f}" for e in ext))
+    if RULES["auto_outline"] and out["park"]["status"] != "accepted":
+        return auto_outline(out, (cx - bounds[0], bounds[3] - cy), kw, register_orientation, res)
     return out
 
 
+def auto_outline(box: dict, centre_ij_m: tuple, kw: float, register_orientation: str = None, res: float = RES) -> dict:
+    """R9: a failed box is measured again inside an outline taken from its height map (AUTO_OUTLINE), with the outline
+    rules and the capacity trim (probe 2026-11-04: SEL942086318702 accepted, 4/4 windows, 10.9 deg east-west).
+    centre_ij_m = register point as (x from the west edge, y from the north edge) in metres. Returns the box result
+    when no component is near enough or the outline measurement fails too."""
+    from scipy import ndimage as ndi
+    A = AUTO_OUTLINE
+    R = box["rasters"]; hag = R["hag"]
+    tab = np.isfinite(hag) & (hag > TAB_LO) & (hag < TAB_HI)
+    m = ndi.binary_opening(ndi.binary_closing(tab, iterations=int(A["close_m"] / res)), iterations=int(A["open_m"] / res))
+    lab, n = ndi.label(m)
+    if not n:
+        return box
+    sizes = ndi.sum(m, lab, range(1, n + 1)) * res ** 2
+    big = [k + 1 for k in np.flatnonzero(sizes >= A["min_m2"])]
+    if not big:
+        return box
+    H, W = hag.shape
+    ci, cj = int(np.clip(centre_ij_m[1] / res, 0, H - 1)), int(np.clip(centre_ij_m[0] / res, 0, W - 1))
+    dist = {k: float(ndi.distance_transform_edt(lab != k)[ci, cj] * res) for k in big}
+    k0 = min(dist, key=dist.get)
+    if dist[k0] > A["max_dist_m"]:
+        box["park"].update(auto_dist_m=round(dist[k0], 1))
+        return box
+    near0 = ndi.distance_transform_edt(lab != k0) * res
+    keep = np.isin(lab, [k for k in big if k == k0 or near0[lab == k].min() <= A["join_m"]])
+    inside = ndi.binary_erosion(keep, iterations=int(A["inner_m"] / res))
+    hm = np.where(ndi.binary_dilation(keep, iterations=int(A["mask_m"] / res)), hag, np.nan)
+    o = measure_park(hm, R["dgm"], inside, R["conv"], R["source"], R.get("pitch0", np.nan), res, register_orientation, kwp=kw,
+                     centre_xy=(centre_ij_m[0], H * res - centre_ij_m[1]), r9=True)
+    keys = ("box_side_m", "box_steps", "box_edge_open", "box_max_side_m", "box_ext")
+    o["park"].update({k: box["park"][k] for k in keys}, auto_outline_m2=round(float(keep.sum() * res ** 2)), auto_dist_m=round(dist[k0], 1),
+                     box_status=box["park"]["status"], box_reason=box["park"].get("status_reason"))
+    if o["park"]["status"] != "accepted":
+        box["park"].update(auto_dist_m=round(dist[k0], 1), auto_status=o["park"]["status"])
+        return box
+    o["park"]["auto_outline"] = True
+    o.update(rasters=dict(R, hag=hm), bounds=box["bounds"], inside=inside)
+    return o
+
+
 # ------------------------------------------------------------------------------------------------ raster preparation
-def osm_footprint(elements: list, points: list, to_m, max_dist_m: float = 600.0) -> tuple:
+def osm_footprint(elements: list, points: list, to_m, max_dist_m: float = 600.0, power: str = "plant") -> tuple:
     """(polygon in metres or None, fences table): solar plants (power=plant) as ways AND relations (outer members or
-    members without role; ways need >= 4 nodes) within max_dist_m of any of `points` (shapely points in metres)."""
+    members without role; ways need >= 4 nodes) within max_dist_m of any of `points` (shapely points in metres).
+    power="generator": the solar generator areas instead (R12, parks mapped without a plant outline)."""
     from shapely.geometry import Polygon
     from shapely.ops import transform as shp_transform, unary_union
     fences = []
     for e in elements or []:
         tags = e.get("tags") or {}
-        if tags.get("power") != "plant" or tags.get("plant:source", "solar") != "solar":
+        if tags.get("power") != power or tags.get(f"{power}:source", "solar") != "solar":
             continue
         rings = [e["geometry"]] if e["type"] == "way" else [m_["geometry"] for m_ in e.get("members", []) if m_.get("role") in ("outer", "") and len(m_.get("geometry", [])) >= 4]
         for ring in rings:

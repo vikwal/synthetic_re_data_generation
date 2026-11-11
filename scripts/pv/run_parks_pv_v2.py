@@ -5,7 +5,8 @@ Same 90 parks, park parameters, drivers (corrected CAMS, ERA5, snow), horizons a
 sub-arrays change: parks with an accepted geodata measurement get the measured arrays (tilt against the horizontal,
 true azimuth, share = table area; east-west pairs as two arrays), all others keep the nominal mounts of v1, re-terrained
 on the state DGM1 where it was fetched (register_v1+dgm1), else the v1 arrays unchanged (register_v1). The arrays come
-from scripts/pv/fleet_geo_status.py (pv_arrays_geodata_v2.csv). Stage `sites` writes data/parks_pv_v2/; the other
+from scripts/pv/fleet_geo_status.py (pv_arrays_geodata_v2.csv). Stage `prepare` (any release, parks_pv.prepare) fetches the
+inputs (OSM/PVGIS, CAMS centre + ring, corrected CAMS, ICON-D2 SL) of the parks of paths.SELECTION that lack them. Stage `sites` writes data/parks_pv_v2/; the other
 stages are those of run_parks_pv_v1.py, run with PV_RELEASE_NAME=parks_pv_v2 (configs, generated chain and release in
 their own directories, inputs and corrected CAMS shared with v1). v1 outputs are not touched.
 
@@ -33,13 +34,14 @@ from pv import arrays as ARR  # noqa: E402
 from pv.plausibility import orientation_class  # noqa: E402
 
 V1_DATA = os.path.join(REPO, "data", "parks_pv_v1")
+RELEASES = ("parks_pv_v2", "parks_pv_v3", "parks_pv_v4")          # v3 (2026-11-03): selection v3, rules of 2026-11-02 + variant c; v4 (2026-11-07): 226 confirmed parks, final rules, run _v4
 
 
 def stage_added(args):
-    """Parks of selection v2 that are not in parks_pv_v1: the v1 tables built by run_parks_pv_v1.site_tables (same
-    seed, OSM row axis of pv.osm_rows) -> data/parks_pv_v2/added_v1_{arrays,sites,params}.csv; their horizons are
-    added to the shared horizons_used.json (new keys only). geometry_release_states.py reads added_v1_arrays.csv for
-    the fallback arrays of these parks."""
+    """Parks of the selection (v2, v3) that are not in parks_pv_v1: the v1 tables built by run_parks_pv_v1.site_tables
+    (same seed, OSM row axis of pv.osm_rows) -> data/<release>/added_v1_{arrays,sites,params}.csv (never overwritten);
+    their horizons are added to the shared horizons_used.json (new keys only). geometry_release_states.py reads
+    added_v1_arrays.csv for the fallback arrays of these parks."""
     import json
     import run_parks_pv_v1 as V1
     from pv import osm_rows
@@ -53,6 +55,9 @@ def stage_added(args):
         res = osm_rows.row_axis_park(osm.get(r.park_id, {}).get("elements", []), r.lat, r.lon, r.dc_kwp)
         ax.append(dict(park_id=r.park_id, row_axis_deg=res["row_axis_deg"], n_elongated=res["n_elongated"]))
     row_axis = pd.DataFrame(ax).set_index("park_id")
+    outs = [os.path.join(paths.DATA_DIR, f"added_v1_{k}.csv") for k in ("arrays", "sites", "params")]
+    if any(os.path.exists(f) for f in outs):
+        raise SystemExit(f"{paths.DATA_DIR}/added_v1_*.csv exist - never overwritten")
     hz_all = json.load(open(V1.HORIZON_OUT))
     arrays, sites, pars = [], [], []
     for r in added.itertuples():
@@ -62,13 +67,12 @@ def stage_added(args):
         print(r.park_id, "added:", site["footprint_src"], site["horizon_src"], f"{site['n_arrays']} v1 arrays, row axis {row_axis.loc[r.park_id].to_dict()}", flush=True)
     json.dump(hz_all, open(V1.HORIZON_OUT, "w"))
     os.makedirs(paths.DATA_DIR, exist_ok=True)
-    pd.DataFrame(arrays).to_csv(os.path.join(paths.DATA_DIR, "added_v1_arrays.csv"), index=False)
-    pd.DataFrame(sites).to_csv(os.path.join(paths.DATA_DIR, "added_v1_sites.csv"), index=False)
-    pd.DataFrame(pars).to_csv(os.path.join(paths.DATA_DIR, "added_v1_params.csv"), index=False)
+    for f, rows in zip(outs, (arrays, sites, pars)):
+        pd.DataFrame(rows).to_csv(f, index=False)
 
 
 def stage_sites(args):
-    assert paths.NAME == "parks_pv_v2", "set PV_RELEASE_NAME=parks_pv_v2"
+    assert paths.NAME in RELEASES, f"set PV_RELEASE_NAME to one of {RELEASES}"
     sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}).dropna(subset=["park_id"])
     geo = pd.read_csv(args.geodata, dtype={"park_id": str})
     a1 = pd.read_csv(os.path.join(V1_DATA, "pv_arrays.csv"), dtype={"park_id": str})
@@ -135,10 +139,13 @@ SNOW_README = {
 
 
 def write_readme():
-    """Release README of v2 from the template; the counts per geometry source come from the written pv_arrays.csv."""
+    """Release README from the template (v3: its own header above the v2 text); the counts per geometry source come from
+    the written pv_arrays.csv."""
     src = pd.read_csv(os.path.join(paths.RELEASE_DIR, "pv_arrays.csv"), dtype={"park_id": str}).groupby("park_id").geometry_source.first()
     kind = src.str.split(":").str[0]
     txt = open(os.path.join(REPO, "parks_pv", "README_release_v2.md")).read()
+    if paths.NAME in ("parks_pv_v3", "parks_pv_v4"):
+        txt = open(os.path.join(REPO, "parks_pv", f"README_release_{paths.NAME[-2:]}.md")).read().replace("{n_parks}", str(len(src))) + "\n---\n\n" + txt
     man = sorted(glob.glob(os.path.join(paths.RELEASE_DIR, "manifest_*.json")))
     model = json.load(open(man[0]))["drivers"].get("snow_model", "depth_linear") if man else "depth_linear"
     txt = txt.replace("{snow}", SNOW_README[model])
@@ -150,7 +157,14 @@ def write_readme():
 def main():
     import run_parks_pv_v1 as V1
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=["added", "sites", "configs", "generate", "assemble", "tables"])
+    ap.add_argument("stage", choices=["prepare", "added", "sites", "configs", "generate", "assemble", "tables"])
+    ap.add_argument("--steps", default="site,cams,correct,icon", help="stage prepare: steps of parks_pv.prepare")
+    ap.add_argument("--dry-run", action="store_true", help="stage prepare: inventory only")
+    ap.add_argument("--gpu", type=int, default=0, help="stage prepare, step correct")
+    ap.add_argument("--icon-name", default=None, help="stage prepare: NWP-points selection name (default pv_<release version>)")
+    ap.add_argument("--icon-previous", default="pv_v2")
+    ap.add_argument("--icon-sources", default="pv_v1 pv_v2_add", help="ICON stagings that hold the parks of --icon-previous")
+    ap.add_argument("--icon-hours", default="09", help="09 is the snow driver; 06 12 15 for the forecast inputs")
     ap.add_argument("--geodata", default=None, help="pv_arrays_geodata_v2.csv of scripts/pv/fleet_geo_status.py (stage sites)")
     ap.add_argument("--parks", default=None)
     ap.add_argument("--seed", type=int, default=42)
@@ -160,7 +174,12 @@ def main():
     ap.add_argument("--snow-model", default="depth_slide", choices=["depth_linear", "depth_slide"],
                     help="D7 (Viktor 2026-10-23): depth_slide is the release model of v2; depth_linear = v1 behaviour")
     a = ap.parse_args()
-    assert paths.NAME == "parks_pv_v2", "set PV_RELEASE_NAME=parks_pv_v2"
+    if a.stage == "prepare":                                      # any release: inputs of paths.SELECTION (2026-11-03)
+        from parks_pv import prepare
+        prepare.run([x for x in a.steps.split(",") if x], a.model_tag, a.gpu, a.icon_name, a.icon_previous, a.icon_sources,
+                    a.icon_hours, a.dry_run)
+        return
+    assert paths.NAME in RELEASES, f"set PV_RELEASE_NAME to one of {RELEASES}"
     if a.parks:
         a.parks = a.parks.split(",")
     if a.stage == "added":

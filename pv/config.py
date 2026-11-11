@@ -5,7 +5,8 @@ A park config (YAML or dict):
   latitude, longitude, altitude: float
   kwp_dc: float                 DC rating of all arrays, kWp
   dc_ac: float                  DC/AC ratio -> AC rating = kwp_dc / dc_ac
-  arrays: [{name, tilt, azimuth, share, gcr}]      shares sum to 1
+  arrays: [{name, tilt, azimuth, share, gcr}]      shares sum to 1; optional per array (age cohorts, 2026-11-05):
+           gamma_pdc, era, commissioning_date - override module.gamma_pdc / aging.era / aging.commissioning_date
   module:  {model: pvwatts|cec, name: <library name or null>, gamma_pdc: -0.0035, year: int}
   inverter: {model: pvwatts|sandia, name: <library name or null>, eta_inv_nom: 0.96, unit_kw: null}
   temperature: {model: faiman|pvsyst, u0: 25, u1: 6.84}
@@ -21,6 +22,8 @@ import copy
 import os
 
 import yaml
+
+from pv.aging import ERAS
 
 DEFAULTS = {
     "altitude": 0.0,
@@ -63,6 +66,10 @@ def normalise(cfg: dict) -> dict:
         for k in ("tilt", "azimuth"):
             if k not in a:
                 raise ValueError(f"array {a['name']} lacks '{k}'")
+        if a.get("era") is not None and a["era"] not in ERAS:
+            raise ValueError(f"array {a['name']}: unknown era {a['era']!r}")
+        if "gamma_pdc" in a and not -0.01 < float(a["gamma_pdc"]) < 0.0:
+            raise ValueError(f"array {a['name']}: gamma_pdc {a['gamma_pdc']} outside (-0.01, 0)")
     if c["aging"]["enabled"] and not c["aging"]["commissioning_date"]:
         raise ValueError("aging enabled but no commissioning_date")
     return c

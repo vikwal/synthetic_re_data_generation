@@ -7,9 +7,13 @@ seeded random key) until one passes both checks: the coordinate lies in the regi
 reverse geocoding, municipality or county name) and an OSM solar plant lies within 400 m (Overpass). The replacement
 takes over client, role, fold and cell of the replaced park. v1 files are not touched.
 
+--assign (2026-11-03, selection v3) skips the search: a CSV with old, new, reason (proposals of screen_replacements.py
+confirmed by Viktor) is applied to the --src version and written as --dst; the stratum may differ (relaxed slot).
+
     synthre/bin/python scripts/pv/replace_parks.py --replace SEL948807179706,SEL991206873119,SEL946560347417
-Outputs: FL_Contribution/data/mastr/pv_park_selection_v2.csv, FL_Contribution/data/pv_transfer_split_v2.csv,
-         FL_Contribution/data/mastr/selection_v2_changes.csv (old, new, reason, candidates tested, checks)."""
+    synthre/bin/python scripts/pv/replace_parks.py --assign data/parks_pv_v3/selection_v3_assign.csv --src v2 --dst v3
+Outputs: FL_Contribution/data/mastr/pv_park_selection_<dst>.csv, FL_Contribution/data/pv_transfer_split_<dst>.csv,
+         FL_Contribution/data/mastr/selection_<dst>_changes.csv (old, new, reason, candidates tested, checks)."""
 import argparse
 import json
 import os
@@ -26,13 +30,22 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 FL = os.path.expanduser("~/Work/FL_Contribution/data")
 UA = "pv-sim2real-geocheck/1.0 (research; HKA)"
-FETCH_STATES = {"Bayern", "Niedersachsen", "Mecklenburg-Vorpommern", "Brandenburg", "Nordrhein-Westfalen", "Hessen", "Sachsen", "Sachsen-Anhalt"}
+FETCH_STATES = {"Bayern", "Niedersachsen", "Mecklenburg-Vorpommern", "Brandenburg", "Nordrhein-Westfalen", "Hessen", "Sachsen", "Sachsen-Anhalt", "Baden-Württemberg", "Rheinland-Pfalz"}
 CACHE = os.path.join(REPO, "data", "parks_pv_v1", "_nominatim_cache.json")
 
 
+ABBREV = [(r"\ba\.\s*d\.\s*", "an der "), (r"\bi\.\s*d\.\s*", "in der "), (r"\bb\.\s*", "bei "), (r"\ba\.\s*", "am "),
+          (r"\bi\.\s*", "in "), (r"\bst\.\s*", "sankt "), (r"\bopf\.", "oberpfalz"), (r"\bbay\.", "bayern"),
+          (r"\bndb\.", "niederbayern"), (r"\bufr\.", "unterfranken"), (r"\bofr\.", "oberfranken"), (r"\bmfr\.", "mittelfranken")]
+
+
 def _norm(s) -> str:
+    """Comparable municipality or county name: MaStR abbreviations expanded (2026-11-05: "Neustadt a.d. Donau" is
+    "Neustadt an der Donau" in OSM), parentheses and administrative words (whole words only: "Neustadt" stays) removed, letters only."""
     s = str(s or "").lower().replace("ß", "ss")
-    s = re.sub(r"\(.*?\)|landkreis|kreisfreie stadt|stadt|kreis|städteregion|region|verwaltungsgemeinschaft", "", s)
+    for pat, rep in ABBREV:
+        s = re.sub(pat, rep, s)
+    s = re.sub(r"\(.*?\)|\b(landkreis|kreisfreie stadt|stadt|kreis|städteregion|region|verwaltungsgemeinschaft)\b", "", s)
     return re.sub(r"[^a-zäöü]", "", s)
 
 
@@ -63,6 +76,8 @@ def osm_plant_near(lat: float, lon: float, radius_m: int = 400) -> tuple:
     from shapely.geometry import Point
     from pv import geodata_windows as GW, site_inputs
     ans = site_inputs.fetch_overpass(lat, lon, 3000)
+    if ans.get("error"):                                          # no Overpass answer is not "no plant" (2026-10-29)
+        return -1, ans
     zone = 32 if lon < 12.0 else 33
     to_m = Transformer.from_crs("EPSG:4326", f"EPSG:258{zone}", always_xy=True).transform
     _, fences = GW.osm_footprint(ans.get("elements", []), [Point(*to_m(lon, lat))], to_m, radius_m)
@@ -96,13 +111,16 @@ def unit_ids(pk: pd.Series) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--replace", required=True)
+    ap.add_argument("--replace", default="")
+    ap.add_argument("--assign", default=None, help="CSV old,new,reason: replacements given, no search")
+    ap.add_argument("--src", default="v1")
+    ap.add_argument("--dst", default="v2")
     ap.add_argument("--reason", default="MaStR coordinate outside the registered municipality (Nominatim check 2026-10-22)")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--max-tries", type=int, default=25)
     a = ap.parse_args()
-    sel = pd.read_csv(os.path.join(FL, "mastr", "pv_park_selection_v1.csv"))
-    split = pd.read_csv(os.path.join(FL, "pv_transfer_split_v1.csv"))
+    sel = pd.read_csv(os.path.join(FL, "mastr", f"pv_park_selection_{a.src}.csv"))
+    split = pd.read_csv(os.path.join(FL, f"pv_transfer_split_{a.src}.csv"))
     pool = pd.read_csv(os.path.join(FL, "mastr", "pv_park_pool_v1.csv"))
     pool = pool[pool.reject.isna()]
     cache = json.load(open(CACHE)) if os.path.exists(CACHE) else {}
@@ -110,22 +128,16 @@ def main():
     gem = pool.set_index("park_id").gemeinde
     sel["gemeinde"] = sel.park_id.map(gem)
     changes, used, osm_new = [], set(sel.park_id), {}
-    for pid in a.replace.split(","):
+    given = pd.read_csv(a.assign).set_index("old") if a.assign else None
+    for pid in (given.index if given is not None else a.replace.split(",")):
         old = sel[sel.park_id == pid].iloc[0]
-        c = pool[(pool.cls == old.cls) & (pool.region == old.region) & (pool.cohort == old.cohort) & (pool.size_bin == old.size_bin) & ~pool.park_id.isin(used)].copy()
-        c["key"] = (~c.bundesland.isin(FETCH_STATES)).astype(int) * 2 + (c.terrain_cls != old.terrain_cls).astype(int) + rng.random(len(c)) * 0.5
-        tried, new = [], None
-        for pk in c.sort_values("key").head(a.max_tries).itertuples():
-            ok, txt = in_municipality(pk, reverse(pk.lat, pk.lon, cache))
-            n_osm, ans = osm_plant_near(pk.lat, pk.lon) if ok else (-1, None)
-            tried.append(f"{pk.park_id}:{'ok' if ok else 'coord'}:{n_osm}")
-            print(pid, "candidate", pk.park_id, pk.bundesland, pk.gemeinde, "| coordinate:", txt, "| OSM plants:", n_osm, flush=True)
-            if ok and n_osm > 0:
-                new = pool[pool.park_id == pk.park_id].iloc[0]
-                osm_new[pk.park_id] = ans
-                break
-        if new is None:
-            raise SystemExit(f"{pid}: no candidate passed ({len(c)} in the stratum, tried {tried})")
+        if given is not None:
+            new = pool[pool.park_id == given.loc[pid, "new"]].iloc[0]
+            assert new.park_id not in used, f"{new.park_id} already in the selection"
+            diff = [k for k in ("cls", "region", "cohort", "size_bin") if new[k] != old[k]]
+            tried, reason = [f"assigned; stratum differs in {diff}" if diff else "assigned"], given.loc[pid, "reason"]
+        else:
+            new, tried, reason = search(old, pool, used, cache, rng, a, osm_new)
         used.add(new.park_id)
         row = selection_row(old, new)
         sel = pd.concat([sel[sel.park_id != pid], pd.DataFrame([row])], ignore_index=True)
@@ -133,25 +145,47 @@ def main():
         so.update(park_id=new.park_id, lat=row["lat"], lon=row["lon"], terrain_cls=new.terrain_cls, size_bin=new.size_bin, cohort=new.cohort)
         split = pd.concat([split[split.park_id != pid], pd.DataFrame([so])], ignore_index=True)
         changes.append(dict(client=old.client, cls=old.cls, role=so["role"], fold=so["fold"], old=pid, old_gemeinde=old.gemeinde, new=new.park_id,
-                            new_gemeinde=new.gemeinde, new_state=new.bundesland, reason=a.reason, candidates_tested=len(tried), tried=" ".join(tried),
-                            old_terrain=old.terrain_cls, new_terrain=new.terrain_cls))
-    order = pd.read_csv(os.path.join(FL, "mastr", "pv_park_selection_v1.csv")).park_id.tolist()
+                            new_gemeinde=new.gemeinde, new_state=new.bundesland, reason=reason, candidates_tested=len(tried), tried=" ".join(tried),
+                            old_terrain=old.terrain_cls, new_terrain=new.terrain_cls, old_cohort=old.cohort, new_cohort=new.cohort,
+                            old_size_bin=old.size_bin, new_size_bin=new.size_bin))
+    order = pd.read_csv(os.path.join(FL, "mastr", f"pv_park_selection_{a.src}.csv")).park_id.tolist()
     rep = {c["old"]: c["new"] for c in changes}
     key = {(rep.get(p, p)): k for k, p in enumerate(order)}
     sel = sel.sort_values("park_id", key=lambda s: s.map(key)).reset_index(drop=True)
     split = split.sort_values("park_id", key=lambda s: s.map(key)).reset_index(drop=True)
-    for path, df in ((os.path.join(FL, "mastr", "pv_park_selection_v2.csv"), sel), (os.path.join(FL, "pv_transfer_split_v2.csv"), split),
-                     (os.path.join(FL, "mastr", "selection_v2_changes.csv"), pd.DataFrame(changes))):
+    for path, df in ((os.path.join(FL, "mastr", f"pv_park_selection_{a.dst}.csv"), sel), (os.path.join(FL, f"pv_transfer_split_{a.dst}.csv"), split),
+                     (os.path.join(FL, "mastr", f"selection_{a.dst}_changes.csv"), pd.DataFrame(changes))):
         if os.path.exists(path):
             raise SystemExit(f"{path} exists - never overwritten")
         df.to_csv(path, index=False)
         print("written", path)
-    from parks_pv import paths                                    # Overpass answers of the new parks into the shared OSM cache (keys added only)
-    osm_path = os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")
-    osm = json.load(open(osm_path))
-    osm.update({k: v for k, v in osm_new.items() if k not in osm})
-    json.dump(osm, open(osm_path, "w"))
+    if osm_new:
+        from parks_pv import paths                                # Overpass answers of the new parks into the shared OSM cache (keys added only)
+        osm_path = os.path.join(paths.INPUT_DIR, "osm", "parks_osm.json")
+        osm = json.load(open(osm_path))
+        osm.update({k: v for k, v in osm_new.items() if k not in osm})
+        json.dump(osm, open(osm_path, "w"))
     print(pd.DataFrame(changes)[["client", "cls", "role", "old", "old_gemeinde", "new", "new_gemeinde", "new_state", "candidates_tested"]].to_string(index=False))
+
+
+def search(old: pd.Series, pool: pd.DataFrame, used: set, cache: dict, rng, a, osm_new: dict) -> tuple:
+    """(pool row, tried list, reason) of the first candidate of old's stratum passing the coordinate and OSM checks."""
+    pid = old.park_id
+    c = pool[(pool.cls == old.cls) & (pool.region == old.region) & (pool.cohort == old.cohort) & (pool.size_bin == old.size_bin) & ~pool.park_id.isin(used)].copy()
+    c["key"] = (~c.bundesland.isin(FETCH_STATES)).astype(int) * 2 + (c.terrain_cls != old.terrain_cls).astype(int) + rng.random(len(c)) * 0.5
+    tried, new = [], None
+    for pk in c.sort_values("key").head(a.max_tries).itertuples():
+        ok, txt = in_municipality(pk, reverse(pk.lat, pk.lon, cache))
+        n_osm, ans = osm_plant_near(pk.lat, pk.lon) if ok else (-1, None)
+        tried.append(f"{pk.park_id}:{'ok' if ok else 'coord'}:{n_osm}")
+        print(pid, "candidate", pk.park_id, pk.bundesland, pk.gemeinde, "| coordinate:", txt, "| OSM plants:", n_osm, flush=True)
+        if ok and n_osm > 0:
+            new = pool[pool.park_id == pk.park_id].iloc[0]
+            osm_new[pk.park_id] = ans
+            break
+    if new is None:
+        raise SystemExit(f"{pid}: no candidate passed ({len(c)} in the stratum, tried {tried})")
+    return new, tried, a.reason
 
 
 if __name__ == "__main__":

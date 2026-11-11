@@ -30,7 +30,7 @@ TILT_EN = {"< 20 Grad": "below 20", "20 - 40 Grad": "20 to 40", "40 - 60 Grad": 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--suffix", default="_v2")
+    ap.add_argument("--suffix", default="_t2j")
     ap.add_argument("--out", default=os.path.expanduser(f"~/Work/pv_sim2real/results/geodata_release_{pd.Timestamp.now():%Y-%m-%d}"))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)

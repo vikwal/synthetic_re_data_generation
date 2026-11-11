@@ -1,6 +1,7 @@
 """External site inputs per park: OpenStreetMap solar plant footprints (Overpass) and PVGIS horizon
 profiles. Both are small public requests (one per park) with mirrors and retries; results are cached as
 JSON keyed by park_id so the run is resumable."""
+import fcntl
 import json
 import os
 import time
@@ -9,7 +10,8 @@ import pandas as pd
 import requests
 
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://lz4.overpass-api.de/api/interpreter",
-                 "https://z.overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
+                 "https://z.overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter",
+                 "https://maps.mail.ru/osm/tools/overpass/api/interpreter"]   # VK mirror added 2026-10-29 (overpass-api.de answered 502 for hours)
 PVGIS_URL = "https://re.jrc.ec.europa.eu/api/v5_3/printhorizon"
 UA = {"User-Agent": "synthetic-re-data-generation/0.1 (research)"}
 
@@ -72,3 +74,31 @@ def fetch_all(parks: pd.DataFrame, osm_path: str, horizon_path: str, radius_m: i
             json.dump(hz, open(horizon_path, "w"))
             print(r.park_id, "horizon points", len(hz[r.park_id]), flush=True)
             time.sleep(1.0)
+
+
+def missing_osm(osm: dict, ids) -> list:
+    """Park ids without a usable cache entry (absent, or a failed request). An entry with no elements is
+    valid: OSM has no plant there."""
+    return [p for p in ids if p not in osm or "error" in osm[p]]
+
+
+def ensure_osm(parks: pd.DataFrame, osm_path: str, horizon_path: str) -> dict:
+    """Load the OSM cache and fetch the parks missing from it (park_id, lat, lon) before a geometry run.
+    A missing entry would silently fall back to the register box (found 2026-11-05: wave-1 parks measured
+    without their OSM outline). Parallel runs share the cache, so the fetch holds a file lock. Raises
+    SystemExit if parks are still missing afterwards (Overpass down)."""
+    osm = json.load(open(osm_path)) if os.path.exists(osm_path) else {}
+    if not missing_osm(osm, parks.park_id):
+        return osm
+    with open(osm_path + ".lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        osm = json.load(open(osm_path)) if os.path.exists(osm_path) else {}
+        miss = missing_osm(osm, parks.park_id)
+        if miss:
+            print("osm cache: fetching", len(miss), "parks", flush=True)
+            fetch_all(parks[parks.park_id.isin(miss)][["park_id", "lat", "lon"]], osm_path, horizon_path)
+            osm = json.load(open(osm_path))
+    miss = missing_osm(osm, parks.park_id)
+    if miss:
+        raise SystemExit(f"no OSM cache entry for {len(miss)} parks ({', '.join(miss[:5])}...) - Overpass unreachable, rerun later")
+    return osm
