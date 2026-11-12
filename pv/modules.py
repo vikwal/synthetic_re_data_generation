@@ -7,14 +7,15 @@ products such as Renesola JC245M-24, REC245PE, Canadian Solar CS6P) and the 2026
 normalising to [A-Za-z0-9].
 """
 
-import os
 import re
 
 import numpy as np
 import pandas as pd
 import pvlib
 
-CEC_2026 = os.path.expanduser("~/Work/FL_Contribution/data/mastr/CEC_Modules.csv")
+import settings
+
+CEC_2026 = settings.get("cec_modules_csv")
 CEC_PARAMS = ["alpha_sc", "a_ref", "I_L_ref", "I_o_ref", "R_sh_ref", "R_s", "Adjust"]
 
 _cache = {}

@@ -4,6 +4,7 @@ WeatherDB, ERA5 snow depth from the monthly GRIBs. Every input gets a SHA256 for
 import glob
 import hashlib
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -83,6 +84,11 @@ def _refine_snow(hourly: pd.DataFrame, step) -> pd.DataFrame:
 
 
 ICON_LEAD_MAX_H = 3.0            # leads 0..3 h of the 09 UTC run = "analysis" value of the day
+ICON_MIN_COVERAGE = 0.9          # warn below this share of days with an ICON run
+
+
+class IconSnowMissing(UserWarning):
+    """ICON-D2 snow depth missing or incomplete for a park; the snow driver degrades to ERA5 only."""
 
 
 def icon_snow_daily(park_dir: str) -> pd.Series:
@@ -102,10 +108,23 @@ def icon_snow_series(park_id: str, idx: pd.DatetimeIndex, icon_dir: str = None, 
     """(ICON daily snow depth on the step index idx, meta). Each step gets the value of its UTC date; missing run days
     are carried forward for up to ffill_days days, then 0 (as in the calibration)."""
     park_dir = os.path.join(icon_dir or paths.ICON_SL09_DIR, f"park_{park_id}")
-    daily = icon_snow_daily(park_dir)
     day_key = idx.tz_convert("UTC").normalize().tz_localize(None)
     days = pd.DatetimeIndex(sorted(set(day_key)))
+    try:
+        daily = icon_snow_daily(park_dir)
+    except (FileNotFoundError, KeyError, IndexError, ValueError) as e:
+        # no ICON-D2 snow for this park: depth_slide runs on ERA5 snow depth alone
+        warnings.warn(f"park {park_id}: ICON-D2 h_snow not available ({type(e).__name__}: {e}); "
+                      f"snow driver falls back to ERA5 snow depth only", IconSnowMissing, stacklevel=2)
+        out = pd.Series(0.0, index=idx, name="icon_snow_depth_cm")
+        meta = {"icon_dir": park_dir, "icon_days": 0, "release_days": int(len(days)), "icon_coverage": 0.0,
+                "icon_daily_sha256": None, "icon_status": "unavailable", "icon_error": f"{type(e).__name__}: {e}"}
+        return out, meta
     have = daily.reindex(days)
+    cov = float(have.notna().mean())
+    if cov < ICON_MIN_COVERAGE:
+        warnings.warn(f"park {park_id}: ICON-D2 h_snow covers only {cov:.1%} of the {len(days)} days; "
+                      f"missing days count as no ICON snow (ERA5 only)", IconSnowMissing, stacklevel=2)
     filled = have.ffill(limit=ffill_days).fillna(0.0)
     out = pd.Series(filled.reindex(day_key).to_numpy(), index=idx, name="icon_snow_depth_cm")
     meta = {"icon_dir": park_dir, "icon_days": int(have.notna().sum()), "release_days": int(len(days)),

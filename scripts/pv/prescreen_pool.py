@@ -8,7 +8,7 @@ screen_replacements.py for every usable pool park in a state with a fetcher, plu
      them in the box around the register point (E4b); the OSM plant only confirms that a park stands there.
   Flags (not filters):
   - area_ratio: area of the OSM plants within 400 m over the fenced area expected from capacity and year
-    (geometry_release_states.expected_fenced_m2); < 0.5 hints at a partial outline, > 2 at neighbouring plants.
+    (parks_pv.geometry_estimate.expected_fenced_m2); < 0.5 hints at a partial outline, > 2 at neighbouring plants.
   - year_spread: years between the first and the last MaStR unit of the park (merged Lokationen, SEL961128163827:
     2011 + 2023); > 3 marks a park of several construction phases.
 The survey-date check and the window measurement need the tiles and stay with screen_replacements.py.
@@ -25,7 +25,7 @@ import requests
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path[:0] = [REPO, os.path.join(REPO, "scripts", "pv")]
-import geometry_release_states as GRS  # noqa: E402
+from parks_pv import geometry_estimate as GRS  # noqa: E402
 import replace_parks as RP  # noqa: E402
 from parks_pv import paths  # noqa: E402
 from pv import geodata_windows as GW, site_inputs  # noqa: E402

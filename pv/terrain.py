@@ -10,10 +10,11 @@ from rasterio.windows import from_bounds
 from shapely.geometry import Point, Polygon, MultiPolygon, shape
 from shapely.ops import unary_union
 
+import settings
 from pv import arrays as arr
 
-GLO30_DIR = "/mnt/nvme2/synthetic/raw/round2/dem/glo30"
-MOSAIC_90 = "/mnt/nvme2/synthetic/raw/round2/dem/mosaic_90m.tif"
+GLO30_DIR = settings.get("dem_glo30_dir")
+MOSAIC_90 = settings.get("dem_mosaic_90m")
 
 
 def tile_path(lat: float, lon: float, root: str = GLO30_DIR) -> str:

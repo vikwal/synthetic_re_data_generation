@@ -1,0 +1,51 @@
+id,label
+1,andere Gase
+31,In Planung
+35,In Betrieb
+37,Vorübergehend stillgelegt
+38,Endgültig stillgelegt
+688,Volleinspeisung
+689,Teileinspeisung (einschließlich Eigenverbrauch)
+695,Nord
+696,Nord-Ost
+697,Ost
+698,Süd-Ost
+699,Süd
+700,Süd-West
+701,West
+702,Nord-West
+703,nachgeführt
+704,Ost-West
+802,Nein
+803,"Ja, auf 70%"
+804,"Ja, auf 60%"
+805,"Ja, auf 50%"
+806,Fassadenintegriert
+807,> 60 Grad
+808,40 - 60 Grad
+809,20 - 40 Grad
+810,< 20 Grad
+811,Nachgeführt
+852,Freifläche
+853,"Bauliche Anlagen (Hausdach, Gebäude und Fassade)"
+1400,Brandenburg
+1401,Berlin
+1402,Baden-Württemberg
+1403,Bayern
+1404,Bremen
+1405,Hessen
+1406,Hamburg
+1407,Mecklenburg-Vorpommern
+1408,Niedersachsen
+1409,Nordrhein-Westfalen
+1410,Rheinland-Pfalz
+1411,Schleswig-Holstein
+1412,Saarland
+1413,Sachsen
+1414,Sachsen-Anhalt
+1415,Thüringen
+1535,"Ja, sonstige"
+2484,Bauliche Anlagen (Sonstige)
+2961,Steckerfertige Solaranlage (sog. Balkonkraftwerk)
+3002,Gewässer
+3058,Großparkplatz

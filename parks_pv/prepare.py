@@ -7,7 +7,7 @@ all steps resumable, nothing existing is rewritten):
     correct  corrected CAMS of the model tag (30 min and hourly)                  scripts/cams_bc/apply_parks.py (ERA5 venv, GPU)
     icon     ICON-D2 SL 09 UTC grid points (snow driver of depth_slide)           NWP-points/points/run_pv_add.sh (NAS, hours)
 ERA5 (WeatherDB) and the ERA5 snow GRIBs cover Germany and need no step; the snow point cache is filled by `generate`.
-Geometry (geometry_release_states.py, fleet_geo_status.py, stage `added`) stays a release step of its own."""
+Angle estimation: stage geometry (parks_pv.geometry_estimate, store parks_pv.geometry_store)."""
 import json
 import os
 import subprocess
@@ -16,12 +16,13 @@ import time
 
 import pandas as pd
 
+import settings
 from parks_pv import paths
 
 REPO = paths.REPO
 PY = sys.executable
 TAG = "2023_2026"                                                  # CAMS request tag of fetch_cams_parks.py
-NWP_POINTS = os.path.expanduser("~/Work/NWP-points")
+NWP_POINTS = settings.get("nwp_points_dir")
 STEPS = ("site", "cams", "correct", "icon")
 
 
@@ -74,17 +75,16 @@ def step_cams(sel: pd.DataFrame, inv: pd.DataFrame, batch: int = 60, sleep_s: in
         time.sleep(sleep_s if "quota" in log.lower() else 30)
 
 
-def step_correct(sel: pd.DataFrame, inv: pd.DataFrame, model_tag: str, gpu: int):
+def step_correct(sel: pd.DataFrame, inv: pd.DataFrame, model_tag: str, gpu: int, period: tuple):
     todo = inv[~inv.correct].park_id.tolist()
     if not todo:
         return
     lack = inv[~inv.correct & ~(inv.cams & (inv.ring == 8))].park_id.tolist()
     if lack:
         raise RuntimeError(f"correct: CAMS centre/ring missing for {lack} - run step cams first")
-    sys.path.insert(0, os.path.join(REPO, "scripts", "pv"))
-    import run_parks_pv_v1 as V1
-    V1.stage_points(None)                                          # points.json from cams_points.csv (derived, all centres)
-    V1.stage_correct(type("A", (), dict(parks=todo, model_tag=model_tag, gpu=gpu))())
+    from parks_pv import stages
+    stages.write_points()                                          # points.json from cams_points.csv (derived, all centres)
+    stages.run_correction(model_tag, gpu, period[0], period[1], todo)
 
 
 def step_icon(sel: pd.DataFrame, inv: pd.DataFrame, name: str, previous: str, sources: str, hours: str = "09"):
@@ -106,7 +106,8 @@ def step_icon(sel: pd.DataFrame, inv: pd.DataFrame, name: str, previous: str, so
 
 
 def run(steps, model_tag: str = "xgb_v5", gpu: int = 0, icon_name: str = None, icon_previous: str = "pv_v2",
-        icon_sources: str = "pv_v1 pv_v2_add", icon_hours: str = "09", dry_run: bool = False) -> pd.DataFrame:
+        icon_sources: str = "pv_v1 pv_v2_add", icon_hours: str = "09", dry_run: bool = False,
+        period: tuple = ("2023-07-24", "2026-08-01")) -> pd.DataFrame:
     sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}).dropna(subset=["park_id"])
     inv = inventory(sel, model_tag)
     print(f"{paths.SELECTION}: {len(sel)} parks, {int(inv.complete.sum())} complete", flush=True)
@@ -120,7 +121,7 @@ def run(steps, model_tag: str = "xgb_v5", gpu: int = 0, icon_name: str = None, i
         elif s == "cams":
             step_cams(sel, inv)
         elif s == "correct":
-            step_correct(sel, inv, model_tag, gpu)
+            step_correct(sel, inv, model_tag, gpu, period)
         elif s == "icon":
             step_icon(sel, inv, icon_name or "pv_" + paths.NAME.rsplit("_", 1)[-1], icon_previous, icon_sources, icon_hours)
         inv = inventory(sel, model_tag)

@@ -1,13 +1,14 @@
 """Inverter level: PVWatts or Sandia AC model, library selection by AC rating and era."""
 
-import os
 import re
 
 import numpy as np
 import pandas as pd
 import pvlib
 
-CEC_INV_2026 = os.path.expanduser("~/Work/FL_Contribution/data/mastr/CEC_Inverters.csv")
+import settings
+
+CEC_INV_2026 = settings.get("cec_inverters_csv")
 _cache = {}
 
 

@@ -26,12 +26,13 @@ import os
 import numpy as np
 import pandas as pd
 
+import settings
 from pv import timebase
 
-DATA_ROOT = os.environ.get("DATA_ROOT", "/mnt/lambda1/nvme1")
+DATA_ROOT = settings.get("data_root")
 IMPUTED_DIR = os.path.join(DATA_ROOT, "synthetic", "interpol", "solar")
 RAW_SOLAR_DIR = os.path.join(DATA_ROOT, "synthetic", "raw", "solar")
-CAMS_PM_DIR = "/mnt/nas/cams/sqltocsv"
+CAMS_PM_DIR = settings.get("cams_pm_dir")
 
 ERA5_SOLAR = "public.era5_solar"
 ERA5_SOLAR_POINTS = "public.era5_solar_grid_points"

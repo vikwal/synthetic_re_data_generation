@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Fetch OSM footprints and PVGIS horizons for the selected PV parks (resumable JSON caches).
 
-    synthre/bin/python scripts/pv/fetch_site_inputs.py [--selection ...] [--out ${DATA_ROOT}/synthetic/solar/parks_pv_v1/inputs/osm]
+    synthre/bin/python scripts/pv/fetch_site_inputs.py [--selection ...] [--out <pv_shared_dir>/inputs/osm]
 """
 import argparse
 import os
@@ -12,13 +12,14 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from pv import site_inputs  # noqa: E402
 
-ROOT = os.environ.get("DATA_ROOT", "/mnt/lambda1/nvme1")
+import settings  # noqa: E402
+ROOT = settings.get("data_root")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selection", default=os.path.expanduser("~/Work/FL_Contribution/data/mastr/pv_park_selection_v1.csv"))
-    ap.add_argument("--out", default=f"{ROOT}/synthetic/solar/parks_pv_v1/inputs/osm")
+    ap.add_argument("--out", default=f"{settings.get('pv_shared_dir')}/inputs/osm")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     sel = pd.read_csv(a.selection).dropna(subset=["park_id"])

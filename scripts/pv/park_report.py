@@ -8,15 +8,14 @@ example window in detail (folded profile with the line fit, planes per row), map
 slope per window with the rejected windows and their reason, groups and arrays, 3-D model of the example window,
 comparison with the register class. Images are embedded as PNG (base64).
 
-    synthre/bin/python scripts/pv/park_report.py fleet [--parks ID,ID] [--suffix _v2] [--out DIR]
+    synthre/bin/python scripts/pv/park_report.py fleet [--config configs/runs/parks_pv_v4.yaml] [--method v4] [--parks ID,ID] [--out DIR]
     synthre/bin/python scripts/pv/park_report.py trianel [--pv pv1 ...]          # confidential, stays on l2
     synthre/bin/python scripts/pv/park_report.py screen --screen results/pv/replacement_screen_<date> [--out DIR]
-Fleet: rasters from the tile cache (geometry_release_states.fetch_tiles finds the cached tiles), windows from
-results/pv/geodata_release<suffix>/<park>/, park rows from data/parks_pv_v1/geodata_release_<state><suffix>.csv.
+Fleet: rasters from the tile cache (parks_pv.geometry_estimate.fetch_tiles finds the cached tiles), measurement from the
+angle estimation store <geometry_dir>/<method>/<park>/ (parks_pv.geometry_store), selection and method of the run config.
 Output: ~/Work/pv_sim2real/results/geo_reports_v2/<park>.html + index.html; trianel -> geo_reports_trianel/."""
 import argparse
 import base64
-import glob
 import html
 import io
 import json
@@ -432,15 +431,15 @@ def short_page(pid: str, r: pd.Series, row: dict, out_dir: str) -> None:
     row["mb"] = round(os.path.getsize(path) / 1e6, 1)
 
 
-def fleet_context(pid: str, suffix: str, rasters: bool = True, r: pd.Series = None, dp: pd.DataFrame = None, rd: str = None,
+def fleet_context(pid: str, method: str, rasters: bool = True, r: pd.Series = None, dp: pd.DataFrame = None, rd: str = None,
                   osm: dict = None) -> dict:
     """Everything the report and the dashboard need of one fleet park: register row, measurement (windows, groups,
     arrays, park dict, source rows) and, with rasters=True, the analysis grid (bounds in the state UTM zone, H, inside),
     the rasters of the chosen source (hag, dgm, surf), the DOP20 mosaic and the orthophoto rows.
-    C["kind"]: "register" (no fetcher / no run), "failed" (no measurement files) or "measured".
+    C["kind"]: "register" (no fetcher / not estimated), "failed" (no measurement files) or "measured".
     r, dp, rd, osm replace the selection row, the source rows, the measurement directory and the Overpass answers (parks
     outside the selection, e.g. replacement candidates of screen_replacements.py)."""
-    import geometry_release_states as R
+    from parks_pv import geometry_estimate as R
     from parks_pv import paths
     from pyproj import Transformer
     from shapely.geometry import Point
@@ -450,12 +449,14 @@ def fleet_context(pid: str, suffix: str, rasters: bool = True, r: pd.Series = No
     r["park_id"] = pid                                            # fetch_margin and municipality use r.park_id
     state = r.bundesland
     C = dict(pid=pid, r=r, state=state)
-    rd = rd or os.path.join(REPO, "results", "pv", f"geodata_release{suffix}", pid)
+    from parks_pv import geometry_store as GSt
+    rd = rd or GSt.park_dir(method, pid)
     if dp is None:
-        csv = os.path.join(paths.DATA_DIR, f"geodata_release_{state.lower()}{suffix}.csv")
-        if state not in R.STATE or not os.path.exists(csv):
-            return dict(C, kind="register", note="kein Abrufer für das Land / kein Lauf")
-        df = pd.read_csv(csv, dtype={"pv": str}); dp = df[df.pv == pid]
+        if state not in R.STATE or not GSt.has(method, pid):
+            return dict(C, kind="register", note=f"kein Abrufer für das Land / nicht geschätzt ({method})")
+        dp = GSt.sources(method, pid)
+    if "rules" in dp and dp.rules.notna().any():                # rules of the estimate (outline rules R12/R19)
+        R.use_rules(dp.rules.dropna().iloc[0])
     best = dp[dp.best] if "best" in dp else dp.iloc[:0]
     pick = best if len(best) else dp.sort_values("source_rank") if len(dp) else dp
     if not len(pick) or pd.isna(pick.source.iloc[0]) or not os.path.exists(os.path.join(rd, f"windows_{pick.source.iloc[0]}.csv")):
@@ -513,19 +514,17 @@ def fleet_context(pid: str, suffix: str, rasters: bool = True, r: pd.Series = No
     return C
 
 
-def generator_arrays(pid: str, state: str, suffix: str, arrays_to: str) -> pd.DataFrame:
-    """Generator arrays of a park from geodata_release_<state><suffix><arrays_to>_arrays.csv when they hold register parts (R13), else None."""
-    from parks_pv import paths
-    f = os.path.join(paths.DATA_DIR, f"geodata_release_{state.lower()}{suffix}{arrays_to}_arrays.csv")
-    if not arrays_to or not os.path.exists(f):
+def generator_arrays(pid: str, method: str) -> pd.DataFrame:
+    """Generator arrays of a park in the store when they hold register parts (R13 c5_mixed), else None."""
+    from parks_pv import geometry_store as GSt
+    if not GSt.has(method, pid):
         return None
-    a = pd.read_csv(f, dtype={"park_id": str})
-    a = a[a.park_id == pid]
+    a = GSt.arrays(method, pid)
     return a if (a.note.fillna("") == "c5_mixed").any() else None
 
 
-def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False, arrays_to: str = None, **ctx) -> dict:
-    C = fleet_context(pid, suffix, **ctx)
+def fleet_report(pid: str, method: str, out_dir: str, synthesis: bool = False, **ctx) -> dict:
+    C = fleet_context(pid, method, **ctx)
     r, state = C["r"], C["state"]
     row = dict(park_id=pid, state=state, dc_kwp=float(r.dc_kwp), year=int(r.year), orientation_class=r.orientation_class, tilt_class=r.tilt_class)
     if C["kind"] != "measured":
@@ -553,7 +552,7 @@ def fleet_report(pid: str, suffix: str, out_dir: str, synthesis: bool = False, a
     if synthesis:
         import synthesis_report as SR
         extra = SR.section(pid, start=12)
-    gen = generator_arrays(pid, state, suffix, arrays_to)
+    gen = generator_arrays(pid, method) if not ctx.get("rd") else None
     html_ = build_page(P, win, G, arrays, park, head, compare, src_rows, extra, gen)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{pid}.html")
@@ -661,24 +660,27 @@ def main():
     ap.add_argument("--selection", default="pv_park_selection_v2.csv", help="screen mode: selection file in FL/mastr of the replaced parks")
     ap.add_argument("--parks", default=None)
     ap.add_argument("--pv", action="append", default=None)
-    ap.add_argument("--suffix", default="_t2j")
+    ap.add_argument("--config", default=os.path.join(REPO, "configs", "runs", "parks_pv_v4.yaml"), help="fleet mode: selection and geometry.method")
+    ap.add_argument("--method", default=None, help="fleet mode: store version (default: geometry.method of the run config)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--synthesis", action="store_true", help="append the synthesis part (scripts/pv/synthesis_report.py) of $PV_SYNTH_RELEASE (default parks_pv_v2)")
-    ap.add_argument("--rules", default="", help="rule switches of the run (geometry_release_states.py --rules), needed for the outline of R12 runs")
-    ap.add_argument("--arrays-to", default="", help="fleet mode: generator arrays of geometry_release_states.py --arrays-only --arrays-to (R13 register parts shown)")
+    ap.add_argument("--rules", default="", help="rule switches of the run (scripts/pv/estimate_geometry.py --rules), needed for the outline of R12 runs")
     a = ap.parse_args()
     if a.rules:
-        import geometry_release_states as R
+        from parks_pv import geometry_estimate as R
         R.set_rules(a.rules)
     rows = []
     if a.mode == "fleet":
-        from parks_pv import paths
+        from parks_pv import run_config, stages
+        rc = run_config.load(a.config)
+        run_config.apply(rc)
+        method = a.method or rc["geometry"]["method"]
         out = a.out or OUT_FLEET
-        sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str})
+        sel = stages.load_selection(rc)
         ids = a.parks.split(",") if a.parks else sel.park_id.tolist()
         for pid in ids:
             try:
-                rows.append(fleet_report(pid, a.suffix, out, a.synthesis, a.arrays_to))
+                rows.append(fleet_report(pid, method, out, a.synthesis))
             except Exception as ex:
                 import traceback
                 traceback.print_exc()
@@ -691,7 +693,7 @@ def main():
             old = pd.read_csv(os.path.join(out, "index.csv"), dtype={"park_id": str})
             new = pd.DataFrame(rows)
             rows = pd.concat([old[~old.park_id.isin(new.park_id)], new]).set_index("park_id").reindex(sel.park_id).reset_index().to_dict("records")
-        index(rows, out, f"Geometrie der Flotte (Fenstermethode, {a.suffix.strip('_')})")   # --parks into a new directory: index of these parks
+        index(rows, out, f"Geometrie der Flotte (Fenstermethode, {method})")   # --parks into a new directory: index of these parks
     elif a.mode == "screen":
         rows = screen_reports(a.screen, a.out or os.path.join(PAPER, "results", "geo_review_" + pd.Timestamp.now().strftime("%Y-%m-%d"), "replacements"), a.selection)
     else:

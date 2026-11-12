@@ -1,5 +1,5 @@
 """Soiling: HSU deposition/rain-wash model (pvlib) as default, and the repaired legacy
-erf-deposition model of generate_pv.py (which returned power * loss instead of power * (1 - loss))."""
+erf-deposition model of the 2025 station script (which returned power * loss instead of power * (1 - loss))."""
 
 import numpy as np
 import pandas as pd

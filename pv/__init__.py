@@ -1,6 +1,6 @@
 """Synthetic PV power: modular chain (driver -> transposition -> module -> inverter -> losses).
 
-Replaces the monolithic generate_pv.py. Modules:
+Physics library of the PV chain (entry point of the park release: generate_pv.py). Modules:
   timebase       timestamp conventions, hourly means, solar position at interval centre
   drivers        irradiance/met drivers: imputed DWD station, CAMS, ERA5 (DB)
   transposition  DNI closure, POA per (tilt, azimuth), horizon shading, IAM

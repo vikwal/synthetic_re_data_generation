@@ -44,3 +44,6 @@ results/pv/
 results/round2/
 results/round3/
 results/quantitative/scores_round2_*.csv
+
+# local settings (settings.py), template configs/settings.example.yaml
+configs/settings.yaml

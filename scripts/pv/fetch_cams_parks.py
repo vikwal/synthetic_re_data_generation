@@ -3,7 +3,7 @@
 per point, resumable, capped per run to respect the daily quota.
 
     synthre/bin/python scripts/pv/fetch_cams_parks.py --selection ~/Work/FL_Contribution/data/mastr/pv_park_selection_v1.csv \
-        --out ${DATA_ROOT}/synthetic/solar/parks_pv_v1/inputs --max-requests 450 [--threads 3]
+        --out <pv_shared_dir>/inputs --max-requests 450 [--threads 3]
 """
 import argparse
 import os
@@ -15,13 +15,14 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from pv import cams_points as CP  # noqa: E402
 
-ROOT = os.environ.get("DATA_ROOT", "/mnt/lambda1/nvme1")
+import settings  # noqa: E402
+ROOT = settings.get("data_root")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selection", default=os.path.expanduser("~/Work/FL_Contribution/data/mastr/pv_park_selection_v1.csv"))
-    ap.add_argument("--out", default=f"{ROOT}/synthetic/solar/parks_pv_v1/inputs")
+    ap.add_argument("--out", default=f"{settings.get('pv_shared_dir')}/inputs")
     ap.add_argument("--start", default="2023-07-01")
     ap.add_argument("--end", default="2026-09-30")
     ap.add_argument("--tag", default="2023_2026")

@@ -1,6 +1,6 @@
 """PV degradation by technology era: light-induced loss, linear wear-out, late acceleration,
 plus inverter outages. Replaces the wind-style Weibull/power-curve-stretch model of
-generate_pv.py (which applied 5 %/a to every station).
+station script of 2025 (which applied 5 %/a to every station).
 
 Sources (rates are medians; the report carries the full table and citations):
   Jordan & Kurtz (2013) Prog. Photovolt.: median 0.5 %/a, mean 0.8 %/a, all technologies

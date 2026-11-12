@@ -4,7 +4,7 @@ The dashboard never edits source tables; it appends entries to overrides_pv.json
     {"park_id" | "turbine_id": ..., ["park_id": ... for wind,] "field": ..., "old": ..., "new": ..., "timestamp": ..., "comment": ...}
 The latest entry per (record, field) wins. The pipelines apply them only when asked to, so a release stays reproducible:
 
-    PV   PV_OVERRIDES=<path to overrides_pv.json>     -> scripts/pv/run_parks_pv_v1.load_selection (also used by v2)
+    PV   run config key `overrides` (generate_pv.py) -> parks_pv.stages.load_selection
     Wind WIND_OVERRIDES=<path to overrides_wind.json> -> parks.layout.build_turbine_table (park_layouts columns)
 
 Field names are those of the tables the hooks see (selection columns for PV, park_layouts columns for wind), which are

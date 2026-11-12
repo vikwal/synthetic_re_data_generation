@@ -1,37 +1,27 @@
-#!/usr/bin/env python
-"""Measured module geometry of the release parks (parks_pv_v1 selection) from open state geodata by the window
-method (pv.geodata_windows, 2026-10-22; the block method of 2026-10-19 is geometry_release_states_legacy.py).
+"""Angle estimation of a park: measured module geometry from open state geodata by the window method
+(pv.geodata_windows, 2026-10-22). Library of scripts/pv/estimate_geometry.py and of stage `geometry` of generate_pv.py;
+results are kept per park in parks_pv.geometry_store (estimated once, reused by every later release).
 
 Per park: tiles of the state (DOP20, DGM1, surface sources: LAZ point cloud, laser DOM1, image bDOM / DOM20) ->
 footprint = OSM solar plants (ways and relations) within 400 m of the register point, else a 300-m box grown while
 accepted windows touch its edge (E4b) -> per surface source: height above ground -> windows -> groups -> arrays and
 park acceptance (E4d) -> comparison of the main group with the MaStR orientation and tilt classes (or_agree,
-tilt_agree, tilt_agree_tol as before). Arrays for the generator per park: the measured arrays of the best accepted
-source (laser first, survey after commissioning or undated), else the nominal mounts of parks_pv_v1 (pv_arrays.csv)
-re-terrained on the state DGM1 (parks_pv.geometry.terrain_arrays_grid), else the v1 arrays as they are.
+tilt_agree, tilt_agree_tol) -> best accepted source (laser first, survey after commissioning or undated).
 
-    synthre/bin/python scripts/pv/geometry_release_states.py --state Bayern [--parks ID,ID] [--fetch-only] [--suffix _v2]
-    synthre/bin/python scripts/pv/geometry_release_states.py --state Bayern --reevaluate   # classes/gates from the CSV
-Outputs (never overwritten; a different --suffix makes a new version):
-    data/parks_pv_v1/geodata_release_<state><suffix>.csv          one row per park and surface source
-    data/parks_pv_v1/geodata_release_<state><suffix>_arrays.csv   generator arrays per park (measured or fallback)
-    results/pv/geodata_release<suffix>/<park>/{windows,groups,arrays}_<source>.csv, park_<source>.json, windows_<source>.png
-Tiles are cached under ${DATA_ROOT}/synthetic/solar/parks_pv_v1/inputs/geodata/."""
-import argparse
+Generator arrays of a park (park_arrays): the measured arrays of the best source, else the register arrays of the
+release baseline re-terrained on the state DGM1 (fallback_arrays), else the baseline arrays as they are.
+Tiles are cached under <pv_shared_dir>/inputs/geodata/."""
 import json
 import os
-import sys
 import traceback
 
 import numpy as np
 import pandas as pd
 from shapely.geometry import MultiLineString, Point
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, REPO)
-from parks_pv import geometry as PG, paths  # noqa: E402
-from pv import geodata_bayern as GB, geodata_states as GS, geodata_tiles as GT, geodata_windows as GW, site_inputs as SI  # noqa: E402
-from pv.plausibility import orientation_class, tilt_class  # noqa: E402
+from parks_pv import geometry as PG, params, paths
+from pv import geodata_bayern as GB, geodata_states as GS, geodata_tiles as GT, geodata_windows as GW, site_inputs as SI
+from pv.plausibility import orientation_class, tilt_class
 
 GEO = os.path.join(paths.INPUT_DIR, "geodata")
 STATE = {"Niedersachsen": ("ni", 32), "Brandenburg": ("bb", 33), "Mecklenburg-Vorpommern": ("mv", 33), "Bayern": ("by", 32),
@@ -121,7 +111,7 @@ def unit_points(r, to_m) -> list:
     (SEL961760100570: units 0.19 and 0.63 km from it)."""
     global _UNIT_XY
     if "_UNIT_XY" not in globals():
-        _UNIT_XY = pd.read_parquet(os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet"),
+        _UNIT_XY = pd.read_parquet(paths.mastr_file("units"),
                                    columns=["EinheitMastrNummer", "Breitengrad", "Laengengrad"]).dropna().set_index("EinheitMastrNummer")
     u = _UNIT_XY.reindex(str(r.unit_ids).split(";")).dropna()
     return [Point(*to_m(float(lo), float(la))) for la, lo in zip(u.Breitengrad, u.Laengengrad)]
@@ -203,7 +193,7 @@ def municipality(unit_ids: str) -> str:
     """Municipality of the park's MaStR units (most frequent), for the Hessen packages."""
     global _UNITS
     if "_UNITS" not in globals():
-        _UNITS = pd.read_parquet(os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet"), columns=["EinheitMastrNummer", "Gemeinde"]).set_index("EinheitMastrNummer")
+        _UNITS = pd.read_parquet(paths.mastr_file("units"), columns=["EinheitMastrNummer", "Gemeinde"]).set_index("EinheitMastrNummer")
     g = _UNITS.reindex(str(unit_ids).split(";")).Gemeinde.dropna()
     return g.mode().iloc[0] if len(g) else None
 
@@ -361,30 +351,11 @@ def evaluate(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-ADDED_RELEASES = ("parks_pv_v3",)               # newest first: a park added in both keeps the newest tables
 
-
-def added_v1(name: str) -> pd.DataFrame:
-    """added_v1_<name>.csv of the releases that replace v1 parks (run_parks_pv_v2.py added), one park from one release."""
-    out = []
-    for rel in ADDED_RELEASES:
-        f = os.path.join(REPO, "data", rel, f"added_v1_{name}.csv")
-        if os.path.exists(f):
-            d = pd.read_csv(f, dtype={"park_id": str})
-            out.append(d[~d.park_id.isin(set().union(*[set(o.park_id) for o in out]))])
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["park_id"])
-
-
-def v1_arrays() -> pd.DataFrame:
-    """parks_pv_v1 arrays plus the v1-equivalent arrays of parks added in selections v2 and v3."""
-    a = pd.read_csv(os.path.join(REPO, "data", "parks_pv_v1", "pv_arrays.csv"), dtype={"park_id": str})
-    return pd.concat([a, added_v1("arrays")], ignore_index=True)
-
-
-def v1_nominal(arrays_v1: pd.DataFrame, park_id: str) -> list:
-    """Nominal mounts of parks_pv_v1 (pv_arrays.csv): one entry per nominal array (array_id prefix before the
-    terrain cluster suffix), share summed, mount angles relative to the ground."""
-    a = arrays_v1[arrays_v1.park_id == park_id]
+def nominal_mounts(base_arrays: pd.DataFrame, park_id: str) -> list:
+    """Nominal mounts of the register geometry (baseline_arrays.csv): one entry per nominal array (array_id prefix
+    before the terrain cluster suffix), share summed, mount angles relative to the ground."""
+    a = base_arrays[base_arrays.park_id == park_id]
     out = []
     for nom, g in a.groupby(a.array_id.str.rsplit("_", n=1).str[0], sort=False):
         out.append(dict(name=nom, tilt=float(g.mount_tilt.iloc[0]), azimuth=float(g.mount_azimuth.iloc[0]), share=float(g.share.sum()),
@@ -392,25 +363,25 @@ def v1_nominal(arrays_v1: pd.DataFrame, park_id: str) -> list:
     return out
 
 
-def fallback_arrays(r, tiles: dict, zone: int, arrays_v1: pd.DataFrame, osm: dict) -> tuple:
-    """(arrays, source) of a park without an accepted measurement: the nominal mounts of parks_pv_v1 re-terrained on the
-    state DGM1 over the v1 footprint (parks_pv.geometry.footprint: OSM plant within 2.5 km, else the MaStR area as a
-    disc), so that v1 and v2 differ only in the terrain model (GLO-30 -> DGM1); without DGM1 the v1 arrays unchanged."""
-    nominal = v1_nominal(arrays_v1, r.park_id)
-    if nominal and tiles.get("dgm1"):
-        par = pd.concat([pd.read_csv(os.path.join(REPO, "data", "parks_pv_v1", "park_params.csv"), dtype={"park_id": str}), added_v1("params")]
-                        ).set_index("park_id").loc[r.park_id]
+def fallback_arrays(r, tiles: dict, zone: int, base_arrays: pd.DataFrame, base_params: pd.DataFrame, osm: dict) -> tuple:
+    """(arrays, source) of a park without an accepted measurement: the nominal register mounts of the baseline
+    re-terrained on the state DGM1 over the baseline footprint (parks_pv.geometry.footprint: OSM plant within 2.5 km,
+    else the MaStR area as a disc), so that baseline and fallback differ only in the terrain model (GLO-30 -> DGM1);
+    without DGM1 the baseline arrays unchanged."""
+    nominal = nominal_mounts(base_arrays, r.park_id)
+    if nominal and tiles.get("dgm1") and zone:
+        par = base_params.set_index("park_id").loc[r.park_id]
         area_fb = float(r.area_ha) if pd.notna(r.area_ha) and r.area_ha > 0 else float(par.kwp_dc) / float(par.kwp_per_ha)
         poly_ll, _ = PG.footprint(r, (osm.get(r.park_id) or {}).get("elements", []), area_fb)
         g = GW.analysis_grid(GT.to_utm(poly_ll, zone), GW.RES, inner_m=0.0)
-        m_ = GT.mosaic(tiles["dgm1"], g["bounds"], GW.RES, zone)           # None when no DGM1 tile touches the v1 footprint
+        m_ = GT.mosaic(tiles["dgm1"], g["bounds"], GW.RES, zone)           # None when no DGM1 tile touches the footprint
         dgm = m_[0].astype(np.float32) if m_ is not None else None
         if dgm is not None and np.isfinite(dgm[g["inside"]]).mean() > 0.5:
             arr_, _ = PG.terrain_arrays_grid(nominal, dgm, g["inside"], GW.RES, GT.meridian_convergence(float(r.lat), float(r.lon), zone))
-            return arr_, "register_v1+dgm1"
-    a = arrays_v1[arrays_v1.park_id == r.park_id]
+            return arr_, "register+dgm1"
+    a = base_arrays[base_arrays.park_id == r.park_id]
     return [dict(name=x.array_id, tilt=x.tilt, azimuth=x.azimuth, share=x.share, mount_tilt=x.mount_tilt, mount_azimuth=x.mount_azimuth)
-            for x in a.itertuples()], "register_v1"
+            for x in a.itertuples()], "register"
 
 
 def _az_dist(a: float, b: float) -> float:
@@ -422,7 +393,7 @@ def register_classes(r) -> dict:
     unit's kWp share, or half of it each for Haupt- and Nebenausrichtung when the unit has one (MaStR gives no split);
     north classes are skipped (register noise on ground parks)."""
     from pv.plausibility import AZ_CENTRE
-    u = pd.read_parquet(os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet"),
+    u = pd.read_parquet(paths.mastr_file("units"),
                         columns=["EinheitMastrNummer", "Bruttoleistung", "Hauptausrichtung", "HauptausrichtungNeigungswinkel", "Nebenausrichtung",
                                  "NebenausrichtungNeigungswinkel"]).set_index("EinheitMastrNummer").reindex(str(r.unit_ids).split(";")).dropna(subset=["Bruttoleistung"])
     ok = lambda c: c == "Ost-West" or c in AZ_CENTRE and not str(c).startswith("Nord")
@@ -512,31 +483,43 @@ def mixed_register_arrays(r, measured: list) -> list:
     return out
 
 
-def park_arrays(r, df_park: pd.DataFrame, outs: dict, arrays_v1: pd.DataFrame, tiles: dict = None, zone: int = None, osm: dict = None) -> list:
-    """Generator arrays of one park: measured (best accepted source, read from the stored arrays CSV of the park) or
-    the fallback above."""
-    best = df_park[df_park.best]
-    if len(best):
-        src = best.source.iloc[0]
-        A = outs[src]["arrays"] if src in outs else pd.read_csv(os.path.join(REPO, "results", "pv", f"geodata_release{SUFFIX[0]}", r.park_id, f"arrays_{src}.csv"))
-        rows = [dict(park_id=r.park_id, array_id=f"g{int(a.group)}_{k}", tilt=round(a.tilt, 2), azimuth=round(a.azimuth, 2), share=round(a.share, 5),
-                     source=f"windows:{src}", az_source=a.az_source, note=a.note if pd.notna(a.note) else "", mount_tilt=np.nan, mount_azimuth=np.nan)
-                for k, a in enumerate(A.itertuples())]
-        if RULES["c5_mixed"] and getattr(r, "cls", None) == "C5_multi":
-            extra = mixed_register_arrays(r, rows)
-            s_reg = sum(x["share"] for x in extra)
-            for x in rows:
-                x["share"] = round(x["share"] * (1.0 - s_reg), 5)
-            rows += [dict(park_id=r.park_id, array_id=x["name"], tilt=round(x["tilt"], 2), azimuth=round(x["azimuth"], 2), share=round(x["share"], 5),
-                          source="register_units", az_source="register", note="c5_mixed", mount_tilt=np.nan, mount_azimuth=np.nan) for x in extra]
-        return rows
-    arr_, src = fallback_arrays(r, tiles or {}, zone, arrays_v1, osm or {})
+def measured_arrays(r, df_park: pd.DataFrame, outs: dict = None, park_dir: str = None) -> list:
+    """Generator array rows of the best accepted source of one park ([] when none): from the window result in memory
+    (outs) or the stored arrays_<source>.csv of the park directory."""
+    best = df_park[df_park.best.astype(bool)] if "best" in df_park and len(df_park) else df_park.iloc[:0]
+    if not len(best):
+        return []
+    src = best.source.iloc[0]
+    A = outs[src]["arrays"] if outs and src in outs else pd.read_csv(os.path.join(park_dir, f"arrays_{src}.csv"))
+    rows = [dict(park_id=r.park_id, array_id=f"g{int(a.group)}_{k}", tilt=round(a.tilt, 2), azimuth=round(a.azimuth, 2), share=round(a.share, 5),
+                 source=f"windows:{src}", az_source=a.az_source, note=a.note if pd.notna(a.note) else "", mount_tilt=np.nan, mount_azimuth=np.nan)
+            for k, a in enumerate(A.itertuples())]
+    if RULES["c5_mixed"] and getattr(r, "cls", None) == "C5_multi":
+        extra = mixed_register_arrays(r, rows)
+        s_reg = sum(x["share"] for x in extra)
+        for x in rows:
+            x["share"] = round(x["share"] * (1.0 - s_reg), 5)
+        rows += [dict(park_id=r.park_id, array_id=x["name"], tilt=round(x["tilt"], 2), azimuth=round(x["azimuth"], 2), share=round(x["share"], 5),
+                      source="register_units", az_source="register", note="c5_mixed", mount_tilt=np.nan, mount_azimuth=np.nan) for x in extra]
+    return rows
+
+
+def register_rows(r, arrays: list, source: str) -> list:
+    """Generator array rows of the register fallback (fallback_arrays)."""
     return [dict(park_id=r.park_id, array_id=a["name"], tilt=round(a["tilt"], 2), azimuth=round(a["azimuth"], 2), share=round(a["share"], 5),
-                 source=src, az_source="register", note="", mount_tilt=round(a.get("mount_tilt", np.nan), 2), mount_azimuth=round(a.get("mount_azimuth", np.nan), 2))
-            for a in arr_]
+                 source=source, az_source="register", note="", mount_tilt=round(a.get("mount_tilt", np.nan), 2),
+                 mount_azimuth=round(a.get("mount_azimuth", np.nan), 2)) for a in arrays]
 
 
-SUFFIX = ["_t2j"]
+def park_tiles(r, osm: dict) -> tuple:
+    """(tiles, zone) of one park; ({}, None) for a state without a fetcher."""
+    if r.bundesland not in STATE:
+        return {}, None
+    zone = STATE[r.bundesland][1]
+    tiles = fetch_tiles(r.bundesland, float(r.lat), float(r.lon), int(r.year), r.landkreis,
+                        (municipality(r.unit_ids) if params.has_units(r) else r.gemeinde) if r.bundesland == "Hessen" else None,
+                        margin_m=fetch_margin(r, osm, zone))
+    return tiles, zone
 
 
 def set_rules(spec: str) -> str:
@@ -548,6 +531,38 @@ def set_rules(spec: str) -> str:
             raise SystemExit(f"unknown rule {name!r}: {sorted(GW.RULES) + sorted(RULES)}")
         d[name] = on
     return active_rules()
+
+
+# rule set of the production estimates (methods t2v, w2a, v4); a new method starts from it (estimate_geometry.py --rules
+# switches single rules on or off)
+PRODUCTION_RULES = ("box_cap box_tab_near box_dir auto_outline ew_one_flank sections contrast_ew centreline tent_pair min2_windows axis_tol5 "
+                    "ni_bdom osm_fallback gen_at_point az_known")
+
+
+def method_rules(method: str, changes: str = "", extend: bool = False) -> str:
+    """Set the rules of a method: an existing method keeps its stored rule set (changes must not alter it); a new one
+    gets PRODUCTION_RULES with `changes` applied and is recorded in the store. Returns the active rule text."""
+    from parks_pv import geometry_store as GSt
+    global EXTEND_ON
+    spec = GSt.method_spec(method)
+    use_rules(spec["rules"] if spec else PRODUCTION_RULES)
+    EXTEND_ON = bool(spec["extend"]) if spec else extend
+    before = active_rules()
+    set_rules(changes)
+    if spec:
+        if active_rules() != before or (extend and not spec["extend"]):
+            raise SystemExit(f"method {method} has the rule set {spec['rules']!r} (extend {spec['extend']}); other rules need a new method")
+    else:
+        GSt.write_method_spec(method, active_rules(), EXTEND_ON)
+    return active_rules()
+
+
+def use_rules(active: str) -> None:
+    """Set the rules exactly to a stored rule text (column `rules` of sources.csv): listed names on, all others off."""
+    on = set(str(active).split())
+    for d in (GW.RULES, RULES):
+        for k in d:
+            d[k] = k in on
 
 
 def active_rules() -> str:
@@ -574,97 +589,49 @@ def load_osm(sel: pd.DataFrame) -> dict:
     return SI.ensure_osm(sel, os.path.join(d, "parks_osm.json"), os.path.join(d, "pvgis_horizon.json"))
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--state", default="Bayern", choices=list(STATE))
-    ap.add_argument("--parks", default=None, help="comma-separated park ids (default: all of the state)")
-    ap.add_argument("--fetch-only", action="store_true")
-    ap.add_argument("--suffix", default="_t2j")
-    ap.add_argument("--reevaluate", action="store_true", help="recompute classes and the best source from the stored CSV only")
-    ap.add_argument("--arrays-only", action="store_true", help="recompute <state><suffix>_arrays.csv from the stored run (overwrites it)")
-    ap.add_argument("--arrays-to", default=None, help="with --arrays-only: write <state><suffix><arrays-to>_arrays.csv instead of overwriting")
-    ap.add_argument("--extend", action="store_true", help="variant c (probe): extend low-coverage OSM outlines")
-    ap.add_argument("--append", action="store_true", help="add the --parks to an existing run of this suffix (rows of these parks replaced)")
-    ap.add_argument("--rules", default="", help="comma list of rule switches (GW.RULES, RULES): name = on, -name = off")
-    a = ap.parse_args()
-    global EXTEND_ON
-    EXTEND_ON = a.extend
-    set_rules(a.rules)
-    code, zone = STATE[a.state]
-    out_csv = os.path.join(paths.DATA_DIR, f"geodata_release_{a.state.lower()}{a.suffix}.csv")
-    arr_csv = out_csv.replace(".csv", "_arrays.csv")
-    if a.reevaluate:
-        raw = pd.read_csv(out_csv)
-        df = evaluate(raw[[c for c in raw.columns if c not in DERIVED]])
-        df.to_csv(out_csv, index=False)
-        summary(df, a.state)
-        return
-    SUFFIX[0] = a.suffix
-    if a.arrays_only:                                         # recompute the generator arrays from the stored run (cached tiles), measurement unchanged
-        df = pd.read_csv(out_csv, dtype={"pv": str})
-        sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str}); sel = sel[sel.bundesland == a.state]
-        osm = load_osm(sel)
-        arrays_v1 = v1_arrays()
-        rows_a = []
-        for r in sel.itertuples():
-            try:
-                tiles = fetch_tiles(a.state, float(r.lat), float(r.lon), int(r.year), r.landkreis, municipality(r.unit_ids) if a.state == "Hessen" else None,
-                                    margin_m=fetch_margin(r, osm, zone))
-            except Exception as ex:
-                print("  tiles", r.park_id, type(ex).__name__, flush=True)
-                tiles = {}
-            rows_a += park_arrays(r, df[df.pv == r.park_id], {}, arrays_v1, tiles, zone, osm)
-        if a.arrays_to:
-            arr_csv = out_csv.replace(".csv", f"{a.arrays_to}_arrays.csv")
-        pd.DataFrame(rows_a).to_csv(arr_csv, index=False)
-        print("written", arr_csv, pd.DataFrame(rows_a).groupby("park_id").source.first().value_counts().to_dict())
-        return
-    if not a.fetch_only and not a.append and (os.path.exists(out_csv) or os.path.exists(arr_csv)):
-        raise SystemExit(f"{out_csv} exists - results are versioned, choose another --suffix")
-    sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str})
-    sel = sel[sel.bundesland == a.state]
-    if a.parks:
-        sel = sel[sel.park_id.isin(a.parks.split(","))]
-    osm = load_osm(sel)
-    arrays_v1 = v1_arrays()
-    outd_root = os.path.join(REPO, "results", "pv", f"geodata_release{a.suffix}")
-    rows, arr_rows = [], []
-    for r in sel.itertuples():
-        print(f"== {r.park_id} {a.state} {r.dc_kwp:.0f} kWp {r.year} {r.orientation_class} / {r.tilt_class}", flush=True)
-        tiles = {}
+def estimate_park(r, osm: dict, outd: str) -> tuple:
+    """Angle estimation of one selection row: (evaluated rows per surface source, {source: window result}, tiles, zone).
+    Window outputs go to outd. A state without a fetcher gives one row with status no_fetcher; errors one row failed."""
+    if r.bundesland not in STATE:
+        o, outs, tiles, zone = [dict(pv=r.park_id, source=None, status="no_fetcher", status_reason=f"no geodata fetcher for {r.bundesland}")], {}, {}, None
+    else:
+        tiles, zone = {}, STATE[r.bundesland][1]
         try:
-            margin = fetch_margin(r, osm, zone)
-            tiles = fetch_tiles(a.state, float(r.lat), float(r.lon), int(r.year), r.landkreis, municipality(r.unit_ids) if a.state == "Hessen" else None,
-                                margin_m=margin)
-            if a.fetch_only:
-                print("  tiles:", {k: len(v) for k, v in tiles.items()}, flush=True)
-                continue
-            o, outs, _ = measure(r, tiles, osm, zone, os.path.join(outd_root, r.park_id))
+            tiles, zone = park_tiles(r, osm)
+            o, outs, _ = measure(r, tiles, osm, zone, outd)
         except Exception as e:
             traceback.print_exc()
             o, outs = [dict(pv=r.park_id, source=None, status="failed", status_reason=f"{type(e).__name__}: {str(e)[:100]}")], {}
-        for x in o:
-            x.update(state_code=code, orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp), year_built=int(r.year),
-                     rules=active_rules())
-        dfp = evaluate(pd.DataFrame(o))
-        arr_rows += park_arrays(r, dfp, outs, arrays_v1, tiles, zone, osm)
-        rows += o
-        print("  ", [(x.get("source"), x.get("status"), x.get("n_ok"), round(x.get("g0_tilt", np.nan), 1), x.get("arrays"), x.get("status_reason")) for x in o], flush=True)
-    if a.fetch_only:
-        return
-    df = evaluate(pd.DataFrame(rows))
-    ar = pd.DataFrame(arr_rows)
-    if a.append and os.path.exists(out_csv):                      # merge with the earlier rows of this suffix
-        old = pd.read_csv(out_csv, dtype={"pv": str})
-        df = evaluate(pd.concat([old[~old.pv.isin(df.pv)], df], ignore_index=True)[[c for c in old.columns.union(df.columns) if c not in DERIVED]])
-        old_a = pd.read_csv(arr_csv, dtype={"park_id": str})
-        ar = pd.concat([old_a[~old_a.park_id.isin(ar.park_id)], ar], ignore_index=True)
-    os.makedirs(paths.DATA_DIR, exist_ok=True)
-    df.to_csv(out_csv, index=False)
-    ar.to_csv(arr_csv, index=False)
-    summary(df, a.state)
-    print("written", out_csv, arr_csv)
+    code = STATE.get(r.bundesland, ("",))[0]
+    for x in o:
+        x.update(state_code=code, orientation_class_reg=r.orientation_class, tilt_class_reg=r.tilt_class, dc_kwp=float(r.dc_kwp), year_built=int(r.year),
+                 rules=active_rules())
+    return evaluate(pd.DataFrame(o)), outs, tiles, zone
 
 
-if __name__ == "__main__":
-    main()
+def estimate_parks(sel: pd.DataFrame, method: str, force: bool = False) -> list:
+    """Estimate the angles of the selection rows that have no estimate of `method` in the store yet (all with force)
+    and store them (parks_pv.geometry_store), with the rule set of the method (method_rules); returns the park ids."""
+    from parks_pv import geometry_store as GSt
+    todo = sel if force else sel[sel.park_id.isin(GSt.missing(method, sel.park_id))]
+    if not len(todo):
+        return []
+    if GSt.method_spec(method) is None or active_rules() != GSt.method_spec(method)["rules"]:
+        method_rules(method)                                      # rule set of the method (stage geometry: no changes)
+    osm = load_osm(todo)
+    done = []
+    for r in todo.itertuples():
+        print(f"== {r.park_id} {r.bundesland} {r.dc_kwp:.0f} kWp {r.year} {r.orientation_class} / {r.tilt_class}", flush=True)
+        d = GSt.park_dir(method, r.park_id)
+        if os.path.isdir(d):                                      # force: a new estimate replaces the park directory
+            import shutil
+            shutil.rmtree(d)
+        df, outs, _, _ = estimate_park(r, osm, d)
+        GSt.save(method, r.park_id, df, measured_arrays(r, df, outs),
+                 meta=dict(rules=active_rules(), extend=EXTEND_ON, state=r.bundesland,
+                           register={k: getattr(r, k, None) for k in ("lat", "lon", "dc_kwp", "year", "area_ha", "orientation_class", "tilt_class", "unit_ids")}))
+        from pv import geometry_overrides as GO
+        GO.apply_to_store(method, parks=[r.park_id])              # manual corrections of this park and method, if any
+        print("  ", [(x.source, x.status, x.get("n_ok"), round(x.get("g0_tilt", np.nan), 1), x.get("arrays")) for _, x in df.iterrows()], flush=True)
+        done.append(r.park_id)
+    return done

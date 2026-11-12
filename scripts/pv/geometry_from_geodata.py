@@ -4,7 +4,7 @@ tiles, row direction + pitch from the orthophoto, table planes from DOM/DGM (OSM
 segmentation), 1 m rasters, and a per-park summary with <= 4 arrays from k-means on the table normals.
 
     synthre/bin/python scripts/pv/geometry_from_geodata.py --state Bayern [--parks ID,ID]
-Outputs: ${DATA_ROOT}/synthetic/solar/parks_pv_v1/inputs/geodata/<state>/<park>_{tables.csv,rasters.tif},
+Outputs: <pv_shared_dir>/inputs/geodata/<state>/<park>_{tables.csv,rasters.tif},
          data/parks_pv_v1/geodata_geometry.csv (park summary), geodata_arrays.csv (measured arrays)."""
 import argparse
 import json

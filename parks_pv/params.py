@@ -1,7 +1,6 @@
 """Park parameters from the selection row (MaStR) and the chain config: PVWatts variant P of the Trianel
 benchmark (era gamma, physical IAM, ERA5 albedo, era aging), plus horizon and inter-row shading and the
 v1 loss level (E3: DC 5 %, AC 2 %, availability 0.98 ~ 0.93 of a loss-free chain)."""
-import os
 
 import numpy as np
 import pandas as pd
@@ -13,17 +12,30 @@ GAMMA = {"multi_si_early": -0.0045, "multi_si": -0.0042, "multi_perc": -0.0040, 
 WP_M2 = {"multi_si_early": 130, "multi_si": 150, "multi_perc": 165, "mono_perc": 195, "topcon_bifacial": 215}
 DENSITY_YEARS, DENSITY_KWP_HA = [2010, 2014, 2018, 2022, 2025], [450, 600, 850, 1150, 1250]
 LOSSES = {"dc": 0.05, "ac": 0.02, "availability": 0.98}
-UNITS = os.path.join(paths.MASTR_DIR, "solar_units_20250625.parquet")
 AGE_COHORTS = True       # 2026-11-05 (Viktor, on): arrays = geometry groups x age cohorts of the MaStR units; off = park-level era/aging
 COHORT_GAP_YEARS = 3     # units of one era further apart than this in commissioning year form their own cohort
 
 
-def commissioning_dates(sel: pd.DataFrame, units_path: str = UNITS) -> pd.DataFrame:
+def has_units(r) -> bool:
+    """True for a selection row with MaStR unit ids (spec parks without units carry their dates and cohorts)."""
+    u = getattr(r, "unit_ids", None)
+    return isinstance(u, str) and u.strip() not in ("", "nan")
+
+
+def commissioning_dates(sel: pd.DataFrame, units_path: str = None) -> pd.DataFrame:
     """Per park (index park_id) the MaStR commissioning date of the first unit (`commissioning_first`, aging starts here)
-    and of the last unit (`commissioning_full`: the park has its registered capacity, the release series starts here)."""
-    u = pd.read_parquet(units_path, columns=["EinheitMastrNummer", "Inbetriebnahmedatum"]).set_index("EinheitMastrNummer")
+    and of the last unit (`commissioning_full`: the park has its registered capacity, the release series starts here).
+    Spec parks without units: the columns commissioning_first / commissioning_full of the row."""
     rows = []
+    u = None
     for r in sel.itertuples():
+        if not has_units(r):
+            rows.append({"park_id": r.park_id, "commissioning_first": pd.Timestamp(r.commissioning_first).normalize(),
+                         "commissioning_full": pd.Timestamp(r.commissioning_full).normalize()})
+            continue
+        if u is None:
+            units_path = units_path or paths.mastr_file("units")
+            u = pd.read_parquet(units_path, columns=["EinheitMastrNummer", "Inbetriebnahmedatum"]).set_index("EinheitMastrNummer")
         d = pd.to_datetime(u["Inbetriebnahmedatum"].reindex(str(r.unit_ids).split(";")))
         if d.isna().any():
             raise ValueError(f"{r.park_id}: units without commissioning date in {units_path}")
@@ -53,12 +65,16 @@ def gcr_of(kwp_ha: float, era: str) -> float:
     return float(np.clip(kwp_ha * 1000.0 / 10000.0 / WP_M2[era], 0.2, 0.75))
 
 
-def age_cohorts(r, units_path: str = UNITS) -> list:
+def age_cohorts(r, units_path: str = None) -> list:
     """Age cohorts of a park from its MaStR units (r: selection row with unit_ids): units sorted by commissioning date,
     a new cohort starts when the technology era changes or the year lies more than COHORT_GAP_YEARS after the first
     year of the current cohort. Per cohort: kWp share (Bruttoleistung), first commissioning date, era, era gamma and
-    the gcr from the cohort units' MaStR area if every unit has one, else from the year table. One cohort = no split."""
+    the gcr from the cohort units' MaStR area if every unit has one, else from the year table. One cohort = no split.
+    Spec parks without units: the cohorts of the spec (column cohorts, JSON), one cohort each."""
     global _UNIT_TAB
+    if not has_units(r):
+        return spec_cohorts(r)
+    units_path = units_path or paths.mastr_file("units")
     if "_UNIT_TAB" not in globals() or _UNIT_TAB[0] != units_path:
         u = pd.read_parquet(units_path, columns=["EinheitMastrNummer", "Inbetriebnahmedatum", "Bruttoleistung", "InAnspruchGenommeneFlaeche"])
         _UNIT_TAB = (units_path, u.set_index("EinheitMastrNummer"))
@@ -82,6 +98,21 @@ def age_cohorts(r, units_path: str = UNITS) -> list:
             kwp_ha = float(np.interp(g["year"], DENSITY_YEARS, DENSITY_KWP_HA))
         out.append({"year": g["year"], "commissioning_date": f"{g['rows'][0].date:%Y-%m-%d}", "era": g["era"], "kwp": kwp,
                     "share": kwp / tot, "gamma_pdc": GAMMA[g["era"]], "gcr": gcr_of(kwp_ha, g["era"]), "n_units": len(g["rows"])})
+    return out
+
+
+def spec_cohorts(r) -> list:
+    """Age cohorts of a spec park (parks_pv.park_spec): [{commissioning, dc_kwp, area_ha}] in the column cohorts."""
+    import json
+    cs = json.loads(r.cohorts) if isinstance(getattr(r, "cohorts", None), str) and r.cohorts else []
+    tot = float(sum(c["dc_kwp"] for c in cs)) or 1.0
+    out = []
+    for c in cs:
+        y = pd.Timestamp(c["commissioning"]).year
+        era = modules.era_of(y)
+        kwp_ha = c["dc_kwp"] / c["area_ha"] if c.get("area_ha") else float(np.interp(y, DENSITY_YEARS, DENSITY_KWP_HA))
+        out.append({"year": y, "commissioning_date": f"{pd.Timestamp(c['commissioning']):%Y-%m-%d}", "era": era, "kwp": float(c["dc_kwp"]),
+                    "share": float(c["dc_kwp"]) / tot, "gamma_pdc": GAMMA[era], "gcr": gcr_of(kwp_ha, era), "n_units": 1})
     return out
 
 

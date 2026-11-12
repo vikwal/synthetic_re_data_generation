@@ -36,6 +36,29 @@ AZ_DEG = {"Nord": 0.0, "Nord-Ost": 45.0, "Ost": 90.0, "Süd-Ost": 135.0, "Süd":
           "Nord-West": 315.0}
 
 
+# Canonical labels of the catalogue ids that occur in the solar fields, frozen from the 2025-06-25 export. The export
+# format of 2025-10 relabelled some of them (e.g. 809 "20 - 40 Grad" -> "21 - 40 Grad", 852 "Freifläche" ->
+# "Freiflächensolaranlage") while keeping the ids; decoding through this table keeps the downstream vocabulary
+# (geometry.TILT_RANGE, plausibility classes, selection filters) independent of the export version.
+CANONICAL_CATALOGUE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mastr_catalogue_20250625.csv")
+# fields renamed by the 2025-10 export format: new name -> name used here
+FIELD_ALIASES = {"GroesseDerInAnspruchGenommenenFlaecheInHektar": "InAnspruchGenommeneFlaeche"}
+
+
+def canonical_catalogue() -> dict:
+    c = pd.read_csv(CANONICAL_CATALOGUE)
+    return dict(zip(c["id"].astype(int), c["label"]))
+
+
+def check_catalogue(kat: dict) -> dict:
+    """Ids whose label in this export differs from the canonical one (id: (canonical, export)); informational, the
+    canonical label is used. Raises only if a filter id is gone from the export."""
+    can = canonical_catalogue()
+    if ID_FREIFLAECHE not in kat:
+        raise ValueError(f"MaStR catalogue id {ID_FREIFLAECHE} (open ground) missing in this export")
+    return {k: (v, kat.get(k)) for k, v in can.items() if kat.get(k) != v}
+
+
 def load_catalogue(mastr_dir: str) -> dict:
     root = ET.parse(os.path.join(mastr_dir, "Katalogwerte.xml")).getroot()
     return {int(k.find("Id").text): k.find("Wert").text for k in root}
@@ -45,7 +68,7 @@ def _stream(path: str, tag: str, fields: list, keep) -> pd.DataFrame:
     rows = []
     for _, el in ET.iterparse(path, events=("end",)):
         if el.tag == tag:
-            d = {c.tag: c.text for c in el}
+            d = {FIELD_ALIASES.get(c.tag, c.tag): c.text for c in el}
             if keep(d):
                 rows.append({f: d.get(f) for f in fields})
             el.clear()
@@ -97,7 +120,7 @@ def parse_register(mastr_dir: str, min_kw: float = 100.0, workers: int = 12) -> 
     with ProcessPoolExecutor(workers) as ex:
         units = pd.concat(ex.map(parse_units_file, ufiles, [min_kw] * len(ufiles)), ignore_index=True)
         eeg = pd.concat(ex.map(parse_eeg_file, efiles), ignore_index=True)
-    kat = load_catalogue(mastr_dir)
+    kat = {**load_catalogue(mastr_dir), **canonical_catalogue()}
     units = decode_catalogue(units, kat)
     eeg = decode_catalogue(eeg, kat)
     for c in ("InstalliertePVLeistung", "InstallierteLeistung"):

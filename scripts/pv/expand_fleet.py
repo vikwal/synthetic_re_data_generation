@@ -7,7 +7,7 @@ regions come first and a second park of the same type next to an existing one co
 p_good (pool_vorpruefung_2026-11-05.md, mid estimate): acceptance rate of the cohort x 0.85 (review), x 0.5 without OSM
 plant (box), x 0.5 with an area or year flag, x 0.3 for C5 (both directions measured), 0 for BW 2021+ (no survey yet).
 Output: a selection CSV (format of pv_park_selection_v3, client X, kind expand) for PV_SELECTION of
-geometry_release_states.py, with the pick rank and p_good."""
+parks_pv.geometry_estimate, with the pick rank and p_good."""
 import argparse
 import os
 import sys

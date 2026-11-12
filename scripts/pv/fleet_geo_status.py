@@ -1,24 +1,21 @@
 #!/usr/bin/env python
-"""Fleet summary of the geometry measurement by the window method (2026-10-22): one row per release park with the
-chosen source, survey year, park acceptance, main group and register comparison, the arrays the generator gets, and
-the LaTeX fragment of the paper table (accepted measurements only). Reads the per-state outputs of
-scripts/pv/geometry_release_states.py (data/parks_pv_v1/geodata_release_<state><suffix>.csv and *_arrays.csv).
+"""Fleet summary of the angle estimation of a release: one row per park with the chosen source, survey year, park
+acceptance, main group and register comparison, the arrays the generator gets, and the LaTeX fragment of the paper
+table (accepted measurements only). Reads the estimation store (parks_pv.geometry_store, geometry.method of the run
+config) and the arrays of stage geometry (data/<release>/geometry_arrays.csv).
 
-    synthre/bin/python scripts/pv/fleet_geo_status.py [--suffix _v2] [--out ~/Work/pv_sim2real/results/geodata_release_<date>]
-Outputs (no coordinates): fleet_geo_status_v2.csv, all_sources_v2.csv, pv_arrays_geodata_v2.csv, tab_geofleet_parks.tex.
-States without a fetcher (BW, RP, SL, SH) and parks without a measurement keep the register geometry of parks_pv_v1."""
+    synthre/bin/python scripts/pv/fleet_geo_status.py --config configs/runs/parks_pv_v4.yaml [--out ~/Work/pv_sim2real/results/geodata_release_<date>]
+Outputs (no coordinates): fleet_geo_status_v2.csv, all_sources_v2.csv, pv_arrays_geodata_v2.csv, tab_geofleet_parks.tex."""
 import argparse
-import glob
 import os
 import sys
 
-import numpy as np
 import pandas as pd
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from parks_pv import paths  # noqa: E402
+from parks_pv import geometry_store as GSt, run_config, stages  # noqa: E402
 
 STATE_EN = {"Bayern": "Bavaria", "Niedersachsen": "Lower Saxony", "Mecklenburg-Vorpommern": "Mecklenburg-W. P.", "Brandenburg": "Brandenburg",
             "Nordrhein-Westfalen": "North Rhine-Westphalia", "Hessen": "Hesse", "Sachsen": "Saxony", "Thüringen": "Thuringia",
@@ -30,28 +27,25 @@ TILT_EN = {"< 20 Grad": "below 20", "20 - 40 Grad": "20 to 40", "40 - 60 Grad": 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--suffix", default="_t2j")
+    ap.add_argument("--config", required=True)
     ap.add_argument("--out", default=os.path.expanduser(f"~/Work/pv_sim2real/results/geodata_release_{pd.Timestamp.now():%Y-%m-%d}"))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    sel = pd.read_csv(paths.SELECTION, dtype={"park_id": str})
-    src = pd.concat([pd.read_csv(f, dtype={"pv": str}) for f in sorted(glob.glob(os.path.join(paths.DATA_DIR, f"geodata_release_*{a.suffix}.csv")))
-                     if not f.endswith("_arrays.csv")], ignore_index=True)
-    arr = pd.concat([pd.read_csv(f, dtype={"park_id": str}) for f in sorted(glob.glob(os.path.join(paths.DATA_DIR, f"geodata_release_*{a.suffix}_arrays.csv")))],
-                    ignore_index=True)
-    v1 = pd.read_csv(os.path.join(paths.DATA_DIR, "pv_arrays.csv"), dtype={"park_id": str})
+    rc = run_config.load(a.config)
+    run_config.apply(rc)
+    sel = stages.load_selection(rc)
+    src = GSt.all_sources(rc["geometry"]["method"], list(sel.park_id))
+    if not len(src):
+        src = pd.DataFrame(columns=["pv", "source", "status", "status_reason", "source_rank", "best"])
+    arr = pd.read_csv(stages.geometry_path(), dtype={"park_id": str})
     rows, arr_rows = [], []
     for r in sel.itertuples():
         s = src[src.pv == r.park_id]
         best = s[s.best.astype(bool)] if "best" in s and len(s) else s.iloc[:0]
         pick = best.iloc[0] if len(best) else (s.sort_values("source_rank").iloc[0] if len(s) and s.source.notna().any() else None)
         a_ = arr[arr.park_id == r.park_id]
-        if len(a_):
-            geo_src = a_.source.iloc[0]
-        else:                                                    # no run for this state: v1 register geometry unchanged
-            a_ = v1[v1.park_id == r.park_id].assign(source="register_v1", az_source="register", note="")
-            geo_src = "register_v1 (kein Abrufer)"
-        arr_rows += a_.assign(geometry_source=geo_src).to_dict("records")
+        geo_src = a_.geometry_source.iloc[0]
+        arr_rows += a_.to_dict("records")
         d = dict(park_id=r.park_id, bundesland=r.bundesland, dc_kwp=r.dc_kwp, year=r.year, orientation_class=r.orientation_class, tilt_class=r.tilt_class,
                  cls=r.cls, n_sources=int(s.source.notna().sum()) if len(s) else 0, geometry_source=geo_src,
                  n_arrays=len(a_), arrays="; ".join(f"{x.tilt:.1f}/{x.azimuth:.0f}x{x.share:.2f}" for x in a_.itertuples()))

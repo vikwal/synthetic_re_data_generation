@@ -4,12 +4,13 @@ and arrays, state tables), once, with the original files kept as *.pre_override;
 then show the corrected geometry without a mark (Viktor 2026-11-07). The record of what was changed and why is this
 table and the review log, not the outputs.
 
-data/parks_pv_v1/geometry_overrides.csv: park_id, run, action, params (JSON), reason, date
+<geometry_dir>/overrides.csv: park_id, run (= method of the angle estimation store), action, params (JSON), reason, date
     merge_groups  {"groups": [0, 1]}                      groups become one (per flank: share-weighted tilt, circular azimuth)
     add_group     {"tilt", "azimuth", "share", "windows"}  one more group from accepted windows, the others scaled by 1 - share
     set_shares    {"0": 0.4, "1": 0.6}                    capacity share per group (flank rows of a group keep their ratio)
 
-    synthre/bin/python -m pv.geometry_overrides <run suffix> [restore]   # apply all rows of that run (idempotent) / undo"""
+    synthre/bin/python -m pv.geometry_overrides <method> [restore]   # apply all rows of that method to the store (idempotent) / undo
+parks_pv.geometry_estimate.estimate_parks applies the rows of a park right after estimating it."""
 import glob
 import json
 import os
@@ -19,8 +20,9 @@ import sys
 import numpy as np
 import pandas as pd
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT = os.path.join(REPO, "data", "parks_pv_v1", "geometry_overrides.csv")
+import settings
+
+DEFAULT = os.path.join(settings.get("geometry_dir"), "overrides.csv")
 
 
 def _circ(az, w=None, period=360.0) -> float:
@@ -104,66 +106,65 @@ def apply_groups(G: pd.DataFrame, win: pd.DataFrame, ov: pd.DataFrame) -> pd.Dat
     return G
 
 
-def restore(run: str, path: str = DEFAULT, data_dir: str = None, results_dir: str = None) -> None:
-    """Put the *.pre_override files of `run` back (park files of the override parks and the state tables)."""
-    data_dir = data_dir or os.path.join(REPO, "data", "parks_pv_v1")
-    results_dir = results_dir or os.path.join(REPO, "results", "pv", f"geodata_release{run}")
-    files = glob.glob(os.path.join(data_dir, f"geodata_release_*{run}*.csv.pre_override"))
-    for pid in pd.read_csv(path, dtype=str).query("run == @run").park_id.unique():
-        files += glob.glob(os.path.join(results_dir, pid, "*.pre_override"))
-    for f in files:
-        os.replace(f, f[:-len(".pre_override")]); print("restored", f[:-len(".pre_override")])
-
-
 def _arrays_str(a: pd.DataFrame) -> str:
     return str([(round(float(t), 1), int(round(float(z))), round(float(s), 2), str(src)) for t, z, s, src in a[["tilt", "azimuth", "share", "az_source"]].values])
 
 
-def apply_to_run(run: str, path: str = DEFAULT, data_dir: str = None, results_dir: str = None) -> list:
-    """Write the overrides of `run` into the run files of each park (best source): results/pv/geodata_release<run>/<pv>/
-    {groups,arrays}_<src>.csv, data/parks_pv_v1/geodata_release_<state><run>{,_arrays}.csv. Originals are kept once as
-    *.pre_override; a park whose files already carry that backup is skipped (idempotent)."""
-    data_dir = data_dir or os.path.join(REPO, "data", "parks_pv_v1")
-    results_dir = results_dir or os.path.join(REPO, "results", "pv", f"geodata_release{run}")
-    ov = pd.read_csv(path, dtype=str); ov = ov[ov.run == run]
+def rows(method: str, path: str = DEFAULT, parks=None) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["park_id", "run", "action", "params"])
+    ov = pd.read_csv(path, dtype=str)
+    ov = ov[ov.run == method]
+    return ov[ov.park_id.isin(parks)] if parks is not None else ov
+
+
+def restore(method: str, path: str = DEFAULT) -> None:
+    """Put the *.pre_override files of the override parks of `method` back."""
+    from parks_pv import geometry_store as GSt
+    for pid in rows(method, path).park_id.unique():
+        for f in glob.glob(os.path.join(GSt.park_dir(method, pid), "*.pre_override")):
+            os.replace(f, f[:-len(".pre_override")]); print("restored", f[:-len(".pre_override")])
+
+
+def apply_to_store(method: str, path: str = DEFAULT, parks=None) -> list:
+    """Write the overrides of `method` into the store directory of each park (best source): {groups,arrays}_<src>.csv,
+    arrays.csv, sources.csv. Originals are kept once as *.pre_override; a park that already carries the backup is
+    skipped (idempotent)."""
+    from parks_pv import geometry_store as GSt
     done = []
-    for pid, o in ov.groupby("park_id", sort=False):
-        f_state = [f for f in glob.glob(os.path.join(data_dir, f"geodata_release_*{run}.csv")) if not f.endswith("_arrays.csv")
-                   and pid in open(f, encoding="utf-8").read()]
-        if len(f_state) != 1:
-            raise FileNotFoundError(f"{pid}: state table of run {run} not found ({f_state})")
-        f_state = f_state[0]; f_sarr = f_state.replace(".csv", "_arrays.csv")
-        d = pd.read_csv(f_state, dtype={"pv": str}); sa = pd.read_csv(f_sarr, dtype={"park_id": str})
-        best = d[(d.pv == pid) & d.best.astype(str).eq("True")]
+    for pid, o in rows(method, path, parks).groupby("park_id", sort=False):
+        if not GSt.has(method, pid):
+            print(pid, "not in the store", GSt.root(method)); continue
+        rd = GSt.park_dir(method, pid)
+        f_src, f_arr = os.path.join(rd, "sources.csv"), os.path.join(rd, "arrays.csv")
+        d, sa = pd.read_csv(f_src, dtype={"pv": str}), pd.read_csv(f_arr, dtype={"park_id": str})
+        best = d[d.best.astype(str).eq("True")]
+        if not len(best) or not len(sa):
+            print(pid, "no accepted measurement, override skipped"); continue
         src = best.source.iloc[0]
-        rd = os.path.join(results_dir, pid)
         fg, fa = os.path.join(rd, f"groups_{src}.csv"), os.path.join(rd, f"arrays_{src}.csv")
         if os.path.exists(fg + ".pre_override"):
             print(pid, "already applied"); continue
-        for f in (fg, fa):
+        for f in (fg, fa, f_src, f_arr):
             shutil.copy2(f, f + ".pre_override")
-        for f in (f_state, f_sarr):
-            if not os.path.exists(f + ".pre_override"):
-                shutil.copy2(f, f + ".pre_override")   # one backup per state table (first override of that table)
         win = pd.read_csv(os.path.join(rd, f"windows_{src}.csv"))
         G = apply_groups(pd.read_csv(fg), win, o)
-        new_sa = apply_arrays(sa[sa.park_id == pid].reset_index(drop=True), o)
+        new_sa = apply_arrays(sa.reset_index(drop=True), o)
         pa = pd.read_csv(fa)
         pa_new = new_sa.assign(group=new_sa.array_id.str.extract(r"g(\d+)_")[0].astype(int))[["group", "tilt", "azimuth", "share", "az_source"]]
         pa_new["az_conflict"] = bool(pa.az_conflict.astype(bool).any()) if len(pa) else False
         pa_new["note"] = ["Ost-Flanke" if (G.ew.astype(bool).iloc[g] and z < 180) else "West-Flanke" if G.ew.astype(bool).iloc[g] else ""
                           for g, z in zip(pa_new.group, pa_new.azimuth)]
-        G.to_csv(fg, index=False); pa_new.to_csv(fa, index=False)
-        sa = pd.concat([sa[sa.park_id != pid], new_sa], ignore_index=True); sa.to_csv(f_sarr, index=False)
+        G.to_csv(fg, index=False); pa_new.to_csv(fa, index=False); new_sa.to_csv(f_arr, index=False)
         g0 = G.iloc[0]; i = best.index[0]
         d.loc[i, "arrays"] = _arrays_str(pa_new); d.loc[i, "n_groups"] = len(G)
         d.loc[i, ["g0_tilt", "g0_tilt_p10", "g0_tilt_p90", "g0_azimuth", "g0_ew", "g0_pitch", "g0_share", "g0_n_windows", "g0_n_sure"]] = \
             [g0.tilt_horiz, g0.tilt_p10, g0.tilt_p90, g0.azimuth, bool(g0.ew), g0.pitch, g0.share, int(g0.n_windows), int(g0.n_sure)]
         d.loc[i, "az_measured"] = g0.azimuth; d.loc[i, "tilt_measured"] = g0.tilt_horiz
-        d.to_csv(f_state, index=False)
+        d.to_csv(f_src, index=False)
         done.append(pid); print(pid, src, "->", _arrays_str(pa_new))
     return done
 
 
 if __name__ == "__main__":
-    (restore if len(sys.argv) > 2 and sys.argv[2] == "restore" else apply_to_run)(sys.argv[1])
+    (restore if len(sys.argv) > 2 and sys.argv[2] == "restore" else apply_to_store)(sys.argv[1])

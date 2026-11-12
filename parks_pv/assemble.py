@@ -48,7 +48,7 @@ def snow_chain_text(model: str) -> str:
 def manifest(sel_row, cfg: dict, par: dict, drv_meta: dict, site: dict, arrays: list, horizon_src: str, release: pd.DataFrame,
              config_sha: str, horizon_sha: str) -> dict:
     return {
-        "dataset": paths.NAME, "park_id": sel_row.park_id, "client": sel_row.client, "cls": sel_row.cls, "region": int(sel_row.region),
+        "dataset": paths.NAME, "park_id": sel_row.park_id, "client": sel_row.client, "cls": sel_row.cls, "region": int(sel_row.region) if pd.notna(sel_row.region) else None,
         "chain": "PVWatts-P (corrected CAMS ghi/dhi -> closure DNI with clear-sky cap -> Hay-Davies per array, horizon + inter-row, "
                  "physical IAM, Faiman -> PVWatts DC with era gamma -> era aging -> DC losses -> PVWatts inverter (DC/AC clipping) "
                  "-> AC losses, availability 0.98 -> " + snow_chain_text(drv_meta.get("snow_model", "depth_linear")) + ")",
@@ -65,7 +65,8 @@ def manifest(sel_row, cfg: dict, par: dict, drv_meta: dict, site: dict, arrays: 
     }
 
 
-def write_release(park_id: str, release: pd.DataFrame, man: dict, out_dir: str = paths.RELEASE_DIR) -> str:
+def write_release(park_id: str, release: pd.DataFrame, man: dict, out_dir: str = None) -> str:
+    out_dir = out_dir or paths.RELEASE_DIR
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"synth_{park_id}.parquet")
     release.to_parquet(path)

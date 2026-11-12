@@ -81,7 +81,7 @@ def load_park(path: str) -> dict:
 
 
 def from_legacy(old: dict, park_id: str, latitude: float, longitude: float, altitude: float = 0.0) -> dict:
-    """Convert a configs/real_pv_parks/*.yaml or configs/config_pv.yaml 'pv_params' block.
+    """Convert a configs/real_pv_parks/*.yaml 'pv_params' block.
     The legacy files nest tilt_az_list one level too deep ([[[25, 180]]]) and carry the DC
     rating in watts; both are repaired here."""
     p = old.get("pv_params", old)

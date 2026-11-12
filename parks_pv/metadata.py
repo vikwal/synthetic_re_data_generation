@@ -15,7 +15,7 @@ def parks_table(sel: pd.DataFrame, par: pd.DataFrame, sites: pd.DataFrame, run_s
             "commissioning_first": f"{dates.loc[r.park_id, 'commissioning_first']:%Y-%m-%d}" if dates is not None else f"{int(r.year)}-07-01",
             "commissioning_last": f"{dates.loc[r.park_id, 'commissioning_full']:%Y-%m-%d}" if dates is not None else f"{int(r.year_last)}-07-01",
             "availability_mean": 0.98, "history_start": "",
-            "client_id": r.client, "client_kind": r.kind, "region": int(r.region), "cohort": r.cohort, "size_bin": r.size_bin,
+            "client_id": r.client, "client_kind": r.kind, "region": int(r.region) if pd.notna(r.region) else None, "cohort": r.cohort, "size_bin": r.size_bin,
             "terrain_cls": r.terrain_cls, "n_units_mastr": int(r.n_units), "n_lokationen": int(r.n_lokationen),
             "n_operators": int(r.n_operators), "bundesland": r.bundesland,
             "latitude": float(r.lat), "longitude": float(r.lon),

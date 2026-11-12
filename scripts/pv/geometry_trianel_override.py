@@ -27,7 +27,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "scripts", "pv"))
 from pv import geodata_park as GP, geodata_tiles as GT  # noqa: E402
-import geometry_release_states as R  # noqa: E402
+from parks_pv import geometry_estimate as R  # noqa: E402
 
 ROOT = os.environ.get("DATA_ROOT", "/mnt/lambda1/nvme1")
 GEO = os.path.join(ROOT, "synthetic/solar/trianel_benchmark/inputs/geodata")

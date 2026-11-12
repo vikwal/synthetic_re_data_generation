@@ -14,10 +14,12 @@ import numpy as np
 import pandas as pd
 from pyproj import Geod
 
+import settings
+
 GEOD = Geod(ellps="WGS84")
 RING = [(3.0, "N", 0.0), (3.0, "E", 90.0), (3.0, "S", 180.0), (3.0, "W", 270.0),
         (8.0, "N", 0.0), (8.0, "E", 90.0), (8.0, "S", 180.0), (8.0, "W", 270.0)]
-DEM_MOSAIC = "/mnt/nvme2/synthetic/raw/round2/dem/mosaic_90m.tif"
+DEM_MOSAIC = settings.get("dem_mosaic_90m")
 ADS_URL = "https://ads.atmosphere.copernicus.eu/api"
 
 

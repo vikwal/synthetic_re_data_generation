@@ -165,6 +165,37 @@ throughout the validation.
 
 ---
 
+## ☀️ Generate Synthetic PV Park Time Series
+
+One entry point, one run config per release:
+
+```bash
+synthre/bin/python generate_pv.py --config configs/runs/parks_pv_v4.yaml                 # all stages of the config
+synthre/bin/python generate_pv.py --config configs/runs/parks_pv_v4.yaml --stages generate,assemble --parks SEL1,SEL2
+```
+
+- **Locations** (data root, MaStR, CAMS models, ICON, DEM, ...) come from `settings.py`: environment variable >
+  `configs/settings.yaml` (or `$SYNTHRE_SETTINGS`) > defaults. Template: `configs/settings.example.yaml`.
+  `synthre/bin/python settings.py` prints the resolved values. Secrets (`WEATHER_DB_URL`, ADS key) stay in the environment.
+- **Run config** (`configs/runs/*.yaml`, schema in `parks_pv/run_config.py`): release name, park selection, period,
+  step, CAMS correction model, switches (`geometry.mode: estimate | register | manual`,
+  `snow.model: off | depth_linear | depth_slide`, `aging.cohorts`, `horizon`).
+- **Stages** (`parks_pv/stages.py`): `prepare` (OSM/PVGIS, CAMS centre + ring, corrected CAMS, ICON-D2) → `baseline`
+  (register geometry, park parameters) → `geometry` → `sites` → `configs` → `generate` → `assemble` → `tables`.
+- **Module angles** (`geometry.mode`): `estimate` measures tilt and azimuth from open state geodata (OSM outline,
+  DOP20, DGM1, point cloud / DOM; `parks_pv/geometry_estimate.py`). Each park is estimated once and kept in the store
+  `<geometry_dir>/<method>/<park_id>/` (`parks_pv/geometry_store.py`); later runs reuse it, parks without an accepted
+  measurement fall back to the register geometry. `register` uses the MaStR classes only, `manual` takes the
+  sub-arrays from a CSV (`park_id, tilt, azimuth, share`), e.g. for a fictitious park. The estimation also runs on
+  its own: `synthre/bin/python scripts/pv/estimate_geometry.py --config configs/runs/parks_pv_v4.yaml [--parks ...] [--status]`.
+- **MaStR**: `scripts/pv/mastr_ensure.py` checks for the parsed register, parses an unpacked export or downloads the
+  current BNetzA full export (no automatic re-download). Missing ICON-D2 snow data only degrades the snow driver to ERA5
+  (warning, manifest `icon_status`).
+- **Park spec** (`parks` in the run config instead of `selection`): parks typed in by hand, fictitious or taken from
+  the MaStR (`synthre/bin/python -m parks_pv.park_spec mastr|check ...`); format in [docs/park_spec.md](docs/park_spec.md).
+- `configs/runs/parks_pv_v4.yaml` reproduces the frozen release `parks_pv_v4_30min` bit-identically; a release
+  directory with a `FROZEN` file is never written (stages generate, assemble, tables).
+
 ## 🔧 Wind Turbine Power Curve Scraping
 
 Information is scraped from:

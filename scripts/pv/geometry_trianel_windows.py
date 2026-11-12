@@ -78,7 +78,7 @@ def prepare(pv: str, res: float = GW.RES, with_rgb: bool = True) -> dict:
     # 0d OSM footprint
     osm = json.load(open(os.path.join(B, "osm", "trianel_pv_osm.json")))[pv]
     _, fences = GW.osm_footprint(osm.get("elements", []), [pt_tri, pt_reg], to_m, FENCE_MAX_M)
-    from parks_pv.params import DENSITY_KWP_HA, DENSITY_YEARS       # main-park separation (a), as in geometry_release_states.footprint
+    from parks_pv.params import DENSITY_KWP_HA, DENSITY_YEARS       # main-park separation (a), as in parks_pv.geometry_estimate.footprint
     poly, _, _ = GW.select_fences(fences, P["kw_master"] / float(np.interp(year_built, DENSITY_YEARS, DENSITY_KWP_HA)) * 1e4, FENCE_MAX_M)
     far = pt_reg is not None and len(mm) and float(mm.iloc[0].d_km) > 0.5           # the Trianel point is far off -> register point
     old_raster = os.path.join(GEO, f"{pv}_rasters.tif")

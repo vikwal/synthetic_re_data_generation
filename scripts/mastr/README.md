@@ -2,7 +2,7 @@
 
 Copied on 2026-10-23 from `~/Work/FL_Contribution/pipeline/mastr/` (no git there) so that the register processing lives
 with the generator. The scripts are unchanged; inputs and outputs stay under `~/Work/FL_Contribution/data/mastr/`
-(paths in the scripts). The PV counterparts were already here: `pv/mastr.py`, `scripts/pv/mastr_parse.py`,
+(paths in the scripts). The PV counterparts were already here: `pv/mastr.py`, `scripts/pv/mastr_ensure.py`,
 `scripts/pv/select_parks.py`, `scripts/pv/replace_parks.py` (selection v2), `scripts/pv/trianel_mastr_match.py`,
 and the PV transfer split `scripts/pv/pv_transfer_split.py` (copied from `FL_Contribution/pipeline/`).
 

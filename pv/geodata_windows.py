@@ -60,7 +60,7 @@ MAIN_PARK = dict(fence_factor=1.5, m2_high=12.0, m2_trim=8.0, adjacent_m=25.0)
 # a ring; windows there join only through bridge_alike, up to cov_max of the expected area
 EXTEND = dict(cov_min=0.6, cov_max=1.0, ring_min_m=100.0, grow_m=100.0, ring_max_factor=2.0)   # ring grows while accepted windows touch its edge (SEL992895949369)
 MODULE_EFF = ([2008, 2012, 2016, 2020, 2024], [0.13, 0.15, 0.17, 0.20, 0.215])   # module efficiency (kWp per m2) by year   # separation from neighbouring plants (2026-10-22): see select_fences, trim_to_capacity
-# Review of the v3 park reports (2026-11-04, Viktor): one switch per rule (geometry_release_states.py --rules);
+# Review of the v3 park reports (2026-11-04, Viktor): one switch per rule (scripts/pv/estimate_geometry.py --rules);
 # adopted rules default on, rules under test default off.
 RULES = dict(box_cap=False,       # R1 (under test): box cap 3 sqrt(A_ref), growth step = window, grid anchored at the register point
              box_tab_near=False,  # R2 (under test): box mode table share only over windows <= 1 window from the accepted ones

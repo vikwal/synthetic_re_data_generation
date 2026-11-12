@@ -50,7 +50,7 @@ from parks_pv import paths  # noqa: E402
 from parks_pv.geometry import EW_TILT, TILT_RANGE  # noqa: E402
 from pv import geodata_tiles as GT, geodata_windows as GW  # noqa: E402
 from pv.plausibility import AZ_CENTRE  # noqa: E402
-import geometry_release_states as R  # noqa: E402   (fleet helpers, used read-only)
+from parks_pv import geometry_estimate as R  # noqa: E402   (fleet helpers, used read-only)
 import geometry_trianel_windows as TW  # noqa: E402  (prepare(pv))
 
 OUT_DEFAULT = os.path.join(REPO, "results", "geometry_sources_2026-11-05")
@@ -402,7 +402,7 @@ def fleet_inputs(pid: str) -> dict:
     RR = R.rasters(tiles, src, paths_, bounds, zone, float(r.lat), float(r.lon))
     if inside is None:
         inside = np.ones(RR["hag"].shape, bool)
-    v1 = R.v1_arrays()
+    v1 = pd.read_csv(os.path.join(paths.WORK_ROOT, "data", "parks_pv_v1", "pv_arrays.csv"), dtype={"park_id": str})   # register arrays of parks_pv_v1
     v1 = v1[v1.park_id == pid]
     reg_v1 = [dict(name=str(nom), tilt=float(g.mount_tilt.iloc[0]), azimuth=float(g.mount_azimuth.iloc[0]), share=float(g.share.sum()))
               for nom, g in v1.groupby(v1.array_id.str.rsplit("_", n=1).str[0], sort=False)]     # one entry per nominal mount (terrain clusters summed)

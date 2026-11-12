@@ -41,7 +41,7 @@ centre; every driver converted in `pv.timebase.to_hourly_mean` with its own sour
 | `angles.py` | `poa_bank`, `grid_fit`, `nnls_mixture`, `morning_evening_asymmetry` |
 | `metrics.py` | benchmark metrics, plateau detection, residual by sun position, snow candidates |
 
-Scripts: `generate_pv.py` (station product), `scripts/pv/benchmark_trianel.py`,
-`scripts/pv/terrain_trianel.py`, `scripts/pv/module_spread.py`, `scripts/pv/convert_legacy_configs.py`
-(the last three read confidential Trianel inputs and write anonymised outputs only).
+Entry point of the park release: `generate_pv.py --config configs/runs/<release>.yaml` (stages in
+`parks_pv/stages.py`). Benchmarks: `scripts/pv/benchmark_trianel.py`, `scripts/pv/terrain_trianel.py`,
+`scripts/pv/module_spread.py` (read confidential Trianel inputs and write anonymised outputs only).
 Tests: `tests/test_pv.py`.

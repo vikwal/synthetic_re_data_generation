@@ -7,7 +7,7 @@ region, cohort, size bin; parks of the selection excluded) in a state with a geo
 hand-filled cache). They are tried in order of preference (earlier commissioning first, since the surveys are older
 than the newest parks; then terrain class; then a seeded random key) through the checks of replace_parks.py
 (coordinate in the registered municipality, OSM solar plant within 400 m) and then the full geometry measurement of
-geometry_release_states.py (tiles, windows, park acceptance, survey after commissioning). The first candidate with an
+parks_pv.geometry_estimate (tiles, windows, park acceptance, survey after commissioning). The first candidate with an
 accepted source is the proposal; the others tried are listed. Nothing in the selection or the release is changed.
 
     synthre/bin/python scripts/pv/screen_replacements.py --replace SEL983846005258,SEL931358182929 [--max-tries 6]
@@ -25,7 +25,7 @@ import pandas as pd
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import geometry_release_states as GRS  # noqa: E402
+from parks_pv import geometry_estimate as GRS  # noqa: E402
 import replace_parks as RP  # noqa: E402
 
 STATES = RP.FETCH_STATES - {"Thüringen"}
@@ -80,7 +80,7 @@ def main():
     ap.add_argument("--relax", default="", help="stratum field overridden for the candidate search, e.g. size_bin=2-5MW or cohort=2013-20")
     ap.add_argument("--extend", action="store_true", help="measure with the outline extension (variant c)")
     ap.add_argument("--selection", default="pv_park_selection_v2.csv", help="selection file in FL/mastr whose parks are replaced")
-    ap.add_argument("--rules", default="", help="rule switches as in geometry_release_states.py, e.g. box_cap,box_tab_near")
+    ap.add_argument("--rules", default="", help="rule switches as in scripts/pv/estimate_geometry.py, e.g. box_cap,box_tab_near")
     ap.add_argument("--out", default=os.path.join(REPO, "results", "pv", "replacement_screen_" + pd.Timestamp.now().strftime("%Y-%m-%d")))
     a = ap.parse_args()
     if os.path.exists(os.path.join(a.out, "screen.csv")):
