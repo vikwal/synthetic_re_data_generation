@@ -258,7 +258,8 @@ ERA5_V2 = "/mnt/nvme2/synthetic/raw/wind_era5_v2"
 @pytest.mark.parametrize("station_id", ["00164", "00183"])
 def test_group_driver_reproduces_round2_chain(station_id):
     """parks.synth on a single-cell config reproduces generate_wind.main()
-    (SITE_v2 run, branch-C sites: power law, Weibull, no QM, no wakes)."""
+    (SITE_v2 run, branch-C sites: power law, Weibull, no QM, no wakes, IEC density as in the
+    V5 regeneration of 2026-11-02)."""
     ref_path = os.path.join(SITE_RUN, f"synth_{station_id}.csv")
     if not os.path.exists(ref_path):
         pytest.skip("SITE_v2 run outputs not on disk")
@@ -271,7 +272,7 @@ def test_group_driver_reproduces_round2_chain(station_id):
     types, hubs = base["params"]["turbines"], base["params"]["hub_heights"]
     pc = library.load_power_curves()
     cfg = dict(base)
-    cfg["round2"] = {**chain["round2"], "output_end": str(ref.index[-1].tz_convert(None))}
+    cfg["round2"] = {**chain["round2"], "density": "iec", "output_end": str(ref.index[-1].tz_convert(None))}
     cfg["params"] = {**base["params"], "turbines": types, "hub_heights": hubs,
                      "rated": [float(pc[t].max()) for t in types],
                      "group_ids": [f"t{i}" for i in range(1, 7)], "group_sizes": [1] * 6,
