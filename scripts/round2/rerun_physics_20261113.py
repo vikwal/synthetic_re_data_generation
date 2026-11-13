@@ -28,7 +28,7 @@ def rung(name):
         path=gen/f'config_{pid}.yaml';path.write_text(yaml.safe_dump(cfg))
         log=OUT/'logs'/f'{name}_{pid}.log'
         with log.open('w') as f:
-            ret=subprocess.run([str(ROOT/'synthre/bin/python'),'generate_wind.py','--config',str(path.relative_to(ROOT/'configs'))],cwd=ROOT,stdout=f,stderr=subprocess.STDOUT)
+            ret=subprocess.run([str(ROOT/'synthre/bin/python'),'-c',"import sys; sys.argv=['rerun']; import generate_wind as gw; gw.main("+repr(str(path.relative_to(ROOT/'configs')))+")"],cwd=ROOT,stdout=f,stderr=subprocess.STDOUT)
         target=dest/f'synth_{pid}.csv'
         if ret.returncode or not target.exists():raise RuntimeError(f'Generation failed {name}/{pid}: {log}')
         records.append(dict(park_id=pid,source_config_sha256=sha(source),generated_config_sha256=sha(path),output_sha256=sha(target)))
