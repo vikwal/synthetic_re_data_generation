@@ -15,7 +15,22 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def rung(name):
     block=yaml.safe_load((ROOT/f'configs/round2/{name}.yaml').read_text())['round2']
     eid=block['experiment_id'];dest=OUT/'wind/round2'/eid
-    if (dest/'COMPLETE.json').exists():return eid
+    if (dest/'COMPLETE.json').exists():
+        complete=json.loads((dest/'COMPLETE.json').read_text())
+        expected=sorted(meterdata.load_mapping().park_id) if name!='M4_noQM' else ['04745','05347']
+        records=complete['records']
+        if complete['rung']!=name or complete['experiment']!=eid or len(records)!=len(expected) or sorted(r['park_id'] for r in records)!=expected:
+            raise ValueError('Incomplete generator manifest: '+name)
+        for row in records:
+            pid=row['park_id']
+            source=ROOT/f'archiv/legacy_configs/real_wind_parks_era5/config_{pid}.yaml'
+            generated=ROOT/f'configs/round2/_generated/physics_20261113/{name}/config_{pid}.yaml'
+            if sha(source)!=row['source_config_sha256'] or sha(generated)!=row['generated_config_sha256'] or sha(dest/f'synth_{pid}.csv')!=row['output_sha256']:
+                raise ValueError('Changed completed generator input or output: '+name)
+            config=yaml.safe_load(generated.read_text())
+            if config['round2']!=block or config['data']['synth_dir']!=str(OUT):
+                raise ValueError('Changed generator protocol: '+name)
+        return eid
     gen=ROOT/'configs/round2/_generated/physics_20261113'/name
     gen.mkdir(parents=True,exist_ok=True)
     records=[]
