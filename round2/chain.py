@@ -2,8 +2,8 @@
 
 run_chain(theta) reproduces the v2 power chain in pure NumPy for the
 sensitivity analysis (guide 6.1: scalar output = mean over parks of
-|energy_ratio - 1|). Validated against generate_wind on corner
-points by scripts/round2/wp6_validate_chain.py (tolerance < 0.5 % ER).
+|energy_ratio - 1|). Uses the same meteorological preparation, density and power functions as
+generate_wind. Cached arrays avoid repeated I/O and dataframe construction.
 
 theta keys (defaults = M-ladder baseline):
   wind_level_factor  float             multiplies v10 and v100
@@ -18,6 +18,7 @@ theta keys (defaults = M-ladder baseline):
   wake_enabled       bool
 """
 
+from collections import Counter
 import glob
 import json
 import os
@@ -29,7 +30,8 @@ import yaml
 from round2 import aging as r2_aging
 from round2 import correction as r2_correction
 from round2 import stability as r2_stability
-from round2 import meterdata
+from round2 import meterdata, wind_physics
+from utils.tools import knn_imputer
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ERA5_DIR_DEFAULT = "/mnt/nas/synthetic/raw/wind_era5"
@@ -48,7 +50,7 @@ DEFAULT_THETA = {
     "wind_level_factor": 1.0, "correction": "height_consistent",
     "shear": "power_law", "z0_scale": 1.0,
     "aging_model": "weibull", "aging_lambda": 54.5, "aging_kappa": 2.0,
-    "power_curve_scale": 1.0, "density": "v1_mixed",
+    "power_curve_scale": 1.0, "density": "iec",
     "wake_k": 0.075, "wake_enabled": True,
     "alpha_min": 0.0, "alpha_max": 0.4,   # clip of the two-level ERA5 shear exponent
 }
@@ -99,6 +101,8 @@ class ParkCache:
         df = pd.read_csv(os.path.join(era5_dir, f"Station_{station_id}.csv"))
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         df.set_index("timestamp", inplace=True)
+        df = knn_imputer(df, n_neighbors=5)
+        self.full_index = df.index
         df = df.loc[VALIDATION_WINDOW[0]:VALIDATION_WINDOW[1]]
         self.index = df.index
         self.v10 = np.hypot(df["u_wind_10m"], df["v_wind_10m"]).values
@@ -108,18 +112,16 @@ class ParkCache:
         t2 = df["temp_2m"].values
         td = df["dew_point_2m"].values
         press = df["pressure"].values
-        e = _huang(td - 273.15)
-        e_s = _huang(t2 - 273.15)
-        relhum = e / e_s
-        p_w = relhum * e_s
-        p_g = press - p_w
-        self.rho2m = p_g / (287.05 * t2) + p_w / (461.5 * t2)
+        e = wind_physics.vapor_pressure(td - 273.15, p.get("p_s_model", "huang"))
+        self.rho2m = wind_physics.moist_air_density(press, t2, e)
         self.t2 = t2
-        # hub density per turbine height (barometric, as in v1)
-        self.rho_hub = {}
-        for h in sorted(set(self.hub_heights)):
-            self.rho_hub[h] = self.rho2m * (
-                1 - (0.00649 * (h - 2)) / t2) ** ((0.028949 * 9.81) / (0.00649 * 8.31451) - 1)
+        self.rho_hub = {
+            h: wind_physics.density_at_height(self.rho2m, t2, h, p.get("temp_gradient", 0.00649))
+            for h in sorted(set(self.hub_heights))}
+        self.rated_powers = ([float(r) * 1000 for r in p["rated"]]
+                             if "rated" in p else [None] * len(self.turbines))
+
+        self.turbine_groups = Counter(zip(self.turbines, self.hub_heights, self.rated_powers))
 
         self.ustar = df["friction_wind"].values if "friction_wind" in df else None
         self.sshf = df["sshf"].values if "sshf" in df else None
@@ -152,7 +154,8 @@ class ParkCache:
             s = specs[specs["Turbine"] == t].iloc[0]
             self.specs[t] = {"cut_in": float(s["Einschaltgeschwindigkeit"]),
                              "cut_out": float(s["Abschaltgeschwindigkeit"]),
-                             "rated_ws": float(s["Nennwindgeschwindigkeit"])}
+                             "rated_ws": float(s["Nennwindgeschwindigkeit"]),
+                             "diameter": float(s["Rotordurchmesser"] if "Rotordurchmesser" in s else s["Rotordurchmesser [m]"])}
         self.curves = _power_curves(self.turbines,
                                     [self.specs[t]["cut_out"] for t in self.turbines])
 
@@ -178,7 +181,7 @@ class ParkCache:
         for k in WAKE_KS:
             path = os.path.join(WAKE_DIR, f"w_{park_id}_k{k:.3f}.parquet")
             if os.path.exists(path):
-                w = pd.read_parquet(path)["w"].reindex(self.index).ffill().fillna(1.0)
+                w = pd.read_parquet(path)["w"].reindex(self.index).ffill().fillna(1.0).clip(1e-6, 1.0)
                 self.wake[k] = w.values
 
         # measured energy over the same window
@@ -198,8 +201,10 @@ class ParkCache:
                 (self.index - pd.to_datetime(cd, utc=True)).days / 365.25,
                 0, None)
 
-    def energy_ratio(self, theta: dict) -> float:
+    def power_series(self, theta: dict) -> np.ndarray:
         th = {**DEFAULT_THETA, **theta}
+        if th["wake_enabled"] and not self.wake:
+            raise FileNotFoundError(f"No wake factors for {self.park_id} in {WAKE_DIR}")
         v10, v100 = self.v10.copy(), self.v100.copy()
         if th["correction"] != "off" and self.q_target is not None:
             c = r2_correction.correction_factor(v10, self.q_era5, self.q_target)
@@ -219,13 +224,16 @@ class ParkCache:
                 # ask 29: aging disabled, DF = 1 (the M5all_noage state)
                 df_vec = np.ones(len(self.index))
             else:
-                df_vec = np.linspace(r2_aging.DF_const(self.ages[0]),
-                                     r2_aging.DF_const(self.ages[-1]), len(self.ages))
+                full_ages = np.clip((self.full_index - pd.to_datetime(
+                    self.commissioning_date, utc=True)).days / 365.25, 0, None)
+                full_degradation = np.linspace(r2_aging.DF_const(full_ages[0]),
+                                               r2_aging.DF_const(full_ages[-1]), len(full_ages))
+                df_vec = full_degradation[self.full_index.get_indexer(self.index)]
         else:
             df_vec = np.ones(len(self.index))
 
         p_park = np.zeros(len(self.index))
-        for t, h in zip(self.turbines, self.hub_heights):
+        for (t, h, rated_override), count in self.turbine_groups.items():
             if th["shear"] == "most" and self.L is not None:
                 v_hub = r2_stability.most_wind_profile(
                     v100, h, self.z0 * th["z0_scale"], self.L)
@@ -238,36 +246,25 @@ class ParkCache:
             s = self.specs[t]
             ticks, watts = self.curves[t]
             watts = watts * th["power_curve_scale"]
-            rated_power = watts.max()
-            # degradation as curve shift, released above the shifted rated ws
-            dr = df_vec.copy()
-            rated_ws_vec = s["rated_ws"] * (1.0 / dr) ** (1.0 / 3.0)
-            dr[v_hub >= rated_ws_vec] = 1.0
-            v_eff = v_hub * dr ** (1.0 / 3.0)
-            p_curve = np.interp(v_eff, ticks, watts)
-            if th["density"] == "static_1225":
-                p = p_curve
-            elif DENSITY_METHOD == "iec":
-                # IEC 61400-12-1 wind-speed normalisation (pitch-regulated):
-                # read the curve at v_eff (rho/rho_0)^(1/3), rated unchanged
-                rho = self.rho_hub[h]
-                p = np.interp(v_eff * (rho / 1.225) ** (1.0 / 3.0), ticks, watts)
-            else:
-                rho = self.rho_hub[h]
-                p = p_curve * (rho / 1.225)
-            p = np.where((v_hub < s["cut_in"]) | (v_hub > s["cut_out"]), 0.0, p)
-            p = np.minimum(p, rated_power)
-            p_park += p
+            rated_power = rated_override
+            if rated_power is None:
+                rated_power = watts.max()
+            # Historical Morris/Sobol uses "dynamic" for its on/off density
+            # switch. Convert that switch to the explicit generator mode.
+            mode = th["density"]
+            if mode == "dynamic":
+                mode = "iec" if DENSITY_METHOD == "iec" else "v1_mixed"
+            p = wind_physics.turbine_power(
+                v_hub, self.rho_hub[h], ticks, watts, s["diameter"],
+                rated_power, s["cut_in"], s["cut_out"], df_vec, mode)
+            p_park += count * p
 
-        if th["wake_enabled"] and self.wake:
-            k = float(np.clip(th["wake_k"], WAKE_KS[0], WAKE_KS[-1]))
-            ks = np.array(sorted(self.wake))
-            ws = np.stack([self.wake[kk] for kk in sorted(self.wake)])
-            # linear interpolation across the k grid, per hour
-            w = np.array([np.interp(k, ks, ws[:, i]) for i in range(ws.shape[1])]) \
-                if len(ks) > 1 else ws[0]
-            p_park = p_park * w
+        if th["wake_enabled"]:
+            p_park *= wind_physics.interpolate_wake_factor(th["wake_k"], self.wake)
+        return p_park
 
+    def energy_ratio(self, theta: dict) -> float:
+        p_park = self.power_series(theta)
         ok = ~np.isnan(self.meas)
         if ok.sum() < 100 or np.nansum(self.meas[ok]) <= 0:
             return np.nan
@@ -295,7 +292,4 @@ class Chain:
 
 
 def _huang(temp_c):
-    return np.where(
-        temp_c > 0,
-        np.exp(34.494 - (4924.99 / (temp_c + 237.1))) / (temp_c + 105) ** 1.57,
-        np.exp(43.494 - (6545.8 / (temp_c + 278))) / (temp_c + 868) ** 2)
+    return wind_physics.vapor_pressure(temp_c, "huang")

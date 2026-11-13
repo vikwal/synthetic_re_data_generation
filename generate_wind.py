@@ -42,6 +42,7 @@ from utils import clean_data, tools
 from round2 import aging as r2_aging
 from round2 import correction as r2_correction
 from round2 import stability as r2_stability
+from round2 import wind_physics
 from curtailment.config import get_curtailment_params  # noqa: F401 - re-exported
 
 R2_DEFAULTS = {
@@ -172,10 +173,16 @@ def load_z0(r2: dict, station_id: str) -> float:
 def load_wake_factor(r2: dict, park_id: str, index: pd.DatetimeIndex) -> pd.Series:
     """Precomputed hourly wake loss factor w(t) in (0,1] (wp5_precompute_wakes)."""
     k = r2['wake']['k']
-    path = os.path.join(r2['wake_dir'], f'w_{park_id}_k{k:.3f}.parquet')
-    w = pd.read_parquet(path)['w']
-    w = w.reindex(index).ffill().fillna(1.0).clip(1e-6, 1.0)
-    return w
+    factors = {}
+    for value in (0.05, 0.075, 0.10):
+        path = os.path.join(r2['wake_dir'], f'w_{park_id}_k{value:.3f}.parquet')
+        if os.path.exists(path):
+            factors[value] = (pd.read_parquet(path)['w'].reindex(index)
+                              .ffill().fillna(1.0).clip(1e-6, 1.0).values)
+    if not factors:
+        raise FileNotFoundError(f"No wake factors for {park_id} in {r2['wake_dir']}")
+    return pd.Series(wind_physics.interpolate_wake_factor(k, factors), index=index)
+
 
 def get_park_params(station_id: str,
                         masterdata: pd.DataFrame,
@@ -338,18 +345,10 @@ def get_density_at_height(data: pd.DataFrame,
                           h2: float) -> pd.Series:
     """Density extrapolation using hardcoded column name 'density'.
     temp_2m is already in Kelvin from ERA5 data."""
-    R = 8.31451
-    M_air = 0.028949 # dry air
-    M_h20 = 0.018015 # water
-    g = 9.81
-    rho1 = data['density'].copy()
-    t1 = data['temp_2m'].copy()  # Already in Kelvin
-    h1 = 2 # because of temperature measured at 2 m
-    temp_gradient = params['temp_gradient']
-    M = M_air # molar mass of air (including water vapor) is less than that of dry air
-    delta_h = h2 - h1
-    rho2 = rho1 * ( 1 - (temp_gradient * delta_h) / t1 ) ** ( (M * g) / (temp_gradient * R) - 1)
-    return rho2
+    return pd.Series(wind_physics.density_at_height(
+        data['density'].values, data['temp_2m'].values, h2, params['temp_gradient']),
+        index=data.index)
+
 
 def merge_curve(data: pd.DataFrame,
                 curve: pd.Series,
@@ -426,81 +425,27 @@ def get_cp_from_power_curve_hardcoded(data: pd.DataFrame,
     Hook D: density_mode 'dynamic' uses the extrapolated hub density here;
     'v1_mixed' (round-1 behaviour) and 'static_1225' keep the 1.225 constant.
     """
-    wind_speed = data[wind_speed_hub_col]
-    rho = data[density_hub_col]
-    rotor_area = np.pi * (rotor_diameter / 2) ** 2
-    if degradation_vector is None:
-        degradation_vector = np.ones(len(data))
-    degradation_vector = pd.Series(degradation_vector, index=wind_speed.index)
-    cp_values = []
-    for t in wind_speed.index:
-        v = wind_speed.loc[t]
-        if v == 0:
-            cp_values.append(0)
-            continue
-        dr = degradation_vector.loc[t]
-        if density_mode == 'iec':
-            # IEC 61400-12-1 density normalisation for pitch-regulated turbines:
-            # the manufacturer curve (reference rho_0 = 1.225) is read at the
-            # normalised speed v_n = v (rho/rho_0)^(1/3); rated power stays
-            # unchanged, only the knee shifts. Cp is expressed with the actual
-            # density so that 0.5 rho A Cp v^3 returns exactly P_curve(v_n).
-            rho_t = rho.loc[t]
-            v_curve = v * (rho_t / 1.225) ** (1/3)
-        elif density_mode == 'dynamic':
-            rho_t = rho.loc[t]
-            v_curve = v
-        else:
-            rho_t = 1.225 # standard air density for stable cp values # rho.loc[t]
-            v_curve = v
-        degraded_ws = power_curve.index * (1/dr)**(1/3)
-        degraded_power_curve = pd.Series(power_curve.values, index=degraded_ws).sort_index()
-        power = np.interp(v_curve, degraded_power_curve.index, degraded_power_curve.values)
-        cp = power / (0.5 * rho_t * rotor_area * v**3)
-        cp_values.append(cp)
-    Cp = pd.Series(cp_values, index=wind_speed.index, name="Cp").clip(lower=0, upper=1)
-    return Cp
+    degradation = 1.0 if degradation_vector is None else degradation_vector
+    cp = wind_physics.curve_coefficient(
+        data[wind_speed_hub_col].values, data[density_hub_col].values,
+        power_curve.index.values, power_curve.values, rotor_diameter,
+        degradation, density_mode)
+    return pd.Series(cp, index=data.index, name="Cp")
+
 
 def get_saturated_vapor_pressure(temperature: pd.Series,
                                  model: str = 'improved_magnus') -> pd.Series:
-    def huang(temp):
-        return np.where(
-            temp > 0,
-            np.exp(34.494 - (4924.99 / (temp + 237.1))) / (temp + 105) ** 1.57,
-            np.exp(43.494 - (6545.8 / (temp + 278))) / (temp + 868) ** 2
-        )
-    def improved_magnus(temp):
-        return np.where(
-            temp > 0,
-            610.94 * np.exp((17.625 * temp) / (temp + 243.04)),
-            611.21 * np.exp((22.587 * temp) / (temp + 273.86))
-        )
-    model_functions = {
-        'huang': huang,
-        'improved_magnus': improved_magnus,
-    }
-    if model not in model_functions:
-        raise ValueError(f"Unknown model: {model}")
-    return model_functions[model](temperature)
+    return wind_physics.vapor_pressure(temperature, model)
+
 
 def get_rho(data: pd.DataFrame) -> pd.Series:
     """Calculate air density using hardcoded column names.
     pressure and temp_2m are already in Pascal and Kelvin from ERA5 data."""
-    R_dry = 287.05  # Specific gas constant dry air (J/(kg·K))
-    R_w = 461.5  # Specific gas constaint water vapor (J/(kg·K))
-    air_pressure = data['pressure'].copy()  # Already in Pascal
-    temperature_kelvin = data['temp_2m'].copy()  # Already in Kelvin
-    relhum = data['relhum'].copy()
-    p_s = data['sat_vap_pressure'].copy()
-    # check if relative humidity is in the range between 0 and 1
-    if relhum.max() > 1:
-        relhum /= 100
-    p_w = relhum * p_s
-    p_g = air_pressure - p_w
-    rho_g = p_g / (R_dry * temperature_kelvin)
-    rho_w = p_w / (R_w * temperature_kelvin)
-    rho = rho_g + rho_w
-    return rho
+    # get_features supplies relative humidity as a fraction. Slight
+    # supersaturation must not change the units of the complete record.
+    water_vapor_pressure = data['relhum'] * data['sat_vap_pressure']
+    return pd.Series(wind_physics.moist_air_density(
+        data['pressure'], data['temp_2m'], water_vapor_pressure), index=data.index)
 
 
 def read_dfs(path: str,
@@ -705,7 +650,7 @@ def get_features(data: pd.DataFrame,
     # logistic weight on the validity margin (K_VG_BLEND fixed below).
     if r2 is not None and r2['shear'] in ('most', 'validity_gated',
                                           'validity_blend'):
-        z0 = station_ctx['z0'] if station_ctx else r2['z0_default']
+        z0 = station_ctx['z0'] if station_ctx else r2['z0_default'] * r2['z0_scale']
         if 'obukhov_L' not in data.columns:
             data['obukhov_L'] = r2_stability.obukhov_length(
                 u_star=data['friction_wind'].values,
@@ -750,7 +695,7 @@ def get_features(data: pd.DataFrame,
     # Step 9: Calculate saturation vapor pressure at hub height
     temperature_hub = data[temperature_hub_col]
     data[sat_vap_ps_hub_col] = get_saturated_vapor_pressure(
-        temperature=temperature_hub,
+        temperature=temperature_hub - 273.15,
         model=params['p_s_model']
     )
 
@@ -777,33 +722,9 @@ def generate_wind_power(data: pd.DataFrame,
     Hook D: 'v1_mixed' (round 1) and 'dynamic' use the extrapolated hub
     density in the power equation; 'static_1225' forces 1.225 everywhere.
     """
-    wind_speed_hub_col = f"wind_speed{suffix}"
-    density_hub_col = f"density{suffix}"
-    if density_mode == 'static_1225':
-        rho = pd.Series(1.225, index=data.index)
-    else:
-        rho = data[density_hub_col]
-    wind_speed_hub = data[wind_speed_hub_col]
-    rotor_area = np.pi * (rotor_diameter / 2) ** 2
-    if degradation_vector is None:
-        degradation_vector = np.ones(len(data))
-    else:
-        degradation_vector = degradation_vector.copy()
-        rated_speed_vector = rated_speed * (1/degradation_vector)**(1/3)
-        degradation_vector[wind_speed_hub >= rated_speed_vector] = 1.0
-    wind_power = np.where(
-        wind_speed_hub < cut_in, 0,
-        np.where(
-            wind_speed_hub <= cut_out,
-            0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3,
-            #np.minimum(rated_power, 0.5 * rho * rotor_area * Cp * wind_speed_hub ** 3 * degradation_vector),
-            0
-        )
-    )
-    #power = apply_rotor_inertia(power=wind_power,
-    #                            wind_speed=wind_speed_hub,
-    #                            cut_in=cut_in)
-    wind_power = np.minimum(wind_power, rated_power)
+    wind_power = wind_physics.power_from_coefficient(
+        data[f"wind_speed{suffix}"].values, data[f"density{suffix}"].values,
+        np.asarray(Cp), rotor_diameter, rated_power, cut_in, cut_out, density_mode)
     power = apply_noise(wind_power=wind_power,
                         rated_power=rated_power,
                         noise=params['noise'])
