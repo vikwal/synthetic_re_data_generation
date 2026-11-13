@@ -47,3 +47,4 @@ results/quantitative/scores_round2_*.csv
 
 # local settings (settings.py), template configs/settings.example.yaml
 configs/settings.yaml
+configs/round2/_generated/physics_20261113/

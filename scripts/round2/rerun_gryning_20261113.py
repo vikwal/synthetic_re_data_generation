@@ -144,6 +144,7 @@ def main():
     for name,rows in [('profile_metrics',stats),('profile_reconstruction',checks),('profile_coverage',cover),('plateau_summary',plateau),('plateau_events',events),('plateau_sensitivity',sensitivity)]:
         pd.DataFrame(rows).to_csv(args.out/(name+'.csv'),index=False)
     pd.concat(examples).to_parquet(args.out/'plateau_hourly.parquet',index=False)
+    pd.concat(examples).to_csv(args.out/'plateau_hourly.csv.gz',index=False)
     meta=dict(gryning='Gryning2007 Eqs8,15,20,21,31; stable b=5 as in deployed Dyer; 100m ratio anchor; ERA5 BLH',
               mask='v10_raw>3, 100m and all hubs below BLH, finite positive shapes; horizontal homogeneity not established',
               plateau='diagnostic candidates, not confirmed curtailment; 3 contiguous hours, range<=1% capacity, level5-90%, wind range>=1m/s, modeled available margin>=10% capacity',
