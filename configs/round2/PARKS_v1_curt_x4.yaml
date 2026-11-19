@@ -1,0 +1,25 @@
+# PARKS_v1_curt_x4 -- parks_v1 (chain M4-noQM, unchanged) plus the curtailment layers:
+# grid curtailment amplified x 4 (about the SH level of 2015-17 [B1, B2]); market and environment unchanged.
+# Read by scripts/parks/run_parks_v1.py curt_* --chain configs/round2/PARKS_v1_curt_x4.yaml;
+# the round2 block is the one of PARKS_v1.yaml (the parks_v1 release is the input).
+# Every curtailment parameter not set here comes from curtailment/config.py:CURTAILMENT_DEFAULTS.
+round2:
+  experiment_id: 'PARKS_v1'
+  correction: 'off'
+  correction_branch: 'C'
+  shear: 'power_law'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_source: 'db'                  # public.era5_wind_grid, nearest cell per turbine group
+  commissioning_mode: 'group'        # per-group commissioning dates (params.commissioning_dates)
+  output_start: '2023-07-24'
+  output_end: '2026-08-31 23:00'     # end of the ERA5 table
+  output_naming: 'native'
+curtailment:
+  enabled: true
+  dataset: parks_v1_curt_x4
+  grid:
+    target_scale: 4.0

@@ -1,0 +1,157 @@
+data:
+  dir: '/mnt/nas/observed_weather'
+  synth_dir: '/mnt/lambda1/nvme1/synthetic'
+  pkl_dir: 'data/pkl_files'
+  re_ninja_dir: 'data/renewables.ninja'
+  from_date: '2023-07-24'
+  hist_date: '2024-12-31'
+  pv_ages: 'data/pv_ages.npy'
+  hor_vars: ['aswdifd_s', 'aswdir_s', 'alb_rad', 'clct', 't_2m', 'relhum_2m', 'td_2m', 'h_snow', 'rho_snow', 'prr_gsp', 'prs_gsp', 'prg_gsp', 't_g', 'u_10m', 'v_10m']
+  vert_vars: ['u_wind', 'v_wind', 'temperature', 'pressure', 'relhum']
+  sleep: 0.25
+
+scraping:
+  download_url: 'https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/'
+  wind_vars: ['air_temperature', 'wind_test']
+  pv_vars: ['air_temperature', 'wind_test', 'solar', 'precipitation']
+  sleep: 1
+  get_historical: False
+  get_recent: True
+  overwrite: True
+
+write:
+  recent_pkl: 'recent_dfs.pkl'
+  historical_pkl: 'historical_dfs.pkl'
+  master_pkl: 'master_data.pkl'
+  create_table: False
+  write_historical: False
+  write_recent: False
+  write_master: False
+  write: True
+  threshold: 1 # 5 % missing values
+  clean_pv: True
+  clean_wind: False   # nur Solar/PV neu ziehen
+  delete_before_clean: True
+  get_wind_nwp: True  # Set to True to process wind NWP data
+  get_solar_nwp: False  # Set to True to process solar NWP data
+  db_conf:
+    host: 'localhost'
+    database: 'WeatherDB'
+    port: 5432
+    user: 'postgres'
+    passw: ''
+    do_update: False # on conflict do update?
+
+nwp:
+  n_closest_points: 1  # Number of closest grid points to consider
+  from_date: null  # Optional: start date filter for starttime (format: 'YYYY-MM-DD', null = no filter)
+  to_date: '2025-09-30'  # Optional: end date filter for starttime (format: 'YYYY-MM-DD', null = no filter)
+
+logging:
+  verbose: False
+  log_file_write: 'write_db.log'
+  datefmt: '%Y-%m-%d %H:%M:%S'
+
+features:
+  pressure:
+    old_name: 'PP_10'
+    name: 'pressure'
+    unit: 'Pa'
+  temperature:
+    old_name: 'TT_10'
+    name: 'temperature_2m'
+    unit: '°C'
+  temperature_5cm:
+    old_name: 'TM5_10'
+    name: 'temperature_5cm'
+    unit: '°C'
+  relhum:
+    old_name: 'RF_10'
+    name: 'relative_humidity'
+    unit: '%'
+  dewpoint:
+    old_name: 'TD_10'
+    name: 'dew_point'
+    unit: '°C'
+  dhi:
+    old_name: 'DS_10'
+    name: 'dhi'
+    unit: 'W/m$^2$'
+  dni:
+    name: 'dni'
+    unit: 'W/m$^2$'
+  ghi:
+    old_name: 'GS_10'
+    name: 'ghi'
+    unit: 'W/m$^2$'
+  sun_duration:
+    old_name: 'SD_10'
+    name: 'sun_duration'
+    unit: 'h'
+  longwave_rad:
+    old_name: 'LS_10'
+    name: 'longwave_rad'
+    unit: 'J/m$^2'
+  wind_speed:
+    old_name: 'FF_10'
+    name: 'wind_speed'
+    unit: 'm/s'
+  d_wind:
+    old_name: 'DD_10'
+    name: 'wind_direction'
+    unit: '°'
+  prec:
+    old_name: 'RWS_10'
+    name: 'precipitation_rate'
+    unit: 'mm'
+  prec_dau:
+    old_name: 'RWS_DAU_10'
+    name: 'precipitation_duration'
+    unit: 'min'
+  sigma_wind_lat:
+    old_name: 'SLA_10'
+    name: 'std_u_wind'
+    unit: ''
+  sigma_wind_lon:
+    old_name: 'SLO_10'
+    name: 'std_v_wind'
+    unit: ''
+  latitude:
+    old_name: 'geoBreite'
+    name: 'latitude'
+    unit: '°'
+  longitude:
+    old_name: 'geoLaenge'
+    name: 'longitude'
+    unit: '°'
+  elevation:
+    old_name: 'Stationshoehe'
+    name: 'station_height'
+    unit: 'm'
+  density:
+    name: 'density'
+    unit: 'kg/m$^3$'
+  sat_vap_pressure:
+    name: 'saturated_vapor_pressure'
+    unit: 'Pa'
+  cell_temperature:
+    name: 'temperature_mod'
+    unit: '°C'
+  dhi_poa:
+    name: 'dhi_poa'
+    unit: 'W/m$^2$'
+  dni_poa:
+    name: 'dni_poa'
+    unit: 'W/m$^2$'
+  ghi_poa:
+    name: 'ghi_poa'
+    unit: 'W/m$^2$'
+  albedo:
+    name: 'albedo'
+    unit: ''
+  power_curve:
+    name: 'power_curve'
+    unit: 'Watt'
+  power:
+    name: 'power'
+    unit: 'Watt'

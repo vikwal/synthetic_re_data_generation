@@ -1,0 +1,23 @@
+# PARKS_v1 -- 90 real MaStR wind parks (park = Lokation) for the FL benchmark.
+# Chain = paper M4 without QM ('M4-noQM', user decision 2026-10-01: one
+# uniform data-generating process, no station-anchored correction for the
+# few parks near a DWD station): dynamic power law from ERA5 v10/v100,
+# Weibull aging PER TURBINE GROUP (own commissioning date), NOJ wakes with
+# the real layouts (k = 0.075), ERA5 read directly from Postgres.
+# Driver: scripts/parks/run_parks_v1.py (per-park configs are generated into
+# configs/round2/_generated/parks_v1/ and are not hand-edited).
+round2:
+  experiment_id: 'PARKS_v1'
+  correction: 'off'
+  correction_branch: 'C'
+  shear: 'power_law'
+  aging_model: 'weibull'
+  aging: {lambda: 54.5, kappa: 2.0}
+  apply_ageing_override: true
+  wake: {enabled: true, model: 'noj', k: 0.075}
+  density: 'v1_mixed'
+  era5_source: 'db'                  # public.era5_wind_grid, nearest cell per turbine group
+  commissioning_mode: 'group'        # per-group commissioning dates (params.commissioning_dates)
+  output_start: '2023-07-24'
+  output_end: '2026-08-31 23:00'     # end of the ERA5 table
+  output_naming: 'native'

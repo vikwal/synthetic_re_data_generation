@@ -1,0 +1,4 @@
+none: objective 0.8247 rel ghi 0.8738 dhi 0.7757 78s
+2pt_3N_8S: objective 0.7837 rel ghi 0.8305 dhi 0.7369 108s
+3pt_3N_3O_8S: objective 0.7762 rel ghi 0.8215 dhi 0.7309 124s
+4pt_8km: objective 0.7701 rel ghi 0.8221 dhi 0.7182 121s

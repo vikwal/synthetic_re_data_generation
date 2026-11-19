@@ -1,0 +1,19 @@
+# Release parks_pv_v4 (30-min variant): the reviewed fleet of 226 MaStR open-ground parks, geometry from open
+# geodata (window method, geometry run _v4). Frozen 2026-11-11: outputs must stay bit-identical.
+# All park tables (baseline, sites, configs) are derived by the stages from the selection and the shared inputs.
+release: parks_pv_v4
+variant: _30min
+selection: "{selection_dir}/pv_park_selection_v4.csv"
+period: {start: "2023-07-24", end: "2026-08-01"}
+step: 30min
+seed: 42
+irradiance: {correction: xgb_v5}
+geometry: {mode: estimate, method: v4}   # angle estimates of all 226 parks in <geometry_dir>/v4/
+snow: {model: depth_slide}
+aging: {cohorts: true}
+horizon: true
+prepare:
+  steps: [site, cams, correct, icon]
+  icon: {name: pv_v6, previous: pv_v2, sources: "pv_v1 pv_v2_add", hours: "09"}
+stages: [baseline, geometry, sites, configs, generate, assemble, tables]
+workers: 8

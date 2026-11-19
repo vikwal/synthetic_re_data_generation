@@ -1,0 +1,6 @@
+part 3: 5 configurations, 1,977,707 rows
+A_ladder cams+geom+ring3+ring8+ring_agg: objective 0.7861  rel_rmse ghi 0.8289 dhi 0.7434  110s
+A_ladder cams+geom+ring3+ring8+ring_agg+context+era5_solar+era5_met+static: objective 0.7579  rel_rmse ghi 0.8085 dhi 0.7074  175s
+B_form full/absolute: objective 0.7599  rel_rmse ghi 0.8097 dhi 0.7100  168s
+C_loo full-ring8: objective 0.7608  rel_rmse ghi 0.8102 dhi 0.7113  148s
+C_loo full-era5_met: objective 0.7583  rel_rmse ghi 0.8078 dhi 0.7088  175s

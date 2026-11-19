@@ -1,0 +1,4 @@
+1pt_3N: objective 0.7869 rel ghi 0.8324 dhi 0.7413 119s
+2pt_3N_3S: objective 0.7843 rel ghi 0.8316 dhi 0.7371 114s
+4pt_mixed_3N_3S_8O_8W: objective 0.7689 rel ghi 0.8140 dhi 0.7238 140s
+8pt_full: objective 0.7573 rel ghi 0.8047 dhi 0.7100 147s

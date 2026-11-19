@@ -1,0 +1,156 @@
+# =============================================================================
+# ERA5 bias correction of 10 m wind speed at DWD stations
+# Reimplementation of Houndekindo & Ouarda (2025), Energy 328, 136498
+# "LSTM and Transformer-based framework for bias correction of ERA5 hourly
+#  wind speeds" — reference code: https://github.com/kindo/TRWindBC
+#
+# Periods are round2-conform (see scripts/round2/wp2a_station_table.py):
+# training NEVER touches the round2 validation window (Jun 2023 - Jun 2024).
+# Station split copied verbatim from
+# forecasting_framework/configs/dcrnn/config_wind_dcrnn.yaml (103/50/50).
+# =============================================================================
+
+paths:
+  era5_dir: /mnt/nvme2/synthetic/raw/wind_era5_v2            # Station_{id}.csv, hourly UTC
+  dwd_dir: /mnt/nvme2/synthetic/raw/round2/dwd_wind_hourly   # DWD_{id}.parquet, hourly UTC
+  topo_features: data/round2/topo_features.csv
+  stations_master: /home/viktor/Work/stations_master.csv
+  processed_dir: /mnt/nvme2/synthetic/era5_bc/processed      # per-station tidy parquet
+  norm_stats: data/era5_bc/norm_stats.json                   # per-gridpoint dyn mean/std (train period)
+  dist_coast: data/era5_bc/dist_coast.csv
+  coastline_dir: data/era5_bc/ne_coastline                   # Natural Earth download cache
+  static_features: data/era5_bc/static_features.csv
+  checkpoints_dir: /mnt/nvme2/synthetic/era5_bc/checkpoints
+  results_dir: results/era5_bc
+  figs_dir: figs/era5_bc
+
+periods:                        # all UTC; ends inclusive at the given hour
+  train_start: '2024-07-01 00:00'
+  train_end:   '2026-04-30 23:00'
+  eval_start:  '2023-07-01 00:00'   # round2 validation window (ERA5 v2 starts Jul 2023)
+  eval_end:    '2024-06-30 23:00'
+
+stations:
+  # ---- 103 training stations ('files' in config_wind_dcrnn.yaml) ----
+  train: [
+    '00183', '00460', '00856', '05404', '01443', '01684', '01759', '03032', '03158', '03631',
+    '03730', '05792', '05856', '15000', '05779', '04271', '02638', '02961', '05490', '05426',
+    '03761', '00303', '02483', '00596', '03513', '00691', '01200', '02014', '02667', '04036',
+    '04911', '00662', '00232', '05109', '01605', '05871', '15813', '05142', '01691', '01544',
+    '07370', '04931', '05797', '05705', '01001', '00161', '07341', '00433', '00298', '02932',
+    '02023', '01048', '02794', '13674', '03668', '05538', '01975', '04625', '01270', '02171',
+    '04104', '05100', '01503', '03093', '03098', '03287', '03086', '04393', '03402', '04094',
+    '00704', '05349', '01766', '02985', '06163', '01357', '01468', '00880', '04371', '01886',
+    '01420', '03015', '04464', '03196', '04466', '00853', '02044', '06344', '00963', '03321',
+    '02559', '07351', '04280', '02597', '00164', '07389', '03231', '01639', '06197', '06314',
+    '02485', '02856', '07396']
+  # ---- 50 validation stations ('val_files') ----
+  val: [
+    '01550', '02907', '07393', '02497', '01757', '07367', '02812', '05397', '07412', '06159',
+    '00591', '05825', '03821', '04887', '03366', '05516', '02712', '05029', '07368', '05480',
+    '00701', '03167', '01358', '03126', '05800', '01587', '01694', '00282', '01869', '03925',
+    '03376', '19171', '07374', '00656', '02115', '01078', '03811', '03244', '04642', '15207',
+    '04745', '01580', '02261', '05629', '03379', '02252', '05930', '13965', '03028', '07369']
+  # ---- 50 test stations ('test_files') ----
+  test: [
+    '00096', '00427', '00603', '05371', '00840', '00867', '00891', '00953', '01262', '01303',
+    '05906', '01612', '01803', '01832', '02290', '02429', '02564', '02601', '07410', '02878',
+    '02925', '02928', '03166', '03268', '03362', '03660', '03897', '03946', '03987', '04024',
+    '04032', '00198', '04039', '04177', '04336', '13711', '04501', '04928', '05158', '05347',
+    '01346', '05440', '05546', '07394', '07395', '07403', '15444', '19207', '00722', '00342']
+  # stations without an ERA5 v2 CSV — dropped from their split when
+  # drop_missing_era5 is true (could be regenerated with generate_wind_era5_v2.py)
+  missing_era5: ['03196', '15813']
+  drop_missing_era5: true
+  min_obs_coverage: 0.70          # min fraction of valid obs hours over the train period
+  # final training runs twice per model ("val" and "test" evaluation run);
+  # n_early_stop stations of the respective eval split drive early stopping,
+  # the remaining stations are the untouched evaluation set
+  n_early_stop: 10
+
+target:
+  # Deviations from the paper (their target is the raw ratio; ECCC data only
+  # contains complete 24 h days). Both knobs can be disabled for a
+  # paper-faithful run: min_era5_wind: 0.0, factor_clip: null.
+  min_era5_wind: 0.5              # m/s — hours with ws10_era5 below are masked from the loss
+  factor_clip: [0.0, 8.0]         # training targets clipped to this range
+  min_valid_hours_per_day: 1      # day-window kept if >= this many valid target hours
+
+# Dynamic covariates, order matters (paper: ['10u','10v','10ws','blh','sp','2t']).
+# u/v enter as unit direction vectors (u/(ws+1e-5)); the rest standardized
+# per grid point with mean/std from the TRAINING period.
+dynamic_covariates: [u10_dir, v10_dir, ws10, blh, sp, t2m]
+
+# Static covariates, min-max scaled to [0,1]; scaler fitted on TRAIN stations
+# only (refit on train+val for the final models). ERA5 quantiles computed over
+# the TRAINING period. aspect enters as sin/cos.
+static_covariates: [q05_era5, q50_era5, q95_era5,
+                    elevation, slope, aspect_sin, aspect_cos,
+                    tpi5, tpi75, tdi, elev_std, z0, dist_coast]
+
+windows:
+  past_len: 120                   # context hours before the target day (paper plen = 24*5)
+  future_len: 24                  # target hours per window (paper flen)
+  timezone_offset_hours: 1        # fixed CET (UTC+1, no DST) for day boundaries + temporal embedding
+
+model_common:                     # paper Table 2 / model_config.py
+  batch_size: 128
+  huber_delta: 1.5
+  static_hidden: 32
+  static_dropout: 0.05
+  activation: GELU
+  max_epochs: 60                  # authors used 30 fixed; we add early stopping
+  early_stopping_patience: 10
+  num_workers: 8
+  seed: 42
+
+lstm:
+  lr: 2.0e-5
+  hidden: 256
+  num_layers: 1
+  dropout: 0.2
+
+transformer:
+  lr: 1.0e-5
+  hidden: 256
+  nblock: 4
+  nheads: 4
+  dropout: 0.1
+
+hpo:
+  dl:
+    n_trials: 100                 # v2 studies: continuous full space (TPE)
+                                  # paper-default reference = trial 0 of the v1 studies
+    space:
+      lr:             {low: 1.0e-5, high: 5.0e-4, log: true}
+      dropout:        {low: 0.0, high: 0.5}
+      past_len:       {low: 24, high: 168, step: 24}   # 1..7 days of context
+      hidden:         {low: 40, high: 128}             # LSTM only
+      num_layers:     {low: 1, high: 3}                # LSTM only
+      nheads:         {low: 2, high: 8}                # Transformer: hidden = nheads*head_dim
+      head_dim:       {low: 8, high: 16}               #   -> hidden in [16, 128]
+      nblock:         {low: 2, high: 6}                # Transformer encoder depth
+      static_hidden:  {low: 8, high: 64}
+      static_dropout: {low: 0.0, high: 0.2}
+      weight_decay:   {low: 1.0e-8, high: 1.0e-3, log: true}
+      batch_size:     {low: 32, high: 512, log: true}
+  gboost:                         # paper Table 1 / computeGBFeatureImp.py
+    n_options: 200                # authors: 1000; we have 151 stations, not 565
+    n_splits: 6                   # k-fold CV within train stations (feature selection only)
+    r2_threshold: 0.36            # pool models above this R2 for the PFI median
+    n_select_features: 11         # top-k features by median permutation importance
+    n_bagging: 100                # final prediction = mean of n bagged fits
+    space:
+      learning_rate: [0.01, 0.02, 0.05, 0.1, 0.2]
+      subsample: [0.5, 0.6, 0.7, 0.8, 0.9]
+      max_depth: [2, 3, 4, 5, 6, 8]
+      max_features: [0.1, 0.2, 0.3, 0.4, 0.5]
+      n_estimators: [50, 100, 200, 400, 800, 1000]
+      n_iter_no_change: [10, 20, 50, 100]
+      min_samples_split: [0.001, 0.01, 0.02, 0.05, 0.1]
+
+evaluation:
+  pss_bin_width: 0.5              # m/s histogram bins for the Perkins skill score
+  pss_max_ws: 40.0
+  pss_tail_pcts: [10, 90]         # PSS-LWT below P10 of obs, PSS-UPT above P90
+  quantiles: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]

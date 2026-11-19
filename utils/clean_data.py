@@ -7,7 +7,7 @@ from tqdm import tqdm
 from typing import List
 import logging
 
-from utils import tools, get_nwp
+from . import tools
 
 def relevant_features(features: dict):
     pv_features = [features['ghi']['name'],
@@ -16,6 +16,8 @@ def relevant_features(features: dict):
                    #features['dewpoint']['name'],
                    features['wind_speed']['name'],
                    #features['pressure']['name'],
+                   features['prec']['name'],
+                   features['prec_dau']['name']
                    ]
     wind_features = [features['wind_speed']['name'],
                      features['temperature']['name'],
@@ -41,7 +43,8 @@ def get_station_ids(db_config: dict):
         return []
 
 def iterate_stations(db_config: dict,
-                   station_ids: list):
+                     station_ids: list,
+                     from_date: str = None):
     conn, cursor = tools.connect_db(db_config)
     frames = []
     for id in tqdm(station_ids, desc='Iterate over stations'):
@@ -58,6 +61,8 @@ def iterate_stations(db_config: dict,
             #df['timestamp'] = df['timestamp'].dt.tz_convert("Europe/Berlin")
             df.set_index('timestamp', inplace=True)
             df.sort_index(inplace=True)
+            if from_date:
+                df = df[from_date:]
             frames.append(df)
         else:
             logging.warning(f"No data for station_id: {id} found.")
@@ -81,10 +86,18 @@ def get_drop_list(frames: List[pd.DataFrame],
                 continue
     return drop_list
 
+def delete_files(dir_path: str):
+    if not os.path.exists(dir_path):
+        return
+    for filename in os.listdir(dir_path):
+        file_path = os.path.join(dir_path, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
 def main():
 
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         #datefmt=datefmt,
         handlers=[
@@ -93,25 +106,31 @@ def main():
             ]
     )
 
-    config = tools.load_config('config.yaml')
+    config = tools.load_config('./configs/config.yaml')
     db_config = config['write']['db_conf']
     features = config['features']
     threshold = config['write']['threshold']
-    solar_dir = os.path.join(config['data']['raw_dir'], 'solar')
-    wind_dir = os.path.join(config['data']['raw_dir'], 'wind')
+    solar_dir = os.path.join(config['data']['synth_dir'], 'raw', 'solar')
+    wind_dir = os.path.join(config['data']['synth_dir'], 'raw', 'wind')
+    from_date = config['data']['from_date']
     passw = getpass.getpass("Enter postgres users password: ")
     config['write']['db_conf']['passw'] = passw
 
     pv_features, wind_features = relevant_features(features=features)
     master_data = tools.get_master_data(db_config=db_config)
+    master_data.rename(columns={'station_id': 'park_id'}, inplace=True)
+    #master_data.to_csv('master_data.csv', index=False, sep=';')
 
     logging.info('Getting distinct station ids')
     station_ids = get_station_ids(db_config=db_config)
     logging.info('Getting station dataframes')
     frames = iterate_stations(db_config=db_config,
-                              station_ids=station_ids)
+                              station_ids=station_ids,
+                              from_date=from_date)
     logging.info(f'Using an accepted threshold of {threshold*100}% missing rows per column, from {len(frames)} dataframes only remain:')
     if config['write']['clean_pv']:
+        if config['write']['delete_before_clean']:
+            delete_files(solar_dir)
         drop_pv_stations = get_drop_list(frames=frames,
                                          features=pv_features,
                                          threshold=threshold)
@@ -120,10 +139,14 @@ def main():
         pv_features.insert(0, 'station_id')
         for df in frames:
             station_id = df.station_id.iloc[0]
-            file_name = f'Station_{station_id}.csv'
+            # .parquet, nicht .csv: geschrieben wird mit to_parquet, und die
+            # Abnehmer (forecasting_framework) lesen Station_<id>.parquet.
+            file_name = f'Station_{station_id}.parquet'
             if not station_id in drop_pv_stations:
-                df[pv_features].to_csv(os.path.join(solar_dir, file_name))
+                df[pv_features].to_parquet(os.path.join(solar_dir, file_name))
     if config['write']['clean_wind']:
+        if config['write']['delete_before_clean']:
+            delete_files(wind_dir)
         drop_wind_stations = get_drop_list(frames=frames,
                                            features=wind_features,
                                            threshold=threshold)
@@ -132,8 +155,8 @@ def main():
         wind_features.insert(0, 'station_id')
         for df in frames:
             station_id = df.station_id.iloc[0]
-            file_name = f'Station_{station_id}.csv'
+            file_name = f'Station_{station_id}.parquet'
             if not station_id in drop_wind_stations:
-                df[wind_features].to_csv(os.path.join(wind_dir, file_name))
+                df[wind_features].to_parquet(os.path.join(wind_dir, file_name))
 if __name__ == '__main__':
     main()

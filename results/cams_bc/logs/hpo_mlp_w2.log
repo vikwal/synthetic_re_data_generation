@@ -1,0 +1,4 @@
+/home/viktor/Work/synthetic_re_data_generation/scripts/cams_bc/hpo.py:32: ExperimentalWarning: Argument ``multivariate`` is an experimental feature. The interface can change in the future.
+  sampler=optuna.samplers.TPESampler(multivariate=True, seed=None),
+[I 2026-10-13 14:02:31,974] A new study created in RDB with name: cams_bc_mlp_v1
+[I 2026-10-13 14:05:31,946] Trial 0 finished with value: 0.7477555561231681 and parameters: {'n_layers': 2, 'width': 245, 'dropout': 0.12347685806946301, 'lr': 0.0014326745714524464, 'weight_decay': 2.2159432798879416e-05, 'batch_size': 1036, 'activation': 'relu', 'lr_schedule': 'plateau'}. Best is trial 0 with value: 0.7477555561231681.

@@ -1,0 +1,15 @@
+# RF ERA5-quality classifier — held-out evaluation (HANDOFF ask 8)
+# 200 stations, stratified 80/20 split (random_state=42), features: 8 topo (elevation, slope, aspect, tpi5, tpi75, tdi, elev_std, z0)
+metric,value
+heldout_accuracy,0.90
+heldout_n,40
+cv5_accuracy_mean,0.825
+cv5_accuracy_std,0.016
+# confusion matrix (rows = true class 1/2/3, cols = predicted 1/2/3)
+confusion_c1,"31,1,0"
+confusion_c2,"2,4,0"
+confusion_c3,"0,1,1"
+# per-class precision/recall/f1 (support 32/6/2)
+class1,"0.94,0.97,0.95"
+class2,"0.67,0.67,0.67"
+class3,"1.00,0.50,0.67"

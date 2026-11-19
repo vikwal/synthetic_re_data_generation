@@ -1,0 +1,11 @@
+{
+ "n_layers": 12,
+ "width": 516,
+ "dropout": 0.2873465952593256,
+ "lr": 0.00026687831997210167,
+ "weight_decay": 2.026545280505056e-05,
+ "batch_size": 787,
+ "activation": "gelu",
+ "lr_schedule": "plateau",
+ "form": "kc"
+}

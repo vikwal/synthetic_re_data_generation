@@ -1,0 +1,139 @@
+altitude: 292.8988037109375
+dc_ac: 1.2305405405405403
+module:
+  model: pvwatts
+  name: null
+  gamma_pdc: -0.0042
+  year: 2013
+inverter:
+  model: pvwatts
+  name: null
+  eta_inv_nom: 0.97
+  eta_inv_ref: 0.9637
+  unit_kw: null
+temperature:
+  model: faiman
+  u0: 25.0
+  u1: 6.84
+losses:
+  dc: 0.05
+  ac: 0.02
+  availability: 0.98
+aging:
+  enabled: true
+  commissioning_date: '2013-06-26'
+  era: multi_si
+soiling:
+  enabled: false
+  model: hsu
+  cleaning_threshold_mm: 1.0
+  pm_station: null
+shading:
+  horizon: true
+  inter_row: true
+transposition:
+  model: haydavies
+  iam: physical
+  albedo: era5
+random_seed: 42
+park_id: SEL905151543133
+latitude: 49.6998
+longitude: 9.92165
+kwp_dc: 11382.5
+arrays:
+- name: g0_0_2013
+  tilt: 17.83
+  azimuth: 180.71
+  share: 0.264265
+  gcr: 0.5791794317294408
+  gamma_pdc: -0.0042
+  era: multi_si
+  commissioning_date: '2013-06-26'
+- name: g0_0_2020
+  tilt: 17.83
+  azimuth: 180.71
+  share: 0.18575
+  gcr: 0.29960212201591513
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2020-08-28'
+- name: g0_0_2023
+  tilt: 17.83
+  azimuth: 180.71
+  share: 0.243275
+  gcr: 0.5160348837209302
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2023-05-26'
+- name: g1_1_2013
+  tilt: 11.34
+  azimuth: 90.03
+  share: 0.038015
+  gcr: 0.5791794317294408
+  gamma_pdc: -0.0042
+  era: multi_si
+  commissioning_date: '2013-06-26'
+- name: g1_1_2020
+  tilt: 11.34
+  azimuth: 90.03
+  share: 0.02672
+  gcr: 0.29960212201591513
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2020-08-28'
+- name: g1_1_2023
+  tilt: 11.34
+  azimuth: 90.03
+  share: 0.034995
+  gcr: 0.5160348837209302
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2023-05-26'
+- name: g1_2_2013
+  tilt: 11.34
+  azimuth: 270.03
+  share: 0.038015
+  gcr: 0.5791794317294408
+  gamma_pdc: -0.0042
+  era: multi_si
+  commissioning_date: '2013-06-26'
+- name: g1_2_2020
+  tilt: 11.34
+  azimuth: 270.03
+  share: 0.02672
+  gcr: 0.29960212201591513
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2020-08-28'
+- name: g1_2_2023
+  tilt: 11.34
+  azimuth: 270.03
+  share: 0.034995
+  gcr: 0.5160348837209302
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2023-05-26'
+- name: g2_3_2013
+  tilt: 17.9
+  azimuth: 167.27
+  share: 0.040881
+  gcr: 0.5791794317294408
+  gamma_pdc: -0.0042
+  era: multi_si
+  commissioning_date: '2013-06-26'
+- name: g2_3_2020
+  tilt: 17.9
+  azimuth: 167.27
+  share: 0.028735
+  gcr: 0.29960212201591513
+  gamma_pdc: -0.0036
+  era: mono_perc
+  commissioning_date: '2020-08-28'
+- name: g2_3_2023
+  tilt: 17.9
+  azimuth: 167.27
+  share: 0.037634
+  gcr: 0.5160348837209302
+  gamma_pdc: -0.003
+  era: topcon_bifacial
+  commissioning_date: '2023-05-26'

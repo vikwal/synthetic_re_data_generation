@@ -1,0 +1,25 @@
+# Central settings of the generator (read by settings.py). Copy to configs/settings.yaml (gitignored) or point
+# SYNTHRE_SETTINGS at a file elsewhere. Precedence per key: environment variable > this file > default.
+# Omitted keys keep their default (the w-lambdablade2 layout of release parks_pv_v4). Placeholders: {repo}, {data_root}, {work_root}.
+
+# data_root: /data                                   # env DATA_ROOT; inputs, releases, shared caches
+# work_root: /work                                   # env PV_WORK_ROOT; data/, configs/pv/_generated/, results/pv/ (default: the repo)
+# selection_dir: "{work_root}/selection"             # env PV_SELECTION_DIR; pv_park_selection_<ver>.csv
+# pv_shared_dir: "{data_root}/synthetic/solar/parks_pv"     # env PV_SHARED_DIR; PV inputs/corrected CAMS/snow cache of all releases
+# geometry_dir: "{pv_shared_dir}/geometry"                # env PV_GEOMETRY_DIR; angle estimates per park (<method>/<park_id>/)
+# mastr_dir: "{data_root}/synthetic/solar/mastr"     # env PV_MASTR_DIR; parsed MaStR parquets
+# mastr_date: "20250625"                             # env PV_MASTR_DATE; date tag of the parsed export (default: parks_pv_v4);
+#                                                    # auto = newest present, none present -> current export is downloaded once
+# mastr_export_dir: "{data_root}/mastr_export"       # env PV_MASTR_EXPORT_DIR; unpacked full export (XML)
+# cams_models_dir: "{data_root}/synthetic/cams_bc/models"   # env PV_CAMS_MODELS_DIR; <tag>/ e.g. xgb_v5 (deployed manually)
+# icon_sl09_dir: "{data_root}/nwp_ready_pv/icon-d2/SL/09"   # env PV_ICON_SL09_DIR; missing parks -> ERA5-only snow (warning)
+# era5_snow_dir: "{data_root}/synthetic/era5_snow/raw"      # env PV_ERA5_SNOW_DIR
+# dem_glo30_dir: "{data_root}/dem/glo30"             # env PV_DEM_GLO30_DIR; Copernicus GLO-30 tiles
+# dem_mosaic_90m: "{data_root}/dem/mosaic_90m.tif"   # env PV_DEM_MOSAIC_90M
+# cec_modules_csv: "{data_root}/cec/CEC_Modules.csv"        # env PV_CEC_MODULES_CSV
+# cec_inverters_csv: "{data_root}/cec/CEC_Inverters.csv"    # env PV_CEC_INVERTERS_CSV
+# cams_pm_dir: "{data_root}/cams_stations"           # env PV_CAMS_PM_DIR; benchmarks only
+# nwp_points_dir: /opt/NWP-points                    # env PV_NWP_POINTS_DIR; stage prepare icon
+# correction_python: ""                              # env PV_CORRECTION_PYTHON; empty = the running interpreter
+#
+# Secrets stay in the environment, never here: WEATHER_DB_URL, ADS key (~/.cdsapirc).

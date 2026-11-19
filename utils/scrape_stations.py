@@ -54,30 +54,43 @@ def download(url: str,
                    sleep=sleep,
                    verbose=True)
 
+def delete_dir_contents(dir_path: str):
+    for entry in os.listdir(dir_path):
+        entry_path = os.path.join(dir_path, entry)
+        if os.path.isfile(entry_path) or os.path.islink(entry_path):
+            os.remove(entry_path)
+        elif os.path.isdir(entry_path):
+            shutil.rmtree(entry_path)
+
 def main():
-    config_path = "config.yaml"
+    config_path = "configs/config.yaml"
     config = load_config(config_path)
     sc_config = config['scraping']
 
     download_dir = config['data']['dir']
     download_url = sc_config['download_url']
-    vars = sc_config['vars']
+    wind_vars = config['scraping']['wind_vars']
+    pv_vars = config['scraping']['pv_vars']
+    scraping_vars = list(set(wind_vars + pv_vars))
     sleep = sc_config['sleep']
     get_historical = sc_config['get_historical']
     get_recent = sc_config['get_recent']
 
-    for var in vars:
-        target_dir = os.path.join(download_dir, var)
-        if os.path.exists(target_dir) and sc_config['overwrite']:
-            print(f"Deleting {target_dir}...")
-            shutil.rmtree(target_dir)
-        os.makedirs(target_dir, exist_ok=True)
+    for var in scraping_vars:
         if get_historical:
+            target_dir = os.path.join(download_dir, 'historical', var)
+            if sc_config['overwrite']:
+                delete_dir_contents(dir_path=target_dir)
+            os.makedirs(target_dir, exist_ok=True)
             url = os.path.join(download_url, var, 'historical')
             download(url=url,
                     target_dir=target_dir,
                     sleep=sleep)
         if get_recent:
+            target_dir = os.path.join(download_dir, 'recent', var)
+            if sc_config['overwrite']:
+                delete_dir_contents(dir_path=target_dir)
+            os.makedirs(target_dir, exist_ok=True)
             url = os.path.join(download_url, var, 'recent')
             download(url=url,
                     target_dir=target_dir,
