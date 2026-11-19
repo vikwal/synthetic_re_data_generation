@@ -270,7 +270,7 @@ def create_grid_index(grid_files_dict, output_dir="data/parquet/grid_points"):
 if __name__ == "__main__":
     # Process all monthly ERA5 GRIB files
     grib_directory = "/Users/meghna/Downloads/wind"  # Directory containing era5_*_*.grib files
-    output_directory = "/Users/meghna/synthetic_re_data_generation/streamlit/data/parquet/grid_points"
+    output_directory = "/Users/meghna/synthetic_re_data_generation/fastapi_app/data/parquet/grid_points"
     
     print("=== ERA5 Monthly GRIB to Individual Grid Parquet Files ===")
     

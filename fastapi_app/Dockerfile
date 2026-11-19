@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 COPY fastapi_app/requirements.txt ./fastapi_app/requirements.txt
 RUN pip install --no-cache-dir -r fastapi_app/requirements.txt
 
-# Code only (see .dockerignore). The weather/master data (streamlit/data) and users' storage come in through volumes.
+# Code only (see .dockerignore). The weather/master data (fastapi_app/data) and users' storage come in through volumes.
 COPY . .
 
 RUN useradd --uid 49999 --no-create-home app && mkdir -p /storage && chown -R app:app /storage /app

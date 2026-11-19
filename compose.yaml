@@ -3,7 +3,7 @@
 # Server: set the values below in a .env next to this file; nginx forwards /synthetic-dashboard to 127.0.0.1:8000.
 #   SYNTH_BIND=127.0.0.1:                 publish on loopback only, nginx is the way in
 #   SYNTH_RE_BASE_PATH=/synthetic-dashboard
-#   SYNTH_DATA_DIR=/opt/synthetic_data    the copy of streamlit/data
+#   SYNTH_DATA_DIR=/opt/synthetic_data    the copy of fastapi_app/data
 services:
   synthetic_dashboard:
     build:
@@ -20,14 +20,19 @@ services:
       # Empty locally; behind nginx the prefix is stripped by the proxy and the app builds its links with it.
       - SYNTH_RE_BASE_PATH=${SYNTH_RE_BASE_PATH:-}
       - SYNTH_RE_STORAGE_DIR=/storage
-      # Config file other than streamlit/config.yaml (empty = the default one)
+      # Config file other than config.yaml in the project root (empty = the default one)
       - SYNTH_RE_CONFIG=${SYNTH_RE_CONFIG:-}
       - SYNTH_RE_ERA5_DIR=${SYNTH_RE_ERA5_DIR:-}
       - SYNTH_RE_ERA5_SOLAR_DIR=${SYNTH_RE_ERA5_SOLAR_DIR:-}
       - SYNTH_RE_ERA5_MET_DIR=${SYNTH_RE_ERA5_MET_DIR:-}
+      # ERA5 grid points from PostgreSQL instead of parquet files (empty = parquet). On the server the database runs on
+      # the host, so use host.docker.internal as the host name, e.g. postgresql://user:pw@host.docker.internal:5432/era5
+      - SYNTH_RE_ERA5_DB_URL=${SYNTH_RE_ERA5_DB_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - synthetic_storage:/storage
-      - ${SYNTH_DATA_DIR:-./streamlit/data}:/app/streamlit/data:ro
+      - ${SYNTH_DATA_DIR:-./fastapi_app/data}:/app/fastapi_app/data:ro
     restart: unless-stopped
 
 volumes:

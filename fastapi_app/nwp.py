@@ -1,8 +1,8 @@
 """Archived NWP forecasts (ICON-D2, ECMWF IFS) as an alternative weather source for the pre-trained model tab.
 
 Optional local archive, one folder per model (not offered in the form; the package and server sources are used instead):
-    streamlit/data/parquet/grid_points_icon_d2/grid_<LAT>_<LON>.parquet
-    streamlit/data/parquet/grid_points_ecmwf/grid_<LAT>_<LON>.parquet
+    fastapi_app/data/parquet/grid_points_icon_d2/grid_<LAT>_<LON>.parquet
+    fastapi_app/data/parquet/grid_points_ecmwf/grid_<LAT>_<LON>.parquet
 Each file is hourly UTC with u/v wind (10 m, 100 m), temp_2m, dew_point_2m, pressure and irradiance columns.
 """
 from __future__ import annotations

@@ -8,6 +8,6 @@ venv/
 .git/
 fastapi_app/storage/
 /data/
-streamlit/data/
+fastapi_app/data/
 *.ipynb
 .ipynb_checkpoints/

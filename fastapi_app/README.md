@@ -1,6 +1,6 @@
 # Synthetic Renewables — FastAPI app (v2)
 
-A local scenario workspace for synthetic wind and solar generation. The Streamlit dashboard in `streamlit/` is untouched; `fastapi_app_v1_snapshot/` holds the earlier Streamlit-like port.
+A local scenario workspace for synthetic wind and solar generation. Weather, solar and master data live in `fastapi_app/data/`; the model configuration is `config.yaml` in the project root.
 
 ## Run
 

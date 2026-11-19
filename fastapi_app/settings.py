@@ -5,9 +5,8 @@ import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STREAMLIT_DIR = PROJECT_ROOT / "streamlit"            # config.yaml + data/ live here
-DATA_DIR = STREAMLIT_DIR / "data"
-CONFIG_PATH = Path(os.environ.get("SYNTH_RE_CONFIG") or STREAMLIT_DIR / "config.yaml")
+DATA_DIR = PROJECT_ROOT / "fastapi_app" / "data"      # weather, solar and master data (a read-only volume in Docker)
+CONFIG_PATH = Path(os.environ.get("SYNTH_RE_CONFIG") or PROJECT_ROOT / "config.yaml")
 GRID_DIR = Path(os.environ.get("SYNTH_RE_ERA5_DIR") or DATA_DIR / "parquet" / "grid_points")   # ERA5 weather files
 # Optional: read the ERA5 grid points from PostgreSQL instead of GRID_DIR (see utils/import_era5_to_postgres.py).
 # Example: postgresql://era5_user:PASSWORD@localhost:5432/era5. Unset = parquet files, as before.
