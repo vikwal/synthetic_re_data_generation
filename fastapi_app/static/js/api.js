@@ -1,11 +1,18 @@
 // Thin fetch wrapper around the JSON API.
+import { trDeep } from "./i18n.js?v=26";
+
+// Plotly figures are built on the server in English; translate their texts for the chosen language.
+const figs = (d) => { if (d && d.figures) d.figures = trDeep(d.figures); return d; };
+const BASE = window.BASE_PATH || "";
+
 async function req(method, url, body) {
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(url, opts);
+  const res = await fetch(BASE + url, opts);
+  if (res.status === 401 && !url.startsWith("/api/auth/")) { location.href = `${BASE}/login`; return new Promise(() => {}); }   // session expired
   if (res.status === 204) return null;
   let data = null;
   try { data = await res.json(); } catch (_) { /* no body */ }
@@ -43,7 +50,7 @@ export const api = {
 
   results: () => req("GET", "/api/results"),
   result: (id) => req("GET", `/api/results/${id}`),
-  figure: (id, name, params = {}) => req("GET", `/api/results/${id}/figure/${name}?${qs(params)}`),
+  figure: (id, name, params = {}) => req("GET", `/api/results/${id}/figure/${name}?${qs(params)}`).then(trDeep),
   table: (id, page, pageSize = 50) => req("GET", `/api/results/${id}/table?${qs({ page, page_size: pageSize })}`),
   deleteResult: (id) => req("DELETE", `/api/results/${id}`),
   mlArchitectures: () => req("GET", "/api/ml/architectures"),
@@ -53,9 +60,10 @@ export const api = {
   mlTrain: (body) => req("POST", "/api/ml/train", body),
   mlFinetune: (id, body) => req("POST", `/api/ml/models/${id}/finetune`, body),
   mlDelete: (id) => req("DELETE", `/api/ml/models/${id}`),
-  mlFigure: (id, name) => req("GET", `/api/ml/models/${id}/figure/${name}`),
-  compareReal: (body) => req("POST", "/api/compare/real", body),
-  compare: (ids) => req("POST", "/api/compare", { result_ids: ids }),
+  mlFigure: (id, name) => req("GET", `/api/ml/models/${id}/figure/${name}`).then(trDeep),
+  parseParkFile: (body) => req("POST", "/api/wind/parks/parse", body),
+  compareReal: (body) => req("POST", "/api/compare/real", body).then(figs),
+  compare: (ids) => req("POST", "/api/compare", { result_ids: ids }).then(figs),
 };
 
 // Poll a background job until it finishes; `onUpdate(job)` is called on every poll.

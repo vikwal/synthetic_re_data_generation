@@ -100,13 +100,18 @@ def test_real_csv_parsing_and_compare():
     idx = pd.date_range("2024-01-01", periods=24 * 30, freq="h", tz="UTC")
     rng = np.random.default_rng(1)
     syn = pd.DataFrame({"power": np.clip(rng.normal(2e6, 1e6, len(idx)), 0, 5e6)}, index=idx)
+    syn["wind_speed_hub"] = rng.uniform(0, 20, len(idx))
     real_p = syn["power"].values * 0.9
     txt = "timestamp;power_t1;power_t2\n" + "\n".join(
         f"{t:%Y-%m-%d %H:%M:%S};{p / 2e6:.5f};{p / 2e6:.5f}" for t, p in zip(idx, real_p))
     real = rc.parse_real_csv(txt, "MW")
     m, figs = rc.compare(real, syn, 5e6, "wind")
     assert abs(m["bias_pct"] - 11.11) < 0.5 and m["correlation"] > 0.999
-    assert set(figs) == {"timeseries", "scatter", "diurnal", "monthly", "duration"}
+    assert 0.9 < m["r2"] < 1.0                     # real = 0.9 x synthetic: perfect shape, small level error
+    assert set(figs) == {"timeseries", "power_vs_wind", "monthly"}   # wind: power vs wind speed; no daily profile or duration curve
+    assert [t["name"] for t in figs["power_vs_wind"]["data"]] == ["Real", "Synthetic"]
+    _, figs_solar = rc.compare(real, syn, 5e6, "solar")
+    assert set(figs_solar) == {"timeseries", "diurnal", "monthly", "duration"}
     import json
     json.dumps(figs, allow_nan=False)
 
@@ -119,3 +124,15 @@ def test_real_csv_errors():
         except ValueError:
             continue
         raise AssertionError("expected ValueError")
+
+
+def test_get_turbines_fallback_for_missing_rated_speed(tmp_path):
+    """A '-' in the specs table (e.g. V136-3.45 has no rated wind speed) must not drop the turbine."""
+    from fastapi_app import core
+    (tmp_path / "power.csv").write_text("wind_speed;T1\n3;0\n6;1000\n9;3000\n12;3450\n15;3450\n", encoding="utf-8")
+    (tmp_path / "cp.csv").write_text("wind_speed;T1\n3;0.1\n", encoding="utf-8")
+    (tmp_path / "specs.csv").write_text(
+        "Turbine;Rotordurchmesser;Nabenhöhe;Einschaltgeschwindigkeit;Nennwindgeschwindigkeit;Abschaltgeschwindigkeit\n"
+        "T1;136.0;149.0;3.0;-;22.5\n", encoding="utf-8")
+    _, _, specs = core._get_turbines({"turbines": ["T1"]}, str(tmp_path / "power.csv"), str(tmp_path / "cp.csv"), str(tmp_path / "specs.csv"))
+    assert specs["T1"] == {"diameter": 136.0, "cut_in": 3.0, "cut_out": 22.5, "rated": 12.0}

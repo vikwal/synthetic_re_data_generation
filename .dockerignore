@@ -1,0 +1,13 @@
+# Keeps the image small and free of local state. Reference weather data is mounted, not baked in.
+SytheticVenv/
+SyntheticDataGenVenv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+**/.DS_Store
+.git/
+fastapi_app/storage/
+/data/
+streamlit/data/
+*.ipynb
+.ipynb_checkpoints/

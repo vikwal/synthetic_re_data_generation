@@ -132,22 +132,29 @@ def irradiance_monthly_figure(df: pd.DataFrame) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------- performance (wind parks)
-def waterfall_figure(e: dict) -> dict:
+def waterfall_figure(e: dict, percent: bool = False) -> dict:
     """Ideal -> ageing -> wake -> net. Built from stacked bars (invisible base + coloured bar) so every
-    step gets the same colour it has in the 'Loss per turbine' chart: ageing amber, wake light green."""
-    unit, div = ("GWh", 1000.0) if e["ideal_mwh"] >= 5000 else ("MWh", 1.0)
+    step gets the same colour it has in the 'Loss per turbine' chart: ageing amber, wake light green.
+    percent=True shows every step as a share of the ideal energy instead of GWh / MWh."""
+    if percent:
+        total = e["ideal_mwh"] or 1.0
+        unit, div = "%", total / 100.0
+    else:
+        unit, div = ("GWh", 1000.0) if e["ideal_mwh"] >= 5000 else ("MWh", 1.0)
     ideal, ageing, wake, net = (e["ideal_mwh"] / div, e["ageing_loss_mwh"] / div, e["wake_loss_mwh"] / div, e["net_mwh"] / div)
     labels = ["Ideal", "Ageing", "Wake", "Net"]
     heights = [ideal, ageing, wake, net]
     bases = [0.0, ideal - ageing, ideal - ageing - wake, 0.0]
+    sfx = " %" if percent else ""
     return fig([
         {"type": "bar", "x": labels, "y": [round(v, 4) for v in bases], "marker": {"color": "rgba(0,0,0,0)"},
          "hoverinfo": "skip", "showlegend": False},
         {"type": "bar", "x": labels, "y": [round(v, 4) for v in heights],
          "marker": {"color": [ACCENT, "#f59e0b", "#6ee7b7", "#334155"]},
-         "text": [f"{v:,.1f}" if i in (0, 3) else f"−{v:,.2f}" for i, v in enumerate(heights)], "textposition": "outside",
+         "text": [(f"{v:,.1f}" if i in (0, 3) else f"−{v:,.2f}") + sfx for i, v in enumerate(heights)], "textposition": "outside",
          "cliponaxis": False, "hovertemplate": "%{x}: %{y:,.2f} " + unit + "<extra></extra>", "showlegend": False},
-    ], _layout("From ideal to net energy", barmode="stack", xaxis=_axis("Loss stage"), yaxis=_axis(f"Energy ({unit})"),
+    ], _layout("From ideal to net energy", barmode="stack", xaxis=_axis("Loss stage"),
+               yaxis=_axis("Share of ideal energy (%)" if percent else f"Energy ({unit})"),
                showlegend=False, hovermode="closest", margin={"l": 64, "r": 24, "t": 64, "b": 56}))
 
 

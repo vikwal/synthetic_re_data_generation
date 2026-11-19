@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Synthetic Renewables</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css?v=26">
+  <script>window.BASE_PATH = "{{ base }}";</script>
+  <link rel="icon" type="image/svg+xml" href="{{ base }}/static/img/favicon.svg">
+  <link rel="stylesheet" href="{{ base }}/static/style.css?v=26">
 </head>
 <body>
   <div id="app">
     <header class="topbar">
-      <div class="brand"><span class="logo">◐</span> Synthetic Renewables</div>
+      <div class="brand"><span class="brand-mark">◐</span><span class="brand-text">Synthetic Renewables</span></div>
       <nav class="nav">
         <button class="nav-btn active" data-view="workspace">Workspace</button>
         <button class="nav-btn" data-view="compare">Compare</button>
@@ -19,12 +21,28 @@
       </nav>
       <div class="spacer"></div>
       <div id="topbar-actions"></div>
-      <div class="logos">
-        <img src="/static/img/HKA_Logo.png" alt="Hochschule Karlsruhe – University of Applied Sciences" class="logo-hka">
-        <span class="logo-divider"></span>
-        <div class="funded-by">
-          <span class="funded-label">Funded by</span>
-          <img src="/static/img/bmftr_logo.svg" alt="German Federal Ministry of Research, Technology and Space" class="logo-bmftr">
+      <div class="lang-switch seg" role="group" aria-label="Language">
+        <button type="button" data-lang="de" title="Deutsch">DE</button>
+        <button type="button" data-lang="en" title="English">EN</button>
+      </div>
+      <div class="partners">
+        <img src="{{ base }}/static/img/HKA_Logo.png" alt="Hochschule Karlsruhe – University of Applied Sciences" class="p-hka">
+        <div class="p-funded">
+          <span class="p-label">Funded by</span>
+          <img src="{{ base }}/static/img/bmftr_logo.svg" alt="German Federal Ministry of Research, Technology and Space" class="p-bmftr">
+        </div>
+      </div>
+      <div id="user-box" class="user-box" hidden>
+        <button type="button" id="user-btn" class="user-chip" aria-haspopup="true" aria-expanded="false">
+          <span class="user-avatar" id="user-avatar"></span><span class="user-name no-i18n" id="user-name"></span><span class="user-caret">▾</span>
+        </button>
+        <div class="user-menu" id="user-menu" hidden>
+          <div class="user-menu-head"><span class="user-menu-label">Signed in as</span><b class="no-i18n" id="user-name2"></b></div>
+          <div class="user-menu-lang" id="user-menu-lang"><span class="user-menu-label">Language</span></div>
+          <button type="button" id="logout-btn">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            Sign out
+          </button>
         </div>
       </div>
     </header>
@@ -47,6 +65,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <script type="module" src="/static/js/main.js?v=26"></script>
+  <script src="https://cdn.plot.ly/plotly-locale-de-2.35.2.js"></script>
+  <script type="module" src="{{ base }}/static/js/main.js?v=26"></script>
 </body>
 </html>

@@ -9,11 +9,11 @@ const ART = `
       <stop offset="0%" stop-color="#059669" stop-opacity=".22"/><stop offset="100%" stop-color="#059669" stop-opacity="0"/>
     </radialGradient>
     <symbol id="fl-turbine" viewBox="0 0 40 40">
-      <g fill="none" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20 17 L20 37 M15 37 H25"/>
-        <path d="M20 17 L20 3 M20 17 L32.1 24 M20 17 L7.9 24"/>
+      <g fill="#059669">
+        <path d="M19.3 15.5H20.7L21.4 38H18.6Z"/>
+        <path d="M21.63 14.76L25.07 3.12L18.37 13.24Z M18.53 15.03L26.88 23.83L21.47 12.97Z M19.84 12.21L8.05 15.05L20.16 15.79Z"/>
+        <circle cx="20" cy="14" r="2.3"/>
       </g>
-      <circle cx="20" cy="17" r="2.6" fill="#059669"/>
     </symbol>
     <symbol id="fl-panel" viewBox="0 0 40 40">
       <g fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

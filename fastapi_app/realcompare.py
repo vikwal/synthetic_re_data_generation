@@ -94,6 +94,12 @@ def align(real: pd.DataFrame, synth: pd.DataFrame) -> pd.DataFrame:
     if joined.empty:
         raise ValueError("The real file and the synthetic result share no overlapping hours. "
                          "Check that the date ranges and timestamps (UTC) match.")
+    # Wind speed extrapolated to hub height by the synthetic run: the common x axis of the power-vs-wind-speed plot.
+    if "wind_speed_hub" in synth.columns:
+        sp = synth["wind_speed_hub"].astype(float).resample("h").mean()
+        if sp.index.tz is None:
+            sp.index = sp.index.tz_localize("UTC")
+        joined["speed"] = sp.reindex(joined.index)
     return joined
 
 
@@ -104,6 +110,8 @@ def metrics(joined: pd.DataFrame, capacity_w: float, kind: str) -> Dict[str, Opt
     mean_r, mean_s = float(real.mean()), float(syn.mean())
     mae, rmse = float(np.mean(np.abs(err))), float(np.sqrt(np.mean(err ** 2)))
     corr = float(np.corrcoef(real, syn)[0, 1]) if real.std() > 0 and syn.std() > 0 else None
+    ss_tot = float(np.sum((real - mean_r) ** 2))
+    r2 = 1.0 - float(np.sum(err ** 2)) / ss_tot if ss_tot > 0 else None   # coefficient of determination, real as reference
     hours = len(joined)
     e_real, e_syn = float(real.sum() / 1e6), float(syn.sum() / 1e6)      # MWh (hourly steps)
     cap = capacity_w if capacity_w and capacity_w > 0 else None
@@ -119,7 +127,7 @@ def metrics(joined: pd.DataFrame, capacity_w: float, kind: str) -> Dict[str, Opt
         "mae": r(mae / div), "rmse": r(rmse / div),
         "nmae_pct": r(100 * mae / cap, 2) if cap else None,
         "nrmse_pct": r(100 * rmse / cap, 2) if cap else None,
-        "correlation": r(corr, 3),
+        "correlation": r(corr, 3), "r2": r(r2, 3),
         "energy_real_mwh": r(e_real, 1), "energy_synthetic_mwh": r(e_syn, 1),
         "energy_diff_pct": r(100 * (e_syn - e_real) / e_real, 2) if e_real else None,
         "cf_real_pct": r(100 * mean_r / cap, 2) if cap else None,
@@ -150,21 +158,25 @@ def figures(joined: pd.DataFrame, kind: str) -> Dict[str, dict]:
     out["timeseries"] = _lines(ts, x, kind, f"Real vs synthetic power ({label})", f"Power ({unit})",
                                xaxis=_axis("Date", rangeslider={"visible": len(ts) > 200}))
 
-    # 2. scatter with 1:1 line
-    samp = joined if len(joined) <= 4000 else joined.sample(4000, random_state=0)
-    top = float(max(joined["real"].max(), joined["synthetic"].max()) / div)
-    out["scatter"] = fig([
-        {"type": "scattergl", "mode": "markers", "name": "Hours", "x": _clean(samp["real"] / div),
-         "y": _clean(samp["synthetic"] / div), "marker": {"size": 4, "color": ACCENT, "opacity": 0.35}},
-        {"type": "scatter", "mode": "lines", "name": "1:1", "x": [0, top], "y": [0, top],
-         "line": {"color": SLATE, "dash": "dash", "width": 1}},
-    ], _layout("Hourly agreement", hovermode="closest", showlegend=False,
-               xaxis=_axis(f"Real ({unit})"), yaxis=_axis(f"Synthetic ({unit})")))
+    # 2. power against hub-height wind speed, real and synthetic in different colours (wind only)
+    if kind == "wind" and "speed" in joined and joined["speed"].notna().any():
+        w = joined.dropna(subset=["speed"])
+        samp = w if len(w) <= 4000 else w.sample(4000, random_state=0)
+        out["power_vs_wind"] = fig([
+            {"type": "scattergl", "mode": "markers", "name": "Real", "x": _clean(samp["speed"]),
+             "y": _clean(samp["real"] / div), "marker": {"size": 4, "color": REAL_COLOR, "opacity": 0.45}},
+            {"type": "scattergl", "mode": "markers", "name": "Synthetic", "x": _clean(samp["speed"]),
+             "y": _clean(samp["synthetic"] / div), "marker": {"size": 4, "color": ACCENT, "opacity": 0.45}},
+        ], _layout("Wind power curve",hovermode="closest",
+                   xaxis=_axis("Wind speed at hub height (m/s)"), yaxis=_axis(f"Power ({unit})"),
+                   legend={"orientation": "h", "x": 1, "xanchor": "right", "y": 1.02, "yanchor": "bottom"},
+                   margin={"l": 64, "r": 24, "t": 72, "b": 56}))
 
-    # 3. diurnal profile (UTC hours)
-    byh = joined.groupby(joined.index.hour).mean()
-    out["diurnal"] = _lines(byh, [int(h) for h in byh.index], kind, "Average daily profile (UTC)",
-                            f"Power ({unit})", xaxis=_axis("Hour of day (UTC)", dtick=3))
+    # 3. diurnal profile (UTC hours): meaningful for solar, not shown for wind
+    if kind != "wind":
+        byh = joined.groupby(joined.index.hour).mean()
+        out["diurnal"] = _lines(byh, [int(h) for h in byh.index], kind, "Average daily profile (UTC)",
+                                f"Power ({unit})", xaxis=_axis("Hour of day (UTC)", dtick=3))
 
     # 4. monthly energy
     m = (joined / 1e6).groupby([joined.index.year, joined.index.month]).sum()
@@ -174,19 +186,27 @@ def figures(joined: pd.DataFrame, kind: str) -> Dict[str, dict]:
         {"type": "bar", "name": "Synthetic", "x": labels, "y": _clean(m["synthetic"]), "marker": {"color": ACCENT}},
     ], _layout("Monthly energy", barmode="group", xaxis=_axis("Month"), yaxis=_axis("Energy (MWh)")))
 
-    # 5. duration curves
-    n = min(len(joined), 200)
-    pos = np.linspace(0, 100, n)
-    take = np.linspace(0, len(joined) - 1, n).astype(int)
-    d_real = np.sort(joined["real"].values)[::-1][take] / div
-    d_syn = np.sort(joined["synthetic"].values)[::-1][take] / div
-    out["duration"] = fig([
-        {"type": "scatter", "mode": "lines", "name": "Real", "x": _clean(pos), "y": _clean(d_real),
-         "line": {"color": REAL_COLOR, "width": 2}},
-        {"type": "scatter", "mode": "lines", "name": "Synthetic", "x": _clean(pos), "y": _clean(d_syn),
-         "line": {"color": ACCENT, "width": 2}},
-    ], _layout("Duration curves", xaxis=_axis("Share of time (%)"), yaxis=_axis(f"Power ({unit})")))
+    # 5. duration curves (not shown for wind)
+    if kind != "wind":
+        n = min(len(joined), 200)
+        pos = np.linspace(0, 100, n)
+        take = np.linspace(0, len(joined) - 1, n).astype(int)
+        d_real = np.sort(joined["real"].values)[::-1][take] / div
+        d_syn = np.sort(joined["synthetic"].values)[::-1][take] / div
+        out["duration"] = fig([
+            {"type": "scatter", "mode": "lines", "name": "Real", "x": _clean(pos), "y": _clean(d_real),
+             "line": {"color": REAL_COLOR, "width": 2}},
+            {"type": "scatter", "mode": "lines", "name": "Synthetic", "x": _clean(pos), "y": _clean(d_syn),
+             "line": {"color": ACCENT, "width": 2}},
+        ], _layout("Duration curves", xaxis=_axis("Share of time (%)"), yaxis=_axis(f"Power ({unit})")))
     return out
+
+
+def hourly_series(joined: pd.DataFrame, kind: str) -> dict:
+    """Every overlapping hour of both series (display unit), so the page can zoom to one day or week."""
+    div, unit = charts.power_unit(kind)
+    return {"unit": unit, "x": [d.strftime("%Y-%m-%d %H:%M") for d in joined.index],
+            "real": _clean(joined["real"] / div), "synthetic": _clean(joined["synthetic"] / div)}
 
 
 def compare(real: pd.DataFrame, synth: pd.DataFrame, capacity_w: float, kind: str) -> Tuple[dict, Dict[str, dict]]:

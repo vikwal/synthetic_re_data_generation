@@ -64,9 +64,26 @@ function sitesTable(res) {
 function overviewPane(res) {
   const rid = res.id;
   const cards = [kpiCards(res)];
+  // Turbines the generator had to skip (missing grid data, bad specs ...) must not disappear silently.
+  const skipped = (res.summary && res.summary.warnings) || [];
+  if (skipped.length) {
+    cards.push(h("div", { class: "card", style: "border-left:4px solid #f59e0b;margin-bottom:16px" },
+      h("b", {}, `${skipped.length} warning${skipped.length === 1 ? "" : "s"} from the run`),
+      h("ul", { style: "margin:6px 0 0 18px;padding:0;font-size:13px;color:#475569" }, skipped.map((w) => h("li", {}, w)))));
+  }
   const grid = h("div", { class: "grid2" });
   if (res.kind === "wind" && res.has_performance) {
-    grid.append(figureCard(rid, "waterfall"), figureCard(rid, "loss-per-turbine"));
+    // Energy (GWh / MWh) or share of the ideal energy (%).
+    const wf = { unit: "energy" };
+    grid.append(figureCard(rid, "waterfall", {
+      params: () => ({ unit: wf.unit }),
+      tools: (reload) => {
+        const seg = h("div", { class: "seg" }, [["energy", "GWh / MWh"], ["percent", "%"]].map(([u, t]) => h("button", {
+          type: "button", class: u === wf.unit ? "active" : "",
+          onclick: (e) => { wf.unit = u; [...seg.children].forEach((b) => b.classList.toggle("active", b === e.currentTarget)); reload(); } }, t)));
+        return h("div", { class: "card-tools", style: "display:flex;justify-content:flex-end" }, seg);
+      },
+    }), figureCard(rid, "loss-per-turbine"));
     if (res.summary.ageing_applied) grid.append(figureCard(rid, "ageing-timeline"));
   }
   grid.append(figureCard(rid, "seasonality"), figureCard(rid, "duration"));
@@ -164,7 +181,7 @@ function dataPane(res) {
 }
 
 export function exportMenuItems(rid) {
-  const dl = (path) => () => { window.location.href = `/api/results/${rid}/${path}`; };
+  const dl = (path) => () => { window.location.href = `${window.BASE_PATH || ""}/api/results/${rid}/${path}`; };
   return [
     { label: "Download CSV", run: dl("csv") },
     { label: "Download Parquet", run: dl("parquet") },

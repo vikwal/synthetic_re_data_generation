@@ -70,7 +70,7 @@ def turbine_specs(turbine: str) -> Dict[str, float]:
     """Rotor diameter, cut-in/out and rated wind speed for one turbine model."""
     config = load_config()
     try:
-        _, _, specs = get_turbines(params={"turbines": [turbine]}, **_turbine_files(config))
+        _, _, specs = _get_turbines(params={"turbines": [turbine]}, **_turbine_files(config))
         return specs[turbine]
     except (ValueError, IndexError):
         # The specs table has a "-" (or no row) for some value of this model. Return what is known (None for the rest)
@@ -88,13 +88,113 @@ def turbine_specs(turbine: str) -> Dict[str, float]:
                 "cut_out": num("Abschaltgeschwindigkeit"), "rated": num("Nennwindgeschwindigkeit")}
 
 
+def _get_turbines(params: dict, turbine_path: str, cp_path: str, specs_path: str):
+    """get_turbines() of the pipeline, with a fallback for turbines whose specs table has a "-" (e.g. no rated wind speed
+    for Vestas V136-3.45): the missing value is taken from the power curve instead of dropping the turbine."""
+    try:
+        return get_turbines(params=params, turbine_path=turbine_path, cp_path=cp_path, specs_path=specs_path)
+    except ValueError:
+        pass
+    turbines = params["turbines"]
+    power_curves = pd.read_csv(turbine_path, sep=";", decimal=",")
+    power_curves.set_index("wind_speed", inplace=True)
+    power_curves = power_curves[turbines] * 1000                   # kW -> W
+    if power_curves.columns.duplicated().any():
+        power_curves = power_curves.loc[:, ~power_curves.columns.duplicated()]
+    cp_curves = pd.read_csv(cp_path, sep=";", decimal=".")
+    cp_curves.set_index("wind_speed", inplace=True)
+    table = pd.read_csv(specs_path, sep=";")
+    specs = {}
+    for t in turbines:
+        row = table[table["Turbine"] == t]
+        if row.empty:
+            raise ValueError(f"No specifications found for turbine '{t}'.")
+        r = row.iloc[0]
+
+        def num(col: str):
+            v = pd.to_numeric(r[col], errors="coerce")
+            return None if pd.isna(v) else float(v)
+
+        curve = pd.to_numeric(power_curves[t], errors="coerce").dropna()
+        diameter = num("Rotordurchmesser")
+        if diameter is None:
+            raise ValueError(f"The rotor diameter of '{t}' is missing in the turbine table.")
+        cut_in, cut_out, rated = num("Einschaltgeschwindigkeit"), num("Abschaltgeschwindigkeit"), num("Nennwindgeschwindigkeit")
+        if not curve.empty:
+            if cut_in is None:
+                cut_in = float(curve.index[curve > 0][0]) if (curve > 0).any() else 3.0
+            if cut_out is None:
+                cut_out = float(curve.index.max())
+            if rated is None:                                      # first wind speed at which the curve reaches its maximum
+                rated = float(curve.index[curve >= 0.999 * curve.max()][0])
+        specs[t] = {"diameter": diameter, "cut_in": cut_in if cut_in is not None else 3.0,
+                    "cut_out": cut_out if cut_out is not None else 25.0, "rated": rated if rated is not None else 12.0}
+    return power_curves, cp_curves, specs
+
+
+_ERA5_COLUMNS = ["u_wind_10m", "v_wind_10m", "u_wind_100m", "v_wind_100m", "wind_gust_10m", "friction_wind",
+                 "temp_2m", "pressure", "dew_point_2m", "wind_speed_10m", "wind_direction_10m"]
+_db_pool = None
+
+
+def _era5_db():
+    """Connection pool for the PostgreSQL ERA5 store (created on first use)."""
+    global _db_pool
+    if _db_pool is None:
+        from psycopg2.pool import ThreadedConnectionPool
+        _db_pool = ThreadedConnectionPool(1, 8, settings.ERA5_DB_URL)
+    return _db_pool
+
+
+def _grid_name(lat: float, lon: float) -> str:
+    """Same name the parquet file would have, so callers keep working with 'filename'."""
+    return f"grid_{lat:07.4f}_{lon:07.4f}.parquet"
+
+
+def _load_grid_point_db(filename: str) -> Optional[pd.DataFrame]:
+    try:
+        _, lat, lon = filename.replace(".parquet", "").split("_")
+        lat, lon = float(lat), float(lon)
+    except ValueError:
+        return None
+    pool = _era5_db()
+    conn = pool.getconn()
+    try:
+        df = pd.read_sql(
+            f"SELECT e.ts AS timestamp, g.latitude, g.longitude, {', '.join('e.' + c for c in _ERA5_COLUMNS)} "
+            "FROM era5 e JOIN grid_points g ON g.id = e.grid_id "
+            "WHERE g.latitude BETWEEN %s AND %s AND g.longitude BETWEEN %s AND %s ORDER BY e.ts",
+            conn, params=(lat - 1e-6, lat + 1e-6, lon - 1e-6, lon + 1e-6))
+    finally:
+        pool.putconn(conn)
+    if df.empty:
+        return None
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    return df.set_index("timestamp")
+
+
 @lru_cache(maxsize=1)
 def grid_index():
-    """KDTree over all NWP grid points (parsed from grid_LAT_LON.parquet names)."""
+    """KDTree over all NWP grid points (parsed from grid_LAT_LON.parquet names, or read from PostgreSQL)."""
     points, names = [], []
     coords = None                                              # station id -> (lat, lon), for Station_<id>.parquet files
+    from_db = False
+    if settings.ERA5_DB_URL:
+        pool = _era5_db()
+        conn = pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT latitude, longitude FROM grid_points ORDER BY id")
+                for lat, lon in cur.fetchall():
+                    points.append([float(lat), float(lon)])
+                    names.append(_grid_name(float(lat), float(lon)))
+        finally:
+            pool.putconn(conn)
+        from_db = bool(points)
     if settings.GRID_DIR.exists():
         for f in os.listdir(settings.GRID_DIR):
+            if from_db and f.startswith("grid_"):                # grid points already come from the database
+                continue
             if f.startswith("grid_") and f.endswith(".parquet") and f != "grid_index.parquet":
                 parts = f.replace(".parquet", "").split("_")
                 if len(parts) == 3:
@@ -236,6 +336,8 @@ def find_nearest_station(lat: float, lon: float) -> dict:
 
 
 def load_grid_point_data(filename: str) -> Optional[pd.DataFrame]:
+    if settings.ERA5_DB_URL and filename.startswith("grid_"):
+        return _load_grid_point_db(filename)
     path = settings.GRID_DIR / filename
     if not path.exists():
         return None
@@ -307,7 +409,7 @@ def generate_single_turbine(grid_data, grid_lat, grid_lon, config, turbine, hub_
             annual_load_factor_loss_rate=_degradation_rate(config, annual_degradation),
         )
 
-    power_curves, _, specs = get_turbines(params=wind_params, **_turbine_files(config))
+    power_curves, _, specs = _get_turbines(params=wind_params, **_turbine_files(config))
     res = gen_full_dataframe(
         power_curves=power_curves, turbine=turbine, params=wind_params, df=df,
         hub_height=hub_height, specs=specs, rated_power=None,
@@ -469,31 +571,52 @@ def generate_wind_park(turbines, apply_ageing=False, apply_wake=True, wake_decay
 # --------------------------------------------------------------------------
 # Solar generation
 # --------------------------------------------------------------------------
-def generate_solar(lat: float, lon: float, pv_overrides: Optional[dict] = None, progress: ProgressFn = None):
-    """PV power for a site, driven by the nearest DWD station's irradiance/weather."""
+def _external_solar_frame(lat: float, lon: float, params: dict, progress: ProgressFn):
+    """Hourly inputs for a site from the external weather service (cached per user), in the layout the PV code expects
+    (ghi/dhi as DWD J/cm² per 10 min, like the ERA5 frame above). Returns (frame, weather info)."""
+    from . import pvservice
+    raw, info = pvservice.get_location_data(lat, lon, progress)
+    if info.get("altitude") is not None:
+        params["altitude"] = info["altitude"]
+    params["latitude"], params["longitude"] = lat, lon
+    data = pd.DataFrame({"ghi": raw["ghi"] * 600.0 / 1e4, "dhi": raw["dhi"] * 600.0 / 1e4,
+                         "temperature_2m": raw["temperature_2m"], "wind_speed": raw["wind_speed"]}, index=raw.index)
+    data.index.name = "timestamp"
+    return data, {"source": "external", "service": info.get("service"), "cached": bool(info.get("cached")),
+                  "lat": info.get("lat"), "lon": info.get("lon"), "start": info.get("start"), "end": info.get("end")}
+
+
+def generate_solar(lat: float, lon: float, pv_overrides: Optional[dict] = None, progress: ProgressFn = None,
+                   weather_source: str = "stations"):
+    """PV power for a site, driven by the nearest DWD station's irradiance/weather, or by the external weather service."""
     config = load_config()
     params = dict(config["pv_params"])
     params.update({k: v for k, v in (pv_overrides or {}).items() if v is not None})
     features = config["features"]
 
-    _report(progress, 0.1, "Finding nearest weather station")
-    station = find_nearest_station(lat, lon)
-    era5 = settings.SOLAR_ERA5_DIR is not None
-    path = settings.SOLAR_DIR / f"Station_{station['station_id']}.csv"
-    if not era5 and not path.exists():
-        raise FileNotFoundError(f"No solar data for station {station['station_id']}")
-
-    params["latitude"] = lat
-    params["longitude"] = lon
-    params["altitude"] = station["altitude"]
-
-    _report(progress, 0.3, "Reading station data")
-    if era5:
-        data = _era5_solar_frame(station["station_id"])
+    station, weather = None, None
+    if weather_source == "external":
+        params.setdefault("altitude", 0.0)
+        data, weather = _external_solar_frame(lat, lon, params, progress)
     else:
-        data = pd.read_csv(path, sep=",")
-        data["timestamp"] = pd.to_datetime(data["timestamp"])
-        data = data.set_index("timestamp")
+        _report(progress, 0.1, "Finding nearest weather station")
+        station = find_nearest_station(lat, lon)
+        era5 = settings.SOLAR_ERA5_DIR is not None
+        path = settings.SOLAR_DIR / f"Station_{station['station_id']}.csv"
+        if not era5 and not path.exists():
+            raise FileNotFoundError(f"No solar data for station {station['station_id']}")
+
+        params["latitude"] = lat
+        params["longitude"] = lon
+        params["altitude"] = station["altitude"]
+
+        _report(progress, 0.3, "Reading station data")
+        if era5:
+            data = _era5_solar_frame(station["station_id"])
+        else:
+            data = pd.read_csv(path, sep=",")
+            data["timestamp"] = pd.to_datetime(data["timestamp"])
+            data = data.set_index("timestamp")
 
     _report(progress, 0.5, "Computing irradiance on the panel")
     irr, cell_t = get_pv_features(data=data, features=features, params=params)
@@ -510,6 +633,7 @@ def generate_solar(lat: float, lon: float, pv_overrides: Optional[dict] = None, 
     summary = {
         "capacity_w": float(params["dc_rating_watts"]),
         "station": station,
+        "weather": weather,
         "start": str(data.index.min().date()),
         "end": str(data.index.max().date()),
         "warnings": [],

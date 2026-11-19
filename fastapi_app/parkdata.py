@@ -168,7 +168,7 @@ def import_wind_parks(park_ids: Optional[List[str]] = None, progress=None) -> Li
     return rids
 
 
-_SEEN: set = set()          # results already looked at in this process
+_SEEN: set = set()          # (user folder, result id) already looked at in this process
 _SUFFIX = " (package)"      # old name ending, removed from existing imports
 
 
@@ -176,15 +176,16 @@ def ensure_scenarios(force: bool = False) -> int:
     """Give every imported package park a scenario of its own, so it shows up in the Workspace list and opens on its
     results. The scenario id equals the result id, so this is safe to repeat; a park whose scenario was deleted is gone
     (deleting a scenario deletes its results). Returns the number of scenarios created."""
+    uk = storage.user_key()
     if force:
-        _SEEN.clear()
+        _SEEN.difference_update({k for k in _SEEN if k[0] == uk})
     existing = {s["id"]: s for s in storage.list_scenarios()}
     made = 0
     for meta in storage.result_metas():
         rid = meta.get("id")
-        if not meta.get("package_park_id") or not rid or rid in _SEEN:
+        if not meta.get("package_park_id") or not rid or (uk, rid) in _SEEN:
             continue
-        _SEEN.add(rid)
+        _SEEN.add((uk, rid))
         name = (meta.get("scenario_name") or rid)
         clean = name[: -len(_SUFFIX)] if name.endswith(_SUFFIX) else name       # older imports were named "<park> (package)"
         if clean != meta.get("scenario_name"):

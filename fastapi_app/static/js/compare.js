@@ -1,6 +1,7 @@
 // Compare view with two modes: synthetic vs synthetic, and real vs synthetic.
 import { api } from "./api.js?v=26";
 import { h, toast, fmt } from "./ui.js?v=26";
+import { tr } from "./i18n.js?v=26";
 
 const PLOT_CONFIG = { responsive: true, displaylogo: false };
 const label = (r) => `${r.scenario_name} · ${r.kind} · ${new Date(r.created).toLocaleString()}`;
@@ -12,6 +13,52 @@ export function plotCards(figures) {
   return h("div", { class: "grid2" }, cards);
 }
 
+
+// Full-width real vs synthetic power plot: whole period, or zoomed to one day or one week.
+function timeseriesCard(d) {
+  const S = d.series, base = d.figures.timeseries;
+  const plot = h("div", { class: "plot", style: "height:480px" });
+  if (!S || !S.x.length) return h("div", { class: "card", style: "margin:0 0 20px" }, plot);
+  const DAY = 86400000;
+  const first = S.x[0].slice(0, 10), last = S.x[S.x.length - 1].slice(0, 10);
+  const toMs = (s) => Date.parse(s + "T00:00:00Z");
+  const toStr = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const clamp = (s) => (s < first ? first : s > last ? last : s);
+  let mode = "all", date = toStr((toMs(first) + toMs(last)) / 2);
+  const dateInput = h("input", { type: "date", value: date, min: first, max: last });
+  const prev = h("button", { type: "button", class: "btn", title: "Previous", onclick: () => step(-1) }, "‹");
+  const next = h("button", { type: "button", class: "btn", title: "Next", onclick: () => step(1) }, "›");
+  const rangeLabel = h("span", { class: "hint", style: "margin:0" });
+  const span = () => {                                     // [from, to] day strings of the shown window
+    if (mode === "day") return [date, date];
+    const ms = toMs(date), monday = ms - ((new Date(ms).getUTCDay() + 6) % 7) * DAY;   // week runs Monday to Sunday
+    return [toStr(monday), toStr(monday + 6 * DAY)];
+  };
+  function step(dir) {
+    date = clamp(toStr(toMs(date) + dir * (mode === "week" ? 7 : 1) * DAY));
+    dateInput.value = date; draw();
+  }
+  dateInput.addEventListener("change", () => { if (dateInput.value) { date = clamp(dateInput.value); dateInput.value = date; draw(); } });
+  const modes = [["all", "Whole period"], ["week", "Week"], ["day", "Day"]];
+  const seg = h("div", { class: "seg" }, modes.map(([m, t]) => h("button", { type: "button", class: m === mode ? "active" : "",
+    onclick: (e) => { mode = m; [...seg.children].forEach((b) => b.classList.toggle("active", b === e.currentTarget)); draw(); } }, t)));
+  const pickers = h("div", { class: "card-tools", style: "display:flex;align-items:center;gap:8px" }, prev, dateInput, next, rangeLabel);
+
+  function draw() {
+    pickers.style.display = mode === "all" ? "none" : "flex";
+    if (mode === "all") { Plotly.react(plot, base.data, base.layout, PLOT_CONFIG); return; }
+    const [a, b] = span();
+    const lo = S.x.findIndex((t) => t.slice(0, 10) >= a);
+    let hi = S.x.length; for (let i = S.x.length - 1; i >= 0 && S.x[i].slice(0, 10) > b; i--) hi = i;
+    const x = lo < 0 ? [] : S.x.slice(lo, hi);
+    rangeLabel.textContent = mode === "day" ? "" : `${a} to ${b}`;
+    const data = [["real", 0], ["synthetic", 1]].map(([k, i]) => ({ ...base.data[i], x, y: lo < 0 ? [] : S[k].slice(lo, hi) }));
+    const title = { ...base.layout.title, text: tr(`<b>Real vs synthetic power (${mode === "day" ? a : `week ${a} to ${b}`}, hourly)</b>`) };
+    Plotly.react(plot, data, { ...base.layout, title, xaxis: { ...base.layout.xaxis, rangeslider: { visible: false }, autorange: true } }, PLOT_CONFIG);
+  }
+  requestAnimationFrame(draw);
+  return h("div", { class: "card", style: "margin:0 0 20px" }, h("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:4px 4px 8px" }, seg, pickers), plot);
+}
 
 export function helpButton(title, lines) {
   const pop = h("div", { class: "help-pop", hidden: true }, h("b", {}, title), h("ul", {}, lines.map((l) => h("li", {}, l))));
@@ -61,7 +108,7 @@ function syntheticMode(list, reload) {
         h("div", { class: "run-meta" }, h("span", { class: `kind-badge ${r.kind}` }, r.kind), new Date(r.created).toLocaleString())),
       h("button", { class: "run-del", title: "Delete this result", "aria-label": "Delete this result", onclick: async (e) => {
         e.preventDefault(); e.stopPropagation();
-        if (!confirm(`Permanently delete the result "${r.scenario_name}" from ${new Date(r.created).toLocaleString()}?`)) return;
+        if (!confirm(tr(`Permanently delete the result "${r.scenario_name}" from ${new Date(r.created).toLocaleString()}?`))) return;
         try { await api.deleteResult(r.id); toast("Result deleted", "ok"); reload(); }
         catch (err) { toast(err.message, "error"); }
       } }, "✕"));
@@ -130,7 +177,7 @@ function realMode(list) {
         ["MAE", m.mae, u, 3, "Mean absolute error: the typical size of the hourly difference, ignoring whether it is above or below."],
         ["RMSE", m.rmse, u, 3, "Root mean square error: like MAE, but large misses count more."],
         ["nRMSE", m.nrmse_pct, "% of capacity", 1, "RMSE as a share of the installed capacity, so parks of different size can be compared."],
-        ["Correlation", m.correlation, "", 3, "How well the hourly shapes match, from -1 to 1. Close to 1: the ups and downs line up in time, even if the level differs."],
+        ["R²", m.r2, "", 3, "Share of the variation in the real hourly power that the synthetic data explains (1 − squared error ÷ variance of the real data). 1 is a perfect match, 0 is no better than predicting the real average, and it goes negative when the synthetic data is worse than that."],
         ["Capacity factor (real)", m.cf_real_pct, "%", 1, "Real energy as a share of what the park would produce running at full capacity all the time."],
         ["Capacity factor (synthetic)", m.cf_synthetic_pct, "%", 1, "The same measure for the synthetic data."],
         ["Hours compared", m.hours, "h", 0, "Number of hours where both the real file and the synthetic run have data. Only these hours enter the metrics."],
@@ -141,7 +188,8 @@ function realMode(list) {
           h("span", { style: "font-weight:400;color:#047857" }, `${m.start} to ${m.end} (UTC)`)),
         h("div", { class: "kpis" }, cards.map(([l, v, un, dg, tip]) =>
           h("div", { class: "kpi", title: tip, style: "cursor:help" }, h("div", { class: "l" }, l), h("div", { class: "v" }, fmt(v, dg), un ? h("span", { class: "u" }, un) : null)))),
-        plotCards(d.figures));
+        timeseriesCard(d),
+        plotCards(Object.fromEntries(Object.entries(d.figures).filter(([k]) => k !== "timeseries"))));
     } catch (e) {
       out.replaceChildren();
       toast(e.message, "error");
@@ -173,15 +221,17 @@ export async function mountCompare(container, mode = "synthetic") {
   const body = mode === "real" ? realMode(list) : syntheticMode(list, () => mountCompare(container, mode));
   const help = mode === "real"
     ? helpButton("Real vs synthetic", [
-        "Upload measured data for the same site and period as a synthetic run.",
-        "CSV with a timestamp column (UTC) and `power`, or `power_t1`, `power_t2`, … which are summed.",
-        "`wind_speed` columns are optional. Semicolon or comma separated.",
-        "Choose the power unit used in your file (W, kW or MW).",
-        "Only hours where both datasets overlap are compared."])
+        "Upload measured power for the same site and period as a synthetic run, and pick that run.",
+        "CSV with a timestamp column (UTC) and a `power` column, or `power_t1`, `power_t2`, … which are summed. Semicolon or comma separated. Other columns are ignored.",
+        "Set the power unit of your file (W, kW or MW) before comparing. The default is W.",
+        "Only hours where both datasets overlap are compared.",
+        "The cards show energy difference, bias, MAE, RMSE, nRMSE, R² and capacity factors; hover a card for what it means. Positive bias means the synthetic data is higher.",
+        "The power plot can show the whole period, one week or one day. Wind adds a power curve against wind speed and monthly energy; solar adds the daily profile and duration curves."])
     : helpButton("Synthetic vs synthetic", [
-        "Tick two to six saved runs and press Compare.",
+        "Tick two to six saved runs and press Compare. Imported wind parks work too.",
         "You get a KPI table and overlay charts for seasonality, monthly energy and duration curves.",
-        "Use Delete to remove old results."]);
+        "Ageing loss shows a dash for runs without ageing data, such as imported parks.",
+        "Press the ✕ on a run to delete it."]);
   container.replaceChildren(h("div", { class: "compare" },
     h("div", { class: "ml-head" }, h("div"), seg, h("div", { style: "justify-self:end" }, help)),
     body));

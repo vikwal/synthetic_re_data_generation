@@ -236,12 +236,14 @@ def per_horizon_rmse(y_true: np.ndarray, y_pred: np.ndarray) -> List[float]:
     return [round(100 * float(np.sqrt(((yp[:, k] - yt[:, k]) ** 2).mean())), 3) for k in range(yt.shape[1])]
 
 
-def split_by_date(times, train_until: str, horizon: int = 1, train_from: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
+def split_by_date(times, train_until: str, horizon: int = 1, train_from: Optional[str] = None,
+                  val_until: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
     """Boolean masks (train, validation) over window end times for a split by calendar date.
 
     Training uses every window whose last target hour is on or before `train_until` (end of that day, UTC);
     validation uses windows ending on the next day or later. Windows whose targets straddle the cut are left out
-    of both sets, so no validation hour is ever a training target. `train_from` (optional) drops everything before that day."""
+    of both sets, so no validation hour is ever a training target. `train_from` (optional) drops everything before that day;
+    `val_until` (optional) ends validation at the end of that day, so later data is not used."""
     t = pd.DatetimeIndex(times)
     if t.tz is None:
         t = t.tz_localize("UTC")
@@ -253,7 +255,12 @@ def split_by_date(times, train_until: str, horizon: int = 1, train_from: Optiona
         start = pd.Timestamp(train_from)
         start = start.tz_localize("UTC") if start.tzinfo is None else start.tz_convert("UTC")
         train &= np.asarray(t >= start)
-    return train, np.asarray(t >= cut)
+    val = np.asarray(t >= cut)
+    if val_until:                                             # data after this day is simply not used
+        end = pd.Timestamp(val_until)
+        end = (end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")) + pd.Timedelta(days=1)
+        val &= np.asarray(t < end)
+    return train, val
 
 
 def chrono_split(n: int, val_frac: float) -> int:

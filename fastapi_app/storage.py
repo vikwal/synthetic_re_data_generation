@@ -22,20 +22,36 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from . import settings
+from . import auth, settings
 
 _ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _lock = threading.RLock()
-_frames: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
+_frames: "OrderedDict[tuple, pd.DataFrame]" = OrderedDict()     # (user folder, result id) -> frame
 
 
 class NotFound(KeyError):
     pass
 
 
+def _root() -> Path:
+    """Folder of the current user's data. Without login (local use) this is the plain storage folder; with login every
+    user has a private one, so no request can reach another user's scenarios, results or models."""
+    if not settings.AUTH_ENABLED:
+        return settings.STORAGE_DIR
+    user = auth.current()
+    if not user or not auth.valid_username(user):
+        raise auth.AuthError("Please sign in.", 401)
+    return settings.STORAGE_DIR / "users" / user
+
+
+def user_key() -> str:
+    """Identifies the current user's data space (used to key caches that live in memory)."""
+    return str(_root())
+
+
 def _dirs():
-    sc = settings.STORAGE_DIR / "scenarios"
-    rs = settings.STORAGE_DIR / "results"
+    sc = _root() / "scenarios"
+    rs = _root() / "results"
     sc.mkdir(parents=True, exist_ok=True)
     rs.mkdir(parents=True, exist_ok=True)
     return sc, rs
@@ -211,9 +227,10 @@ def get_result_meta(rid: str) -> Dict[str, Any]:
 def get_result_df(rid: str) -> pd.DataFrame:
     _, rs = _dirs()
     with _lock:
-        if rid in _frames:
-            _frames.move_to_end(rid)
-            return _frames[rid]
+        key = (user_key(), rid)
+        if key in _frames:
+            _frames.move_to_end(key)
+            return _frames[key]
         path = rs / f"{_check(rid)}.parquet"
         if not path.exists():
             raise NotFound(rid)
@@ -237,19 +254,26 @@ def delete_result(rid: str) -> None:
             p = rs / f"{_check(rid)}{suffix}"
             if p.exists():
                 p.unlink()
-        _frames.pop(rid, None)
+        _frames.pop((user_key(), rid), None)
 
 
 def _remember(rid: str, df: pd.DataFrame) -> None:
-    _frames[rid] = df
-    _frames.move_to_end(rid)
+    key = (user_key(), rid)
+    _frames[key] = df
+    _frames.move_to_end(key)
     while len(_frames) > settings.MAX_RESULTS_IN_MEMORY:
         _frames.popitem(last=False)
 
 
 # ------------------------------------------------------------------ trained models
+def result_ids() -> List[str]:
+    """Ids of the current user's stored results."""
+    _, rs = _dirs()
+    return sorted(p.stem for p in rs.glob("*.json"))
+
+
 def _models_dir() -> Path:
-    d = settings.STORAGE_DIR / "models"
+    d = _root() / "models"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

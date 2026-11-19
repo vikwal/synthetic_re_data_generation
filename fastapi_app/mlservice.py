@@ -42,10 +42,11 @@ def _preview(times, y_true, preds: Dict[str, np.ndarray]) -> Dict[str, Any]:
     return out
 
 
-def _split(Xw, yw, tw, train_until: Optional[str], val_frac: float, horizon: int, train_from: Optional[str] = None):
+def _split(Xw, yw, tw, train_until: Optional[str], val_frac: float, horizon: int, train_from: Optional[str] = None,
+           val_until: Optional[str] = None):
     """Train / validation windows: by calendar date when `train_until` is given, else the last `val_frac` share."""
     if train_until:
-        tr, va = mlprep.split_by_date(tw, train_until, horizon, train_from)
+        tr, va = mlprep.split_by_date(tw, train_until, horizon, train_from, val_until)
         return (Xw[tr], yw[tr], tw[tr]), (Xw[va], yw[va], tw[va])
     cut = mlprep.chrono_split(len(yw), val_frac)
     return (Xw[:cut], yw[:cut], tw[:cut]), (Xw[cut:], yw[cut:], tw[cut:])
@@ -115,7 +116,7 @@ def run_training(spec: Dict[str, Any], progress: ProgressFn) -> str:
                                            hp["lookback"], weather=weather, time_cols=time_cols, weather_df=wx,
                                            power_lag=power_lag, horizon=hp["horizon"], future_weather=future)
         weather = feats
-        tr, va = _split(Xw, yw, tw, spec.get("train_until"), hp["val_frac"], hp["horizon"], spec.get("train_from"))
+        tr, va = _split(Xw, yw, tw, spec.get("train_until"), hp["val_frac"], hp["horizon"], spec.get("train_from"), spec.get("val_until"))
         tr_parts.append(tr)
         va_parts.append(va)
         names.append(meta.get("scenario_name") or rid)
@@ -127,7 +128,7 @@ def run_training(spec: Dict[str, Any], progress: ProgressFn) -> str:
     Xtr = np.concatenate([p[0] for p in tr_parts]); ytr = np.concatenate([p[1] for p in tr_parts])
     Xva = np.concatenate([p[0] for p in va_parts]); yva = np.concatenate([p[1] for p in va_parts])
     tva = va_parts[0][2].append([p[2] for p in va_parts[1:]]) if len(va_parts) > 1 else va_parts[0][2]
-    split = {"mode": "date" if spec.get("train_until") else "share", "train_from": spec.get("train_from"), "train_until": spec.get("train_until"),
+    split = {"mode": "date" if spec.get("train_until") else "share", "train_from": spec.get("train_from"), "train_until": spec.get("train_until"), "val_until": spec.get("val_until"),
              "train": _span([p[2] for p in tr_parts]), "val": _span([p[2] for p in va_parts])}
     scaler = mlprep.fit_scaler(Xtr, hp["scaling"])
     Xtr_s, Xva_s = mlprep.apply_scaler(Xtr, scaler), mlprep.apply_scaler(Xva, scaler)
@@ -207,9 +208,9 @@ def run_finetune(spec: Dict[str, Any], progress: ProgressFn) -> str:
                                    time_cols=parent.get("time_features", mlprep.TIME_FEATURES), weather_df=wx,
                                    power_lag=parent.get("power_lag"), horizon=hp["horizon"],
                                    future_weather=bool(parent.get("future_weather")))
-    (Xtr, ytr, ttr), (Xva, yva, tva) = _split(Xw, yw, tw, spec.get("train_until"), hp["val_frac"], hp["horizon"], spec.get("train_from"))
+    (Xtr, ytr, ttr), (Xva, yva, tva) = _split(Xw, yw, tw, spec.get("train_until"), hp["val_frac"], hp["horizon"], spec.get("train_from"), spec.get("val_until"))
     _require_both(len(ytr), len(yva), spec.get("train_until"))
-    split = {"mode": "date" if spec.get("train_until") else "share", "train_from": spec.get("train_from"), "train_until": spec.get("train_until"),
+    split = {"mode": "date" if spec.get("train_until") else "share", "train_from": spec.get("train_from"), "train_until": spec.get("train_until"), "val_until": spec.get("val_until"),
              "train": _span([ttr]), "val": _span([tva])}
     scaler = parent["scaler"]                                   # keep the pre-training input scaling
     Xtr_s, Xva_s = mlprep.apply_scaler(Xtr, scaler), mlprep.apply_scaler(Xva, scaler)

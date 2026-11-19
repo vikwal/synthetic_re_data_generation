@@ -45,8 +45,9 @@ def run_scenario(scenario_id: str, progress: ProgressFn) -> str:
         params = SolarParams(**sc["params"])
         if params.lat is None or params.lon is None:
             raise ValueError("Pick a location before running.")
-        overrides = params.model_dump(exclude={"lat", "lon"})
-        df, summary = core.generate_solar(params.lat, params.lon, overrides, progress=progress)
+        overrides = params.model_dump(exclude={"lat", "lon", "weather_source"})
+        df, summary = core.generate_solar(params.lat, params.lon, overrides, progress=progress,
+                                          weather_source=params.weather_source)
         public_sites = None
 
     kp = analytics.kpis(df, kind, summary["capacity_w"])
@@ -114,7 +115,7 @@ def build_figure(rid: str, name: str, **q) -> Dict[str, Any]:
         energies = (meta["summary"] or {}).get("energies")
         if not energies:
             raise LookupError("No wake/ageing breakdown for this run.")
-        return charts.waterfall_figure(energies)
+        return charts.waterfall_figure(energies, percent=q.get("unit") == "percent")
     if name == "loss-per-turbine":
         if not meta.get("sites"):
             raise LookupError("Only available for wind parks.")

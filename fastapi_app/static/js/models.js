@@ -1,6 +1,7 @@
 // Pre-trained model tab: pre-train on generated data, then fine-tune on real measurements.
 import { api } from "./api.js?v=26";
 import { h, toast, fmt } from "./ui.js?v=26";
+import { tr } from "./i18n.js?v=26";
 import { plotCards, helpButton, filePicker } from "./compare.js?v=26";
 import { openArchPopup } from "./archinfo.js?v=26";
 import { trackJob, setFinishHandler, takePending } from "./trainpop.js?v=26";
@@ -56,11 +57,11 @@ export async function mountModels(container) {
   const reload = () => mountModels(container);
 
   const help = helpButton("Pre-trained models", [
-    "Pre-train: teach a model on generated data. Pick an architecture, tick one or more generated runs and press Train.",
+    "Pre-train: teach a model on generated data. Pick an architecture, tick one or more generated runs, set the lead time and the weather inputs (from one or more forecast models), then press Pre-train model.",
     "Models tab: your saved models. Hover a name for its details, press View for accuracy and plots.",
-    "Fine-tune: adapt a saved model to your plant. Choose a generated run for the same site (it supplies the weather), then upload your measured power file as a CSV.",
+    "Fine-tune: adapt a saved model to your plant. Choose a generated run for the same site (it sets the location; the weather is the same forecast model(s) and lead time the model was pre-trained on), then upload your measured power file as a CSV.",
     "Not sure which architecture? Start with Linear regression for a quick baseline, then try TFT for the best accuracy.",
-    "Lower error is better. Errors are in percent (of your plant's rated capacity) and measured on the last part of the data, which the model never saw during training.",
+    "Lower error is better. Errors are in percent of your plant's rated capacity and are measured on the validation period (the days after the training end date up to the validation end date, or the last part of the data in By share mode), which the model never saw during training. After fine-tuning, the pre-trained-only errors show how much your own data improved the model.",
   ]);
 
   // ------------------------------------------------------------ 1. pre-train form
@@ -104,51 +105,26 @@ export async function mountModels(container) {
   let featSel = new Set();
   let usePower = true;                                     // past power values as an input (on by default)
   let updateSplit = () => {};              // set further down once the split controls exist
-  // Weather model: the run's own ERA5 weather, or an archived NWP model (ICON-D2 / ECMWF) if its data was downloaded.
+  // Weather models (ICON-D2, ECMWF IFS, ...): all their inputs sit in one feature list that has a model filter.
   // Only real NWP forecasts are offered: the generated runs supply the power (target), not the weather.
   const sourcesList = (archs.weather_sources || []).filter((w) => w.id !== "era5" && !w.hidden);
-  // Height / layer: every input is measured at some height (surface, 2 m, 10 m, 100 m, ...). Tick the heights the
-  // inputs may come from; only features measured there are offered. Default: every height, with 100 m wind rather than 10 m.
-  const defaultLayers = (avail) => avail.filter((l) => !(l === 10 && avail.includes(100)));   // all heights, but 100 m wind rather than 10 m
-  let layersSel = new Set();
-  const layerName = (l) => (l === 0 ? "Surface" : `${l} m`);
-  const layerSeg = h("div", { class: "layer-chips" });
-  const layerNote = h("p", { class: "step-hint", style: "margin:8px 0 0" },
-    "Choose the heights above ground the inputs may come from, for example wind at 10 m or 100 m, temperature at 2 m. Only inputs measured at the ticked heights are offered below.");
-  function renderLayer(avail) {
-    layerSeg.replaceChildren(...avail.map((l) => h("button", { type: "button", class: `layer-chip${layersSel.has(l) ? " on" : ""}`,
-      onclick: () => {
-        if (layersSel.has(l) && layersSel.size > 1) layersSel.delete(l); else layersSel.add(l);
-        renderFeatures();
-      } }, layerName(l))));
-  }
-  const layerField = h("div", { class: "field" }, step(3, "Height / layer"), layerSeg, layerNote);
-  // One or several weather models can be ticked; their inputs are then offered side by side in the feature list.
-  let sourcesSel = new Set([(sourcesList.find((w) => w.available) || sourcesList[0] || { id: "icon_d2" }).id]);
-  const selectedSources = () => sourcesList.filter((s) => sourcesSel.has(s.id));
-  const sourceSeg = h("div", { class: "layer-chips" });
-  const sourceNote = h("p", { class: "step-hint", style: "margin:8px 0 0" });
-  // Forecast lead time (package sources only): how many hours before the predicted hour the forecast was issued.
+  // Every height is used (100 m wind rather than 10 m when both exist), so there is nothing to choose.
+  const defaultLayers = (avail) => avail.filter((l) => !(l === 10 && avail.includes(100)));
+  // Feature ids are `<model>:<feature>`; the models used are the ones with at least one ticked input.
+  const srcOf = (id) => id.slice(0, id.indexOf(":"));
+  const usedSources = () => {
+    const ids = new Set([...featSel].map(srcOf));
+    const used = sourcesList.filter((s) => ids.has(s.id));
+    return used.length ? used : sourcesList.filter((s) => s.available).slice(0, 1);
+  };
+  // Forecast lead time: how many hours before the predicted hour the forecast was issued.
   const leadFrom = numField("Lead time from (hours)", 12, { min: 0, max: 48, step: 1 });
   const leadTo = numField("Lead time to (hours)", 36, { min: 0, max: 48, step: 1 });
   let leadSource = null;
-  const leadBox = h("div", { class: "lead-box", hidden: true },
-    h("div", { class: "lead-fields" }, leadFrom.el, leadTo.el),
-    h("p", { class: "step-hint", style: "margin:6px 0 0" },
-      "How many hours before the predicted hour the forecast was made. 12 to 36 = day-ahead, 0 to 6 = very short-term. Applies to every ticked model."));
-  function renderSources() {
-    sourceSeg.replaceChildren(...sourcesList.map((s) => h("button", { type: "button",
-      class: `layer-chip${sourcesSel.has(s.id) ? " on" : ""}`, disabled: !s.available, title: s.available ? s.description : s.reason,
-      onclick: () => {
-        if (sourcesSel.has(s.id)) { if (sourcesSel.size > 1) sourcesSel.delete(s.id); } else sourcesSel.add(s.id);
-        renderSources(); renderFeatures(); updateSplit();
-      } }, s.label)));
-    const sel = selectedSources();
-    const missing = sourcesList.filter((s) => !s.available && !s.package).map((s) => s.label);
-    sourceNote.textContent = (sel.length > 1 ? "Several models ticked: their inputs appear side by side below, and only hours that every model covers are used. "
-      : (sel[0] && sel[0].description ? sel[0].description + " " : ""))
-      + (missing.length ? `${missing.join(" and ")}: no data found.` : "");
-    const withLead = sel.filter((s) => s.package);
+  const leadBox = h("div", { class: "lead-box" },
+    h("div", { class: "lead-fields" }, leadFrom.el, leadTo.el));
+  function syncLead() {
+    const withLead = usedSources().filter((s) => s.package);
     leadBox.hidden = !withLead.length;
     if (withLead.length) {
       const cap = Math.min(...withLead.map((s) => s.lead.max));            // one window for all models: the shortest reach
@@ -161,43 +137,61 @@ export async function mountModels(container) {
   }
   function renderFeatures() {
     const key = `nwp_${kind}`;
-    const sel = selectedSources();
-    const multi = sel.length > 1;
+    const ready = sourcesList.filter((s) => s.available);
+    const multi = ready.length > 1;
     const base = [];
-    for (const s of sel) {                                    // a source may lack some columns
+    for (const s of ready) {                                  // a source may lack some columns
       for (const f of featCatalog[key]) {
         if (s.features && !s.features.includes(f.id)) continue;
-        base.push(multi ? { ...f, id: `${s.id}:${f.id}`, label: `${f.label} · ${s.label}` } : f);
+        base.push({ ...f, id: `${s.id}:${f.id}`, src: s.id, label: multi ? `${f.label} · ${s.label}` : f.label });
       }
     }
-    const avail = [...new Set(base.map((f) => f.layer).filter((l) => l !== null && l !== undefined))].sort((x, y) => x - y);
-    layersSel = new Set([...layersSel].filter((l) => avail.includes(l)));
-    if (!layersSel.size) layersSel = new Set(defaultLayers(avail));
-    layerField.hidden = avail.length < 2;                   // nothing to choose when every input sits at one height
-    renderLayer(avail);
-    const list = base.filter((f) => f.layer == null || layersSel.has(f.layer));
-    featSel = new Set(list.map((f) => f.id));
+    const heights = [...new Set(base.map((f) => f.layer).filter((l) => l !== null && l !== undefined))].sort((x, y) => x - y);
+    const layers = new Set(defaultLayers(heights));
+    const list = base.filter((f) => f.layer == null || layers.has(f.layer));
+    featSel = new Set(list.filter((f) => ready.length && f.src === ready[0].id).map((f) => f.id));   // default: the first model's inputs
+    let filterSrc = null;                                      // model filter of the dropdown (null = all models)
     // Weather inputs as a multiselect dropdown (checkbox list inside a popover).
     const summary = h("span", { class: "ms-summary" });
     const trigger = h("button", { type: "button", class: "ms-trigger" }, summary, h("span", { class: "ms-caret" }, "▾"));
     const panel = h("div", { class: "ms-panel", hidden: true });
-    const boxes = new Map();
+    const boxes = new Map(), rows = new Map();
+    const shown = () => list.filter((f) => !filterSrc || f.src === filterSrc);
     const refresh = () => {                                    // every selected input shown as a green-bordered chip
       const chosen = list.filter((f) => featSel.has(f.id));
       summary.replaceChildren(...(chosen.length ? chosen.map((f) => h("span", { class: "ms-chip" }, f.label,
         h("button", { type: "button", class: "ms-x", title: `Remove ${f.label}`, "aria-label": `Remove ${f.label}`,
           onclick: (e) => { e.stopPropagation(); featSel.delete(f.id); const cb = boxes.get(f.id); if (cb) cb.checked = false; refresh(); } }, "×")))
         : [h("span", { class: "ms-empty" }, "Select weather inputs")]));
+      syncLead(); updateSplit();
     };
-    const setAll = (on) => { featSel = on ? new Set(list.map((f) => f.id)) : new Set(); boxes.forEach((cb) => { cb.checked = on; }); refresh(); };
-    panel.append(h("div", { class: "ms-actions" },
-      h("button", { type: "button", class: "btn small", onclick: () => setAll(true) }, "Select all"),
-      h("button", { type: "button", class: "btn small", onclick: () => setAll(false) }, "Clear")),
+    const setAll = (on) => {                                   // acts on the inputs currently shown by the filter
+      shown().forEach((f) => { if (on) featSel.add(f.id); else featSel.delete(f.id); const cb = boxes.get(f.id); if (cb) cb.checked = on; });
+      refresh();
+    };
+    // Model filter: buttons are toggled in place (not rebuilt), so a click never detaches its own target.
+    const filterBtns = [[null, "All models"], ...ready.map((s) => [s.id, s.label])].map(([id, text]) => {
+      const b = h("button", { type: "button", class: `layer-chip${id === null ? " on" : ""}`,
+        onclick: () => {
+          filterSrc = id;
+          filterBtns.forEach(([bid, btn]) => btn.classList.toggle("on", bid === id));
+          list.forEach((f) => { rows.get(f.id).style.display = !filterSrc || f.src === filterSrc ? "" : "none"; });
+        } }, text);
+      return [id, b];
+    });
+    // One toolbar row: model filter on the left, Select all / Clear on the right, all in the same small size.
+    panel.append(h("div", { class: "ms-actions ms-bar" },
+        h("div", { class: "ms-filter" }, ...(multi ? filterBtns.map(([, b]) => b) : [])),
+        h("div", { class: "ms-acts" },
+          h("button", { type: "button", class: "btn small", onclick: () => setAll(true) }, "Select all"),
+          h("button", { type: "button", class: "btn small", onclick: () => setAll(false) }, "Clear"))),
       ...list.map((f) => {
-        const cb = h("input", { type: "checkbox", checked: true });
+        const cb = h("input", { type: "checkbox", checked: featSel.has(f.id) });
         boxes.set(f.id, cb);
         cb.addEventListener("change", () => { if (cb.checked) featSel.add(f.id); else featSel.delete(f.id); refresh(); });
-        return h("label", { class: "ms-option" }, cb, h("span", { class: "feat-text" }, h("b", {}, f.label), h("span", {}, f.hint)));
+        const row = h("label", { class: "ms-option" }, cb, h("span", { class: "feat-text" }, h("b", {}, f.label), h("span", {}, f.hint)));
+        rows.set(f.id, row);
+        return row;
       }));
     const wrap = h("div", { class: "ms" }, trigger, panel);
     trigger.addEventListener("click", () => { panel.hidden = !panel.hidden; trigger.classList.toggle("open", !panel.hidden); });
@@ -248,7 +242,6 @@ export async function mountModels(container) {
     renderFeatures();
     updateSplit();
   }
-  renderSources();
   renderDatasets();
 
   const nameIn = h("input", { placeholder: "e.g. GRU wind baseline" });
@@ -281,15 +274,18 @@ export async function mountModels(container) {
   f.delta = numField("Delta (min. improvement)", 0.001, { min: 0, max: 10, step: 0.001 });
   // Train / validation split: by date (default) or by share of the data. Drawn as a timeline bar.
   let splitMode = "date", dateTouched = false;
-  const dateIn = h("input", { type: "date" }), fromIn = h("input", { type: "date" });
-  let fromTouched = false;
+  const dateIn = h("input", { type: "date" }), fromIn = h("input", { type: "date" }), valIn = h("input", { type: "date" });
+  let fromTouched = false, valTouched = false;
   const splitInfo = h("p", { class: "split-info" });
   const splitSeg = h("div", { class: "seg" });
   const trainSeg = h("div", { class: "split-train" }), valSeg = h("div", { class: "split-val" });
   const loLabel = h("span", {}), hiLabel = h("span", {});
-  const dateWrap = h("div", { class: "split-date" }, h("span", {}, "Train from"), fromIn, h("span", {}, "until"), dateIn);
+  const dateWrap = h("div", { class: "split-fields" },
+    h("label", { class: "sd-field" }, h("span", {}, "Train from"), fromIn),
+    h("label", { class: "sd-field" }, h("span", {}, "Train until"), dateIn),
+    h("label", { class: "sd-field" }, h("span", {}, "Validate until"), valIn));
   const splitBar = h("div", { class: "split-bar" }, trainSeg, valSeg);
-  const splitDates = h("div", { class: "split-dates" }, loLabel, dateWrap, hiLabel);
+  const splitDates = h("div", { class: "split-dates" }, loLabel, hiLabel);          // first and last day of the data, under the bar
   const iso = (d) => d.toISOString().slice(0, 10);
   const addDays = (iso0, n) => iso(new Date(new Date(iso0 + "T00:00:00Z").getTime() + n * 86400000));
   const dayDiff = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
@@ -308,7 +304,7 @@ export async function mountModels(container) {
       h("button", { type: "button", class: splitMode === m ? "active" : "", onclick: () => { splitMode = m; updateSplit(); } }, t)));
     const per = selectedPeriod();
     f.val.el.style.display = splitMode === "share" ? "" : "none";
-    splitDates.style.display = splitMode === "date" ? "" : "none";
+    splitDates.style.display = dateWrap.style.display = splitMode === "date" ? "" : "none";
     loLabel.textContent = per ? per.lo : ""; hiLabel.textContent = per ? per.hi : "";
     if (splitMode === "share") {
       const v = Math.min(0.5, Math.max(0.05, f.val.get() || 0.2));
@@ -317,32 +313,35 @@ export async function mountModels(container) {
       return;
     }
     if (!per) {
-      dateIn.disabled = true; fromIn.disabled = true;
+      dateIn.disabled = true; fromIn.disabled = true; valIn.disabled = true;
       setBar(80, "Training", "Validation");
       splitInfo.textContent = picks.some((p) => p.cb.checked)
         ? "The selected data and weather model share no dates."
         : "Select a generated dataset above to choose the split date.";
       return;
     }
-    dateIn.disabled = false; fromIn.disabled = false;
+    dateIn.disabled = false; fromIn.disabled = false; valIn.disabled = false;
     fromIn.min = per.lo; fromIn.max = addDays(per.hi, -2);
     if (!fromTouched || !fromIn.value || fromIn.value < fromIn.min || fromIn.value > fromIn.max) fromIn.value = per.lo;
     dateIn.min = addDays(fromIn.value, 1); dateIn.max = addDays(per.hi, -1);
     if (!dateTouched || !dateIn.value || dateIn.value < dateIn.min || dateIn.value > dateIn.max) {
       dateIn.value = addDays(per.lo, Math.max(1, Math.round(dayDiff(per.lo, per.hi) * 0.8)));      // default: 80 % of the period
     }
-    const total = dayDiff(per.lo, per.hi) + 1, nTrain = dayDiff(fromIn.value, dateIn.value) + 1;
-    const skipped = dayDiff(per.lo, fromIn.value), nVal = total - skipped - nTrain;
+    valIn.min = addDays(dateIn.value, 1); valIn.max = per.hi;                 // validation runs from the day after training to this date
+    if (!valTouched || !valIn.value || valIn.value < valIn.min || valIn.value > valIn.max) valIn.value = per.hi;
+    const nTrain = dayDiff(fromIn.value, dateIn.value) + 1, nVal = dayDiff(addDays(dateIn.value, 1), valIn.value) + 1;
+    const skipped = dayDiff(per.lo, fromIn.value), skippedEnd = dayDiff(valIn.value, per.hi);
     setBar(100 * nTrain / (nTrain + nVal), "Training", "Validation");
-    const wxNote = selectedSources().filter((x) => x.start && (x.start > per.lo || x.end < per.hi))
+    const wxNote = usedSources().filter((x) => x.start && (x.start > per.lo || x.end < per.hi))
       .map((x) => ` · ${x.label} only covers ${x.start} to ${x.end}; hours outside that are skipped`).join("");
-    splitInfo.textContent = `Training ${fromIn.value} to ${dateIn.value} (${nTrain} days) · Validation ${addDays(dateIn.value, 1)} to ${per.hi} (${nVal} days)` +
-      (skipped ? ` · ${skipped} earlier days unused` : "") + wxNote;
+    splitInfo.textContent = `Training ${fromIn.value} to ${dateIn.value} (${nTrain} days) · Validation ${addDays(dateIn.value, 1)} to ${valIn.value} (${nVal} days)` +
+      (skipped ? ` · ${skipped} earlier days unused` : "") + (skippedEnd ? ` · ${skippedEnd} later days unused` : "") + wxNote;
   };
   dateIn.addEventListener("change", () => { dateTouched = true; updateSplit(); });
   fromIn.addEventListener("change", () => { fromTouched = true; updateSplit(); });
+  valIn.addEventListener("change", () => { valTouched = true; updateSplit(); });
   f.val.input.addEventListener("input", () => updateSplit());
-  const splitCard = h("div", { class: "split-card" }, splitSeg, splitBar, splitDates, splitInfo, f.val.el);
+  const splitCard = h("div", { class: "split-card" }, splitSeg, splitBar, splitDates, dateWrap, splitInfo, f.val.el);
   // Settings in three labelled rows so every column lines up: input window, network, early stopping.
   const hpGrid = h("div", { class: "hp-groups" });
   const GROUPS = {
@@ -365,8 +364,9 @@ export async function mountModels(container) {
     if (!featSel.size) return toast("Select at least one weather input.", "error");
     trainBtn.disabled = true;
     try {
-      const body = { name: nameIn.value.trim() || null, architecture: arch, result_ids: ids, features: [...featSel], weather_source: selectedSources()[0].id, weather_sources: selectedSources().map((s) => s.id), lead_from: leadFrom.get(), lead_to: leadTo.get(),
-        power_lag_hours: usePower ? 1 : 0, lookback: f.lookback.get(), val_frac: f.val.get(), train_from: splitMode === "date" && fromIn.value && !fromIn.disabled ? fromIn.value : null, train_until: splitMode === "date" && dateIn.value && !dateIn.disabled ? dateIn.value : null, horizon: f.horizon.get(), scaling: f.scaling.get(),
+      const used = usedSources();                                // models with at least one ticked input
+      const body = { name: nameIn.value.trim() || null, architecture: arch, result_ids: ids, features: [...featSel].map((id) => (used.length === 1 ? id.slice(id.indexOf(":") + 1) : id)), weather_source: used[0].id, weather_sources: used.map((s) => s.id), lead_from: leadFrom.get(), lead_to: leadTo.get(),
+        power_lag_hours: usePower ? 1 : 0, lookback: f.lookback.get(), val_frac: f.val.get(), train_from: splitMode === "date" && fromIn.value && !fromIn.disabled ? fromIn.value : null, train_until: splitMode === "date" && dateIn.value && !dateIn.disabled ? dateIn.value : null, val_until: splitMode === "date" && valIn.value && !valIn.disabled ? valIn.value : null, horizon: f.horizon.get(), scaling: f.scaling.get(),
         ...(arch === "linear" ? { ridge_alpha: f.alpha.get() }
           : { epochs: f.epochs.get(), hidden: f.hidden.get(), layers: f.layers.get(), dropout: f.dropout.get(), lr: f.lr.get(), batch_size: f.batch.get(),
             early_stopping: f.es.get(), patience: f.patience.get(), monitor: f.monitor.get(), min_delta: f.delta.get(), refit_full: f.refit.get() }) };
@@ -376,22 +376,21 @@ export async function mountModels(container) {
     } catch (e) { toast(e.message, "error"); } finally { trainBtn.disabled = false; }
   });
 
-  function step(n, text) { return h("div", { class: "step-label" }, h("span", { class: "step-num" }, n), text); }
+  // Step heading with an info icon: hovering (or focusing) the "i" explains what the setting means.
+  function step(n, text, tip) {
+    return h("div", { class: "step-label" }, h("span", { class: "step-num" }, n), text,
+      tip ? h("span", { class: "info-tip", tabindex: "0", role: "img", "aria-label": tip, "data-tip": tip }, "i") : null);
+  }
   const trainCard = h("div", { class: "card ml-card run-picker" },
     h("div", { class: "run-picker-head" }, h("h3", {}, "Pre-train on synthetic data"),
       h("p", {}, "Teach a model on generated runs, then fine-tune it on your own measurements.")),
-    h("div", { class: "field" }, step(1, "Architecture"), archRow),
-    h("div", { class: "field" }, step(2, "Generated data (select one or more)"), kindSeg, h("div", { style: "height:12px" }), dsBox),
-    layerField,
-    h("div", { class: "field" }, step(4, "Weather model"), sourceSeg, sourceNote, leadBox),
-    h("div", { class: "field" }, step(5, "Input features"),
-      h("p", { class: "step-hint" }, "Choose which weather inputs the model may use"), featBox),
-    h("div", { class: "field" }, step(6, "Train / validation split"),
-      h("p", { class: "step-hint" }, "Training uses data up to the date you pick, everything after it validates the model."), splitCard),
-    h("div", { class: "field" }, step(7, "Model name (optional)"), nameIn),
-    h("div", { class: "field" }, step(8, "Settings"),
-      h("p", { class: "step-hint" }, "Set the hyperparameters for training this model."),
-      hpGrid,),
+    h("div", { class: "field" }, step(1, "Architecture", "The kind of model that is trained. Linear regression is a fast baseline; GRU, TCN and TFT are neural networks that can learn curves and longer patterns. Press “How it works” for a diagram."), archRow),
+    h("div", { class: "field" }, step(2, "Generated data (select one or more)", "The generated runs the model learns from. They supply the power the model should predict. Wind and solar runs are trained separately."), kindSeg, h("div", { style: "height:12px" }), dsBox),
+    h("div", { class: "field" }, step(3, "Lead time", "How many hours before the predicted hour the weather forecast was made. 12 to 36 hours is a day-ahead forecast, 0 to 6 hours is very short-term. It applies to every forecast model whose inputs are ticked."), leadBox),
+    h("div", { class: "field" }, step(4, "Input features", "The weather inputs the model may use. Use the model filter in the list to pick inputs from one forecast model, or tick inputs from several to combine them. Past power values add the plant’s own earlier output as an input."), featBox),
+    h("div", { class: "field" }, step(5, "Train / validation split", "Training uses data up to the date you pick. The days after it, up to the validation end date, test the model on data it has not seen. “By share” uses the last part of the data instead."), splitCard),
+    h("div", { class: "field" }, step(6, "Model name (optional)", "A name to find the model later in the Saved models list. If you leave it empty, a name is made for you."), nameIn),
+    h("div", { class: "field" }, step(7, "Settings", "How the model is trained: input window, forecast horizon, network size, learning rate and early stopping. The defaults are a good starting point."), hpGrid),
       h("div", { style: "margin-top:16px;display:flex;justify-content:center" }, trainBtn));
 
   // ------------------------------------------------------------ 2. models list
@@ -433,9 +432,9 @@ export async function mountModels(container) {
       h("div", { class: "model-actions" },
         h("button", { class: "btn small", onclick: () => showDetails(m.id) }, "View"),
         h("button", { class: "btn small", disabled: m.stage === "finetuned", title: m.stage === "finetuned" ? "Fine-tune the pre-trained parent model" : "", onclick: () => openFinetune(m) }, "Fine-tune"),
-        h("a", { class: "btn small", href: `/api/ml/models/${m.id}/download`, style: "text-decoration:none" }, "Download"),
+        h("a", { class: "btn small", href: `${window.BASE_PATH || ""}/api/ml/models/${m.id}/download`, style: "text-decoration:none" }, "Download"),
         h("button", { class: "btn small danger", onclick: async () => {
-          if (!confirm(`Delete model "${m.name}"? This cannot be undone.`)) return;
+          if (!confirm(tr(`Delete model "${m.name}"? This cannot be undone.`))) return;
           try { await api.mlDelete(m.id); toast("Model deleted", "ok"); reload(); } catch (e) { toast(e.message, "error"); }
         } }, "Delete")));
   });
@@ -477,7 +476,7 @@ export async function mountModels(container) {
     });
     ftHost.replaceChildren(h("div", { class: "card ml-card run-picker" },
       h("h3", {}, `Fine-tune “${parent.name}” on your real data`),
-      h("p", { class: "hint" }, "Pick a generated run for the same site (it provides the weather) and upload your measured power file."),
+      h("p", { class: "hint" }, "Pick a generated run for the same site (it sets the location; the weather is the forecast model the model was pre-trained on) and upload your measured power file."),
       h("div", { class: "form-card", style: "box-shadow:none;border:0;padding:0;grid-template-columns:2fr .7fr 1.6fr" },
         h("div", { class: "field" }, h("label", {}, "Weather source (generated run)"), src),
         h("div", { class: "field" }, h("label", {}, "Power unit in file"), unit),

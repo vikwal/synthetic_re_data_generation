@@ -1,14 +1,16 @@
 """HTTP API (JSON). Mounted under /api by main.py."""
 from __future__ import annotations
 
+import base64
+import binascii
 import io
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import core, jobs, layout, mlmodels, mlprep, mlservice, nwp, parkdata, realcompare, service, storage
-from .schemas import CompareRequest, FinetuneRequest, RealCompareRequest, TrainRequest, LayoutRequest, ScenarioCreate, ScenarioUpdate, SolarParams, WindParams
+from . import core, jobs, layout, mlmodels, mlprep, mlservice, nwp, parkdata, parkfile, realcompare, service, storage
+from .schemas import CompareRequest, FinetuneRequest, ParkFileRequest, RealCompareRequest, TrainRequest, LayoutRequest, ScenarioCreate, ScenarioUpdate, SolarParams, WindParams
 
 router = APIRouter(prefix="/api")
 
@@ -66,6 +68,19 @@ def turbine_specs(name: str):
     if name not in set(core.turbine_types()):
         raise HTTPException(404, "Unknown turbine type")
     return core.turbine_specs(name)
+
+
+@router.post("/wind/parks/parse")
+def parse_park_file(req: ParkFileRequest):
+    """Read an uploaded turbine file (CSV or Excel) and group its rows into parks."""
+    try:
+        data = base64.b64decode(req.content_b64, validate=False)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "The uploaded file could not be decoded.")
+    try:
+        return parkfile.parse_parks(req.filename, data, core.turbine_types())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @router.post("/layout")
@@ -133,7 +148,7 @@ def run_scenario(sid: str):
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str):
-    job = jobs.manager.get(job_id)
+    job = jobs.manager.get(job_id, owner_check=True)
     if job is None:
         raise HTTPException(404, "Job not found")
     return job
@@ -142,11 +157,10 @@ def get_job(job_id: str):
 # ---------------------------------------------------------------- results
 @router.get("/results")
 def list_results():
-    from . import settings
     out = []
-    for p in sorted((settings.STORAGE_DIR / "results").glob("*.json")) if (settings.STORAGE_DIR / "results").exists() else []:
+    for rid in storage.result_ids():
         try:
-            m = storage.get_result_meta(p.stem)
+            m = storage.get_result_meta(rid)
             out.append({**{k: m.get(k) for k in ("id", "scenario_id", "scenario_name", "kind", "created", "kpis")},
                         "start": (m.get("summary") or {}).get("start"), "end": (m.get("summary") or {}).get("end")})
         except storage.NotFound:
@@ -161,9 +175,10 @@ def get_result(rid: str):
 
 @router.get("/results/{rid}/figure/{name}")
 def get_figure(rid: str, name: str, date: Optional[str] = None, feature: Optional[str] = None,
-               year: Optional[int] = None, turbine: Optional[str] = None, hour: Optional[int] = None):
+               year: Optional[int] = None, turbine: Optional[str] = None, hour: Optional[int] = None,
+               unit: Optional[str] = None):
     try:
-        return service.build_figure(rid, name, date=date, feature=feature, year=year, turbine=turbine, hour=hour)
+        return service.build_figure(rid, name, date=date, feature=feature, year=year, turbine=turbine, hour=hour, unit=unit)
     except LookupError as exc:
         raise HTTPException(404, str(exc.args[0]))
     except (ValueError, KeyError) as exc:
@@ -225,11 +240,14 @@ def compare_real(req: RealCompareRequest):
     synth = storage.get_result_df(req.result_id)
     try:
         real = realcompare.parse_real_csv(req.csv_text, req.unit)
-        m, figs = realcompare.compare(real, synth, meta["summary"]["capacity_w"], meta["kind"])
+        joined = realcompare.align(real, synth)
+        m = realcompare.metrics(joined, meta["summary"]["capacity_w"], meta["kind"])
+        figs = realcompare.figures(joined, meta["kind"])
+        series = realcompare.hourly_series(joined, meta["kind"])
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"result_id": req.result_id, "name": meta.get("scenario_name"), "kind": meta["kind"],
-            "real_rows": int(len(real)), "metrics": m, "figures": figs}
+            "real_rows": int(len(real)), "metrics": m, "figures": figs, "series": series}
 
 
 # ---------------------------------------------------------------- pre-trained models
@@ -281,9 +299,9 @@ def ml_train(req: TrainRequest):
                 raise HTTPException(400, f"{src['label']} forecasts only exist for the imported wind parks. Choose one of those parks.")
     spec = {"name": req.name, "architecture": req.architecture, "result_ids": req.result_ids,
             "features": req.features, "weather_source": wanted[0], "weather_sources": wanted, "power_lag": req.power_lag_hours,
-            "train_from": req.train_from, "train_until": req.train_until, "refit_full": req.refit_full, "lead_from": req.lead_from, "lead_to": req.lead_to,
+            "train_from": req.train_from, "train_until": req.train_until, "val_until": req.val_until, "refit_full": req.refit_full, "lead_from": req.lead_from, "lead_to": req.lead_to,
             "hyperparams": req.model_dump(exclude={"name", "architecture", "result_ids", "features", "weather_source", "weather_sources",
-                                                   "power_lag_hours", "train_from", "train_until", "refit_full", "lead_from", "lead_to"})}
+                                                   "power_lag_hours", "train_from", "train_until", "val_until", "refit_full", "lead_from", "lead_to"})}
     return jobs.manager.submit(lambda progress: mlservice.run_training(spec, progress))
 
 

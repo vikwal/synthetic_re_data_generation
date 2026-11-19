@@ -1,0 +1,34 @@
+# Synthetic dashboard, run on its own (docker compose up -d --build).
+# Local:  http://localhost:8000/
+# Server: set the values below in a .env next to this file; nginx forwards /synthetic-dashboard to 127.0.0.1:8000.
+#   SYNTH_BIND=127.0.0.1:                 publish on loopback only, nginx is the way in
+#   SYNTH_RE_BASE_PATH=/synthetic-dashboard
+#   SYNTH_DATA_DIR=/opt/synthetic_data    the copy of streamlit/data
+services:
+  synthetic_dashboard:
+    build:
+      context: .
+      dockerfile: fastapi_app/Dockerfile
+    container_name: synthetic_dashboard
+    ports:
+      - ${SYNTH_BIND:-}8000:8000
+    environment:
+      - SYNTH_RE_AUTH=${SYNTH_RE_AUTH:-1}
+      # Cookie signing key. When empty, the app creates one and keeps it in the storage volume.
+      - SYNTH_RE_SECRET=${SYNTH_RE_SECRET:-}
+      - SYNTH_RE_SESSION_HOURS=${SYNTH_RE_SESSION_HOURS:-12}
+      # Empty locally; behind nginx the prefix is stripped by the proxy and the app builds its links with it.
+      - SYNTH_RE_BASE_PATH=${SYNTH_RE_BASE_PATH:-}
+      - SYNTH_RE_STORAGE_DIR=/storage
+      # Config file other than streamlit/config.yaml (empty = the default one)
+      - SYNTH_RE_CONFIG=${SYNTH_RE_CONFIG:-}
+      - SYNTH_RE_ERA5_DIR=${SYNTH_RE_ERA5_DIR:-}
+      - SYNTH_RE_ERA5_SOLAR_DIR=${SYNTH_RE_ERA5_SOLAR_DIR:-}
+      - SYNTH_RE_ERA5_MET_DIR=${SYNTH_RE_ERA5_MET_DIR:-}
+    volumes:
+      - synthetic_storage:/storage
+      - ${SYNTH_DATA_DIR:-./streamlit/data}:/app/streamlit/data:ro
+    restart: unless-stopped
+
+volumes:
+  synthetic_storage:

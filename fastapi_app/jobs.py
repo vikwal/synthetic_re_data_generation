@@ -1,6 +1,7 @@
 """In-process background jobs with progress reporting (thread pool)."""
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import time
@@ -9,7 +10,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Optional
 
-from . import settings
+from . import auth, settings
 
 log = logging.getLogger("synth_re.jobs")
 
@@ -26,19 +27,26 @@ class JobManager:
     def submit(self, fn: Callable[[ProgressFn], Any], scenario_id: Optional[str] = None) -> Dict[str, Any]:
         job_id = uuid.uuid4().hex[:12]
         job = {"id": job_id, "scenario_id": scenario_id, "status": "queued", "progress": 0.0,
-               "message": "Queued", "result_id": None, "error": None, "created": time.time()}
+               "message": "Queued", "result_id": None, "error": None, "created": time.time(),
+               "owner": auth.current()}                      # only this user may read the job
         with self._lock:
             self._jobs[job_id] = job
             while len(self._jobs) > self._keep:
                 self._jobs.popitem(last=False)
         log.info("job %s submitted (scenario %s)", job_id, scenario_id)
-        self._pool.submit(self._run, job_id, fn)
+        ctx = contextvars.copy_context()                      # the worker thread runs as the user who started the job
+        self._pool.submit(ctx.run, self._run, job_id, fn)
         return self.get(job_id)
 
-    def get(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, job_id: str, owner_check: bool = False) -> Optional[Dict[str, Any]]:
+        """The job without its owner field. With owner_check, a job of another user counts as not found."""
         with self._lock:
             job = self._jobs.get(job_id)
-            return dict(job) if job else None
+            if not job:
+                return None
+            if owner_check and settings.AUTH_ENABLED and job.get("owner") != auth.current():
+                return None
+            return {k: v for k, v in job.items() if k != "owner"}
 
     def _update(self, job_id: str, **fields) -> None:
         with self._lock:

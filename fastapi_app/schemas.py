@@ -1,7 +1,7 @@
 """Pydantic request/response models (Python 3.9 compatible: Optional/List, no `X | None`)."""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -35,6 +35,7 @@ class SolarParams(BaseModel):
     gamma_pdc: float = -0.0035
     albedo: float = Field(default=0.25, ge=0, le=1)
     eta_inv_nom: float = Field(default=0.96, gt=0, le=1)
+    weather_source: Literal["stations", "external"] = "stations"      # local station files, or the external weather service
 
 
 class ScenarioCreate(BaseModel):
@@ -77,6 +78,11 @@ class CompareRequest(BaseModel):
     result_ids: List[str] = Field(min_length=1, max_length=6)
 
 
+class ParkFileRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_b64: str = Field(min_length=1)                 # the file, base64 encoded (works for CSV and Excel alike)
+
+
 class RealCompareRequest(BaseModel):
     result_id: str
     csv_text: str = Field(min_length=1)
@@ -100,6 +106,7 @@ class TrainRequest(BaseModel):
     # None = split by `val_frac` instead.
     train_from: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     train_until: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    val_until: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")      # validation ends at the end of this day
     early_stopping: bool = True
     patience: int = Field(default=6, ge=1, le=50)         # epochs without improvement before stopping
     monitor: str = "val_rmse"                              # val_rmse | val_mae | train_loss

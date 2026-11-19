@@ -361,6 +361,9 @@ def test_split_by_date_train_from():
     tr, va = mlprep.split_by_date(t, "2024-01-07", 1, train_from="2024-01-03")
     assert t[tr].min() == pd.Timestamp("2024-01-03", tz="UTC") and t[tr].max() < pd.Timestamp("2024-01-08", tz="UTC")
     assert t[va].min() == pd.Timestamp("2024-01-08", tz="UTC")
+    tr2, va2 = mlprep.split_by_date(t, "2024-01-07", 1, val_until="2024-01-09")      # validation ends with 9 Jan
+    assert t[va2].min() == pd.Timestamp("2024-01-08", tz="UTC") and t[va2].max() == pd.Timestamp("2024-01-09 23:00", tz="UTC")
+    assert (tr2 == tr).all() or t[tr2].max() < pd.Timestamp("2024-01-08", tz="UTC")
 
 
 def test_future_windows_shape_mask_and_flag():

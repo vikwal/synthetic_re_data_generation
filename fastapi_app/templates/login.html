@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Synthetic Renewables</title>
+  <script>window.BASE_PATH = "{{ base }}";</script>
+  <link rel="icon" type="image/svg+xml" href="{{ base }}/static/img/favicon.svg">
+  <link rel="stylesheet" href="{{ base }}/static/style.css?v=26">
+</head>
+<body class="login-body">
+  <div class="lang-switch seg login-lang" role="group" aria-label="Language">
+    <button type="button" data-lang="de" title="Deutsch">DE</button>
+    <button type="button" data-lang="en" title="English">EN</button>
+  </div>
+  <main class="login-split">
+    <section class="login-hero">
+      <div class="login-hero-text">
+      <div class="brand"><span class="logo">◐</span> Synthetic Renewables</div>
+      <h2>Synthetic wind and solar generation, from weather to power.</h2>
+      <ul>
+        <li>Build wind and solar parks for a location in Germany</li>
+        <li>Compare with your real park data</li>
+        <li>Train and use forecasting models</li>
+      </ul></div>
+      <svg class="login-art" viewBox="0 0 600 260" aria-hidden="true" preserveAspectRatio="xMidYMax meet">
+        <circle cx="505" cy="62" r="34" fill="#fde68a" opacity=".9"/>
+        <circle cx="505" cy="62" r="52" fill="#fde68a" opacity=".18"/>
+        <path d="M-1500 220 L0 220 C90 170 170 200 260 178 C350 156 440 196 600 160 L2100 160 L2100 900 L-1500 900Z" fill="#fff" opacity=".10"/>
+        <path d="M-1500 238 L0 238 C110 200 200 226 300 206 C400 186 480 224 600 196 L2100 196 L2100 900 L-1500 900Z" fill="#fff" opacity=".16"/>
+        <g stroke="#fff" stroke-width="3" stroke-linecap="round" fill="#fff">
+          <g transform="translate(150 118)"><line x1="0" y1="0" x2="0" y2="102" stroke-width="4"/><g><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="14s" repeatCount="indefinite"/><line x1="0" y1="0" x2="0" y2="-62"/><line x1="0" y1="0" x2="54" y2="31"/><line x1="0" y1="0" x2="-54" y2="31"/></g><circle r="5" stroke="none"/></g>
+          <g transform="translate(270 140) scale(.8)"><line x1="0" y1="0" x2="0" y2="100" stroke-width="4"/><g><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/><line x1="0" y1="0" x2="0" y2="-62"/><line x1="0" y1="0" x2="54" y2="31"/><line x1="0" y1="0" x2="-54" y2="31"/></g><circle r="5" stroke="none"/></g>
+          <g transform="translate(360 156) scale(.62)"><line x1="0" y1="0" x2="0" y2="98" stroke-width="4"/><g><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/><line x1="0" y1="0" x2="0" y2="-62"/><line x1="0" y1="0" x2="54" y2="31"/><line x1="0" y1="0" x2="-54" y2="31"/></g><circle r="5" stroke="none"/></g>
+        </g>
+        <g fill="#fff" opacity=".85">
+          <path d="M430 214 l78 0 l-12 -34 l-78 0z" opacity=".9"/><path d="M500 214 l78 0 l-12 -34 l-78 0z" opacity=".7"/>
+        </g>
+        <polyline points="20,70 70,52 120,60 170,34 220,44 270,22 320,36" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/>
+      </svg>
+    </section>
+    <section class="login-side">
+      <form id="login-form" class="login-card" autocomplete="on">
+        <h1>Welcome back</h1>
+        <p class="login-sub">Sign in to your workspace</p>
+        <label>User name<input id="login-user" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+        <label>Password<input id="login-pass" name="password" type="password" autocomplete="current-password" required></label>
+        <div id="login-error" class="login-error" role="alert" hidden></div>
+        <button type="submit" class="btn primary" id="login-btn">Sign in</button>
+        <p class="login-note">No account yet? Ask the administrator.</p>
+      </form>
+      <div class="login-logos">
+        <img src="{{ base }}/static/img/HKA_Logo.png" alt="Hochschule Karlsruhe" class="logo-hka">
+        <span class="logo-divider"></span>
+        <div class="funded-by"><span class="funded-label">Funded by</span>
+          <img src="{{ base }}/static/img/bmftr_logo.svg" alt="Federal Ministry of Research, Technology and Space" class="logo-bmftr"></div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="{{ base }}/static/js/login.js?v=26"></script>
+</body>
+</html>

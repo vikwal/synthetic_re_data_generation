@@ -1,6 +1,8 @@
 // Setup view: Leaflet map + docked inspector. Edits autosave to the scenario.
 import { api } from "./api.js?v=26";
 import { h, toast, debounce } from "./ui.js?v=26";
+import { tr } from "./i18n.js?v=26";
+import { filePicker } from "./compare.js?v=26";
 
 const BASEMAPS = {
   Streets: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png", "© OpenStreetMap"],
@@ -15,7 +17,7 @@ export function mountSetup(container, scenario, boot, onChange) {
   if (scenario.kind === "wind" && params.annual_degradation == null) params.annual_degradation = boot.wind_defaults.annual_degradation;
   const kind = scenario.kind;
   if (kind === "wind") params.turbines.forEach((t) => { if (!t.commissioning_date) t.commissioning_date = DEFAULT_COMMISSIONING; });
-  const state = { selected: null, addMode: false, specs: {} };
+  const state = { selected: null, addMode: false, specs: {}, parkFile: null };
 
   const mapEl = h("div", { id: "map" });
   const mapWrap = h("div", { class: "map-wrap" }, mapEl);
@@ -159,6 +161,63 @@ export function mountSetup(container, scenario, boot, onChange) {
     drawTurbines(); renderInspector(); save();
   }
 
+  // Import turbines from a user's file (CSV / Excel, one row per turbine): pick a park, its turbines are filled in.
+  const toBase64 = (buf) => {
+    const bytes = new Uint8Array(buf); let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  };
+  async function readParkFile(file) {
+    if (!file) return;
+    try {
+      const d = await api.parseParkFile({ filename: file.name, content_b64: toBase64(await file.arrayBuffer()) });
+      state.parkFile = { ...d, selected: "" };
+      toast(`${d.parks.length} parks found in ${file.name}`, "ok");
+    } catch (e) { state.parkFile = null; toast(e.message, "error"); }
+    renderInspector();
+  }
+  function applyPark(key) {
+    const pf = state.parkFile, park = pf.parks.find((p) => p.key === key);
+    if (!park) return;
+    if (params.turbines.length && !confirm(tr(`Replace the ${params.turbines.length} turbines in this scenario with the ${park.n} turbines of "${park.label}"?`))) {
+      renderInspector(); return;                                 // cancelled: keep the current turbines, reset the dropdown
+    }
+    pf.selected = key;
+    params.turbines.splice(0, params.turbines.length, ...park.turbines.map((t) => ({
+      lat: t.lat, lon: t.lon, turbine: t.turbine, hub_height: t.hub_height || defaults.hub_height,
+      commissioning_date: t.commissioning_date || DEFAULT_COMMISSIONING })));
+    state.selected = null; drawTurbines(); fitAll(); renderInspector(); save();
+    toast(`${park.n} turbines loaded from ${park.label}`, "ok");
+  }
+  function importSection() {
+    const pf = state.parkFile;
+    const tip = "Upload a CSV or Excel file with one row per turbine. Parks are grouped by their park name and park ID columns; pick a park to fill in its turbines.";
+    const parts = [h("h3", { style: "display:flex;align-items:center;gap:8px" }, "Import from file",
+      h("span", { class: "info-tip", tabindex: "0", role: "img", "aria-label": tip, "data-tip": tip }, "i"))];
+    if (!pf) {
+      const picker = filePicker(".csv,.txt,.xlsx,.xlsm,.xls");
+      picker.input.addEventListener("change", () => readParkFile(picker.input.files[0]));
+      parts.push(picker.el);
+      return h("div", { class: "sect" }, ...parts);
+    }
+    const sel = h("select", {}, [h("option", { value: "" }, "Choose a park…"),
+      ...pf.parks.map((p) => h("option", { value: p.key, selected: p.key === pf.selected }, `${p.label} · ${p.n} turbine${p.n === 1 ? "" : "s"}`))]);
+    sel.addEventListener("change", () => applyPark(sel.value));
+    parts.push(h("p", { class: "hint", style: "margin:0 0 8px" }, `${pf.filename} · ${pf.parks.length} parks `,
+      h("a", { href: "#", onclick: (e) => { e.preventDefault(); state.parkFile = null; renderInspector(); } }, "Choose another file")),
+      field("Park", sel));
+    const park = pf.parks.find((p) => p.key === pf.selected);
+    const guessed = new Map();
+    if (park) park.turbines.filter((t) => t.match === "suggested").forEach((t) => guessed.set(t.source_type, t.turbine));
+    if (guessed.size) {
+      parts.push(h("p", { class: "hint" }, "Turbine types not found in our list were matched to the closest one. Please check: ",
+        [...guessed].map(([from, to]) => h("span", { style: "display:block" }, `“${from}” → ${to}`))));
+    }
+    if (park && park.turbines.some((t) => !t.hub_height)) parts.push(h("p", { class: "hint" }, `Turbines without a hub height use ${defaults.hub_height} m.`));
+    (pf.warnings || []).forEach((w) => parts.push(h("p", { class: "hint" }, w)));
+    return h("div", { class: "sect" }, ...parts);
+  }
+
   // ---------------------------------------------------------------- inspector
   function field(label, input, cls = "") { return h("div", { class: `field ${cls}`.trim() }, h("label", {}, label), input); }
   function num(obj, key, opts = {}, after) {
@@ -181,11 +240,23 @@ export function mountSetup(container, scenario, boot, onChange) {
     inspector.replaceChildren(...(kind === "wind" ? windInspector() : solarInspector()));
   }
 
+  function weatherSourceSelect() {
+    const opts = [["stations", "Local stations"], ["external", "External service"]];
+    const s = h("select", {}, opts.map(([v, l]) => h("option", { value: v, selected: (params.weather_source || "stations") === v }, l)));
+    s.addEventListener("change", () => { params.weather_source = s.value; renderInspector(); save(); });
+    return s;
+  }
+
   function solarInspector() {
     return [
       h("div", { class: "sect" }, h("h3", {}, "Location"),
         params.lat == null ? h("p", { class: "hint" }, "Click the map to place the plant. Drag the pin to adjust.")
           : h("p", { class: "hint" }, `${params.lat.toFixed(4)}, ${params.lon.toFixed(4)}`)),
+      h("div", { class: "sect" }, h("h3", {}, "Weather data"),
+        field("Source", weatherSourceSelect()),
+        h("p", { class: "hint" }, params.weather_source === "external"
+          ? "Hourly weather for this location is requested once from the weather service and then stored in your account, so the same location is not requested again."
+          : "Uses the nearest weather station from the local data.")),
       h("div", { class: "sect" }, h("h3", {}, "PV system"),
         field("DC rating (W)", num(params, "dc_rating_watts", { min: 1 })),
         h("div", { class: "row" }, field("Tilt (°)", num(params, "surface_tilt", { min: 0, max: 90 })),
@@ -211,6 +282,7 @@ export function mountSetup(container, scenario, boot, onChange) {
     } }, state.addMode ? "Click map to place… (done)" : "+ Place turbines on map");
 
     const parts = [
+      importSection(),
       h("div", { class: "sect" }, h("h3", {}, `Turbines (${params.turbines.length})`),
         h("div", { class: "row" }, field("Turbine Type", turbineSelect(defaults.turbine, (v) => { defaults.turbine = v; }), "center"),
           field("Hub height (m)", (() => { const i = h("input", { type: "number", value: defaults.hub_height, min: 10 }); i.addEventListener("change", () => { defaults.hub_height = Number(i.value) || 100; }); return i; })(), "center")),
@@ -227,7 +299,7 @@ export function mountSetup(container, scenario, boot, onChange) {
     }
 
     parts.push(h("div", { class: "sect" }, h("h3", {}, "Losses"),
-      check("Wake losses (Jensen/Park)", params, "apply_wake", renderInspector),
+      check("Wake losses", params, "apply_wake", renderInspector),
       params.apply_wake ? field(`Wake decay constant (k)`, num(params, "wake_decay", { min: 0.01, max: 0.3, step: 0.005 })) : null,
       check("Ageing degradation", params, "apply_ageing", renderInspector),
       params.apply_ageing ? field(`Annual degradation`, num(params, "annual_degradation", { min: 0, max: 0.05, step: 0.0005 }, renderInspector)) : null));
