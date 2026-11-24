@@ -4,7 +4,7 @@ What a park needs before stage `generate`, and the step that makes it (each step
 all steps resumable, nothing existing is rewritten):
     site     OSM answer (parks_osm.json) and PVGIS horizon (pvgis_horizon.json)   scripts/pv/fetch_site_inputs.py
     cams     CAMS centre + 8 ring points from ADS (daily quota, waits)            scripts/pv/fetch_cams_parks.py
-    correct  corrected CAMS of the model tag (30 min and hourly)                  scripts/cams_bc/apply_parks.py (ERA5 venv, GPU)
+    correct  corrected CAMS of the model tag (30 min and hourly)                  scripts/cams_bc/apply_parks.py (shared database reader)
     icon     ICON-D2 SL 09 UTC grid points (snow driver of depth_slide)           NWP-points/points/run_pv_add.sh (NAS, hours)
 ERA5 (WeatherDB) and the ERA5 snow GRIBs cover Germany and need no step; the snow point cache is filled by `generate`.
 Angle estimation: stage geometry (parks_pv.geometry_estimate, store parks_pv.geometry_store)."""

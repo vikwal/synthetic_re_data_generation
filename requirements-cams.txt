@@ -1,0 +1,11 @@
+# Tested CPU runtime for CAMS xgb_v5 inference and database preprocessing.
+numpy==2.5.2
+pandas==3.0.5
+xgboost==3.0.5
+psycopg2-binary==2.9.12
+pvlib==0.16.1
+pyproj==3.7.2
+PyYAML==6.0.3
+pyarrow==25.0.1
+scikit-learn==1.9.0
+scipy==1.18.0

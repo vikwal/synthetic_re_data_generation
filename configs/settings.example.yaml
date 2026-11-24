@@ -23,3 +23,9 @@
 # correction_python: ""                              # env PV_CORRECTION_PYTHON; empty = the running interpreter
 #
 # Secrets stay in the environment, never here: WEATHER_DB_URL, ADS key (~/.cdsapirc).
+
+# Weather DB connections: WEATHER_DB_URL / WEATHER_DB_WRITE_URL or libpq services
+# synthetic_weather / synthetic_weather_writer in ~/.pg_service.conf.
+# Keep credentials out of this file; see docs/cams_database.md.
+
+# correction_device: cpu  # env PV_CORRECTION_DEVICE; e.g. cuda:0 for explicit GPU inference

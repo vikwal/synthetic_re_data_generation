@@ -94,7 +94,7 @@ def run_correction(model_tag: str, gpu: int, start: str, end: str, parks=None):
     cmd = [settings.get("correction_python"), os.path.join(paths.REPO, "scripts", "cams_bc", "apply_parks.py"),
            "--points-json", os.path.join(paths.INPUT_DIR, "points.json"), "--cams-dir", os.path.join(paths.INPUT_DIR, "cams"),
            "--ring-dir", os.path.join(paths.INPUT_DIR, "cams_ring"), "--models-dir", os.path.join(paths.CAMS_MODELS, model_tag),
-           "--out-dir", paths.CORR_DIR, "--start", start, "--end", end, "--gpu", str(gpu)]
+           "--out-dir", paths.CORR_DIR, "--start", start, "--end", end, "--device", settings.get("correction_device")]
     if parks:
         cmd += ["--parks", ",".join(parks)]
     print(" ".join(cmd), flush=True)

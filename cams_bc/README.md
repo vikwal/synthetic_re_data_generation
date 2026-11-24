@@ -26,3 +26,7 @@ measurements → 30 min, ERA5 solar/met caches, CAMS at the station, QC flags), 
 
 Environment: `~/Work/NWP/ERA5/.venv` (torch 2.7 + CUDA, optuna 4.9, xgboost 3.0.5 — the 3.4 wheel is
 built for CUDA 13 and falls back to CPU with driver 570).
+
+Production park correction reads neighbours and ERA5 from PostgreSQL through the
+shared adapter. Setup, refresh and deployment checks: [database workflow](../docs/cams_database.md).
+The cache inputs described above are retained for training and historical experiments.

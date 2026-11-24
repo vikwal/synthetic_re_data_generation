@@ -1,15 +1,6 @@
-"""ERA5 single-level input read directly from Postgres (public.era5_wind_grid).
-
-The full 0.25 deg field (1,221 cells, 47.25-55.25 N / 6-15 E) exists only in
-the database; no point files are written. Each turbine is driven by its
-geodesically nearest cell (pyproj WGS84 -- Euclidean degrees are anisotropic
-at 50 N). The frame returned by fetch_cell() has exactly the column schema the
-chain reads from the station CSVs (generate_wind.read_dfs), minus the three
-round-2 NetCDF extras sshf/blh/gwd, which the power-law chain does not use.
-
-Timestamps in the table are naive UTC; the session time zone is forced to UTC
-(the server default is Europe/Berlin). A SHA256 over the fetched values goes
-into every manifest so a later re-ingest of the table is detectable.
+"""Shared ERA5 meteorological reader for wind, PV and CAMS correction.
+The cams_weather SQL views adapt storage layout; coordinates and UTC values have
+one contract on every deployment. See docs/cams_database.md for setup.
 """
 
 import hashlib
@@ -19,8 +10,8 @@ import numpy as np
 import pandas as pd
 from pyproj import Geod
 
-TABLE = "public.era5_wind_grid"
-POINTS = "public.era5_wind_grid_points"
+TABLE = "cams_weather.met"
+POINTS = "cams_weather.met_points"
 RAW_COLS = ["u_wind_10m", "v_wind_10m", "u_wind_100m", "v_wind_100m", "wind_gust_10m",
             "friction_wind", "temp_2m", "pressure", "dew_point_2m"]
 
@@ -29,10 +20,9 @@ _GEOD = Geod(ellps="WGS84")
 
 def connect(url: str = None):
     import psycopg2
-    url = url or os.environ.get("WEATHER_DB_URL")
-    if not url:
-        raise RuntimeError("WEATHER_DB_URL not set (export it from ~/.bashrc)")
+    url = url or os.environ.get("WEATHER_DB_URL", "service=synthetic_weather")
     conn = psycopg2.connect(url)
+    conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
     with conn.cursor() as cur:
         cur.execute("SET TIME ZONE 'UTC';")
     conn.commit()
@@ -64,13 +54,12 @@ def nearest_cells(points: pd.DataFrame, lat, lon) -> tuple:
 def fetch_cell(conn, cell_id: int, start: str, end: str) -> pd.DataFrame:
     """Hourly frame (UTC index 'timestamp') of RAW_COLS for one cell, [start, end]."""
     sql = (f"SELECT g.timestamp, {', '.join('g.' + c for c in RAW_COLS)} FROM {TABLE} g "
-           f"JOIN {POINTS} p ON p.geom = g.geom "
-           f"WHERE p.cell_id = %s AND g.timestamp >= %s AND g.timestamp <= %s ORDER BY g.timestamp;")
+           f"WHERE g.cell_id = %s AND g.timestamp >= %s AND g.timestamp <= %s ORDER BY g.timestamp;")
     with conn.cursor() as cur:
         cur.execute(sql, (int(cell_id), start, end))
         rows = cur.fetchall()
     df = pd.DataFrame(rows, columns=["timestamp"] + RAW_COLS)
-    df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize("UTC")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df = df.set_index("timestamp").astype("float64")
     check_complete(df, start, end, cell_id)
     return df
@@ -99,6 +88,6 @@ def coverage(conn, cell_id: int) -> tuple:
     uniformly, so one cell stands for the table)."""
     with conn.cursor() as cur:
         cur.execute(f"SELECT min(g.timestamp), max(g.timestamp) FROM {TABLE} g "
-                    f"JOIN {POINTS} p ON p.geom = g.geom WHERE p.cell_id = %s;", (int(cell_id),))
+                    f"WHERE g.cell_id = %s;", (int(cell_id),))
         lo, hi = cur.fetchone()
-    return pd.Timestamp(lo, tz="UTC"), pd.Timestamp(hi, tz="UTC")
+    return pd.to_datetime(lo, utc=True), pd.to_datetime(hi, utc=True)

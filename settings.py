@@ -18,6 +18,7 @@ REPO = os.path.dirname(os.path.abspath(__file__))
 
 # key -> (environment variable, default)
 SPEC = {
+    "correction_device": ("PV_CORRECTION_DEVICE", "cpu"),
     "data_root":         ("DATA_ROOT",            "/mnt/lambda1/nvme1"),              # shared data (inputs, releases, caches)
     "work_root":         ("PV_WORK_ROOT",         "{repo}"),                          # small tables, generated configs, geometry runs (data/, configs/pv/_generated/, results/pv/)
     "selection_dir":     ("PV_SELECTION_DIR",     "~/Work/FL_Contribution/data/mastr"),   # pv_park_selection_<ver>.csv

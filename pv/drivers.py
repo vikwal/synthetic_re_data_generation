@@ -14,8 +14,8 @@ Sources and their timestamp conventions (pv.timebase):
   imputed DWD station  ${DATA_ROOT}/synthetic/interpol/solar/Station_<id>.parquet, 30 min, label END
   CAMS radiation       ADS CSV (Wh/m2 per 15 min, 'Observation period' start/end) or
                        WeatherDB public.cams_radiation (valid_time = END)
-  ERA5                 WeatherDB public.era5_solar (J/m2 accumulated over [t-1h, t], label END),
-                       public.era5_wind_grid (instantaneous at t)
+  ERA5                 WeatherDB cams_weather.solar (J/m2 accumulated over [t-1h, t], label END),
+                       cams_weather.met (instantaneous at t)
 """
 
 import glob
@@ -34,8 +34,8 @@ IMPUTED_DIR = os.path.join(DATA_ROOT, "synthetic", "interpol", "solar")
 RAW_SOLAR_DIR = os.path.join(DATA_ROOT, "synthetic", "raw", "solar")
 CAMS_PM_DIR = settings.get("cams_pm_dir")
 
-ERA5_SOLAR = "public.era5_solar"
-ERA5_SOLAR_POINTS = "public.era5_solar_grid_points"
+ERA5_SOLAR = "cams_weather.solar"
+ERA5_SOLAR_POINTS = "cams_weather.solar_points"
 CAMS_TABLE = "public.cams_radiation"
 
 
@@ -200,7 +200,7 @@ def era5_solar(conn, lat: float, lon: float, start=None, end=None, step="1h") ->
     j = int(np.argmin(d))
     cell = int(pts.cell_id.iloc[j])
     sql = (f"SELECT s.valid_time, s.ssrd, s.fdir, s.ssrdc, s.cdir, s.tisr, s.fal, s.tcc FROM {ERA5_SOLAR} s "
-           f"JOIN {ERA5_SOLAR_POINTS} p ON p.geom = s.geom WHERE p.cell_id = %s ORDER BY s.valid_time;")
+           "WHERE s.cell_id = %s ORDER BY s.valid_time;")
     with conn.cursor() as cur:
         cur.execute(sql, (cell,))
         rows = cur.fetchall()

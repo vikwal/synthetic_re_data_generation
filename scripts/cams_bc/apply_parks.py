@@ -21,7 +21,8 @@ from cams_bc import data, targets  # noqa: E402
 from cams_bc.config import AZIMUTHS, RADII, STEP  # noqa: E402
 from cams_bc.models import MLPModel  # noqa: E402
 from pv import drivers  # noqa: E402
-from parks import era5_db  # noqa: E402
+from cams_bc import weather_db as era5_db
+from cams_bc.neighbour_db import load_neighbours  # noqa: E402
 
 AZ_FILE = {"N": "N", "O": "E", "S": "S", "W": "W"}
 INTERVAL = ["era5_ghi", "era5_bhi", "era5_ghi_clear", "era5_toa", "era5_lw_cre", "era5_k_c", "era5_f_dir"]
@@ -38,13 +39,13 @@ def cams_30min(files: list) -> pd.DataFrame:
 
 
 def era5_solar_30min(conn, lat: float, lon: float, idx: pd.DatetimeIndex) -> pd.DataFrame:
-    pts = drivers.era5_solar_points(conn)
+    pts = era5_db.load_solar_points(conn)
     d = drivers.haversine_km(lat, lon, pts.lat.values, pts.lon.values)
     cell = int(pts.cell_id.iloc[int(np.argmin(d))])
     sql = (f"SELECT s.valid_time, s.ssrd, s.fdir, s.ssrdc, s.tisr, s.fal, s.tcc, s.lcc, s.mcc, s.hcc, s.tcwv, s.strd, s.strdc "
-           f"FROM {drivers.ERA5_SOLAR} s JOIN {drivers.ERA5_SOLAR_POINTS} p ON p.geom = s.geom WHERE p.cell_id = %s ORDER BY s.valid_time;")
+           "FROM cams_weather.solar s WHERE s.cell_id = %s AND s.valid_time >= %s AND s.valid_time <= %s ORDER BY s.valid_time;")
     with conn.cursor() as cur:
-        cur.execute(sql, (cell,))
+        cur.execute(sql, (cell, idx.min().floor("h").to_pydatetime(), idx.max().ceil("h").to_pydatetime()))
         rows = cur.fetchall()
     r = pd.DataFrame(rows, columns=["timestamp", "ssrd", "fdir", "ssrdc", "tisr", "fal", "tcc", "lcc", "mcc", "hcc", "tcwv", "strd", "strdc"])
     r["timestamp"] = pd.to_datetime(r["timestamp"], utc=True)
@@ -92,7 +93,10 @@ def load_models(models_dir: str, device: str) -> tuple:
         from cams_bc.models import load_booster
         for k in range(3):
             # load_booster cuts the saved booster back to best_iteration (same trees as in final_eval)
-            models.append({v: load_booster(os.path.join(models_dir, f"fold{k}_{v}.json")) for v in C.VARS})
+            fold = {v: load_booster(os.path.join(models_dir, f"fold{k}_{v}.json")) for v in C.VARS}
+            for booster in fold.values():
+                booster.set_param({"device": device})
+            models.append(fold)
     else:
         import torch
         for k in range(3):
@@ -131,17 +135,17 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--start", default="2023-07-24")
     ap.add_argument("--end", default="2024-06-01")
-    ap.add_argument("--gpu", type=int, default=0)
+    ap.add_argument("--device", default="cpu", help="Inference device, e.g. cpu or cuda:0")
     ap.add_argument("--parks", default=None)
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     pts = json.load(open(args.points_json))
     conn = era5_db.connect()
-    meta, models = load_models(args.models_dir, f"cuda:{args.gpu}")
-    nb_table, nb_coords = data.neighbour_table(), data.coords_all()
+    meta, models = load_models(args.models_dir, args.device)
     tag = os.path.basename(args.models_dir.rstrip("/"))
     s, e = pd.Timestamp(args.start, tz="UTC"), pd.Timestamp(args.end, tz="UTC")
     idx = pd.date_range(s - pd.Timedelta("1D"), e + pd.Timedelta("1D"), freq=STEP, tz="UTC")
+    nb_table, nb_coords = load_neighbours(conn, idx)
     for p in pts:
         pv = p["pv"]
         if args.parks and pv not in args.parks.split(","):

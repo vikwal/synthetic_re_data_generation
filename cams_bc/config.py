@@ -2,9 +2,10 @@
 SOLAR_DATEN_WURZEL (NWP/ERA5 convention) as fallback. The station frames and CAMS caches are products
 of the NWP/ERA5 and NWP/CAMS pipelines; this package only reads them."""
 import os
+import settings
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-ROOT = os.environ.get("DATA_ROOT", os.environ.get("SOLAR_DATEN_WURZEL", "/mnt/lambda1/nvme1"))
+ROOT = os.environ.get("DATA_ROOT", os.environ.get("SOLAR_DATEN_WURZEL", settings.get("data_root")))
 HOME = os.path.expanduser("~")
 
 PROCESSED = f"{ROOT}/synthetic/solar_bc/processed_30min"       # solar_bc station frames, 30 min
